@@ -1,0 +1,1097 @@
+{
+  "originalMedia": true,
+  "gameDirectoryModified": false,
+  "gameValidated": false,
+  "structuralVerified": true,
+  "audioDurationSeconds": 26.2,
+  "calibration": {
+    "notes": 44,
+    "events": 8,
+    "rawIntegerTicks": true
+  },
+  "sevenths": {
+    "notes": 86,
+    "quantization": {
+      "required": true,
+      "resolution": 384,
+      "entries": [
+        {
+          "entityId": "calibration-note-46",
+          "kind": "note",
+          "type": "TAP",
+          "tick": 438.85714285714283,
+          "nativeTick": 439,
+          "startErrorMs": 0.744047619047894,
+          "maxErrorMs": 0.744047619047894,
+          "fields": [
+            "tick"
+          ]
+        },
+        {
+          "entityId": "calibration-note-47",
+          "kind": "note",
+          "type": "TAP",
+          "tick": 493.7142857142857,
+          "nativeTick": 494,
+          "startErrorMs": 1.4880952380948997,
+          "maxErrorMs": 1.4880952380948997,
+          "fields": [
+            "tick"
+          ]
+        },
+        {
+          "entityId": "calibration-note-48",
+          "kind": "note",
+          "type": "TAP",
+          "tick": 548.5714285714286,
+          "nativeTick": 549,
+          "startErrorMs": 2.232142857143238,
+          "maxErrorMs": 2.232142857143238,
+          "fields": [
+            "tick"
+          ]
+        },
+        {
+          "entityId": "calibration-note-49",
+          "kind": "note",
+          "type": "TAP",
+          "tick": 603.4285714285714,
+          "nativeTick": 603,
+          "startErrorMs": -2.232142857143238,
+          "maxErrorMs": 2.232142857143238,
+          "fields": [
+            "tick"
+          ]
+        },
+        {
+          "entityId": "calibration-note-50",
+          "kind": "note",
+          "type": "TAP",
+          "tick": 658.2857142857142,
+          "nativeTick": 658,
+          "startErrorMs": -1.4880952380948997,
+          "maxErrorMs": 1.4880952380948997,
+          "fields": [
+            "tick"
+          ]
+        },
+        {
+          "entityId": "calibration-note-51",
+          "kind": "note",
+          "type": "TAP",
+          "tick": 713.1428571428571,
+          "nativeTick": 713,
+          "startErrorMs": -0.744047619047894,
+          "maxErrorMs": 0.744047619047894,
+          "fields": [
+            "tick"
+          ]
+        },
+        {
+          "entityId": "calibration-note-53",
+          "kind": "note",
+          "type": "TAP",
+          "tick": 781.7142857142857,
+          "nativeTick": 782,
+          "startErrorMs": 1.488095238095788,
+          "maxErrorMs": 1.488095238095788,
+          "fields": [
+            "tick"
+          ]
+        },
+        {
+          "entityId": "calibration-note-54",
+          "kind": "note",
+          "type": "TAP",
+          "tick": 795.4285714285714,
+          "nativeTick": 795,
+          "startErrorMs": -2.232142857143238,
+          "maxErrorMs": 2.232142857143238,
+          "fields": [
+            "tick"
+          ]
+        },
+        {
+          "entityId": "calibration-note-55",
+          "kind": "note",
+          "type": "TAP",
+          "tick": 809.1428571428571,
+          "nativeTick": 809,
+          "startErrorMs": -0.7440476190474499,
+          "maxErrorMs": 0.7440476190474499,
+          "fields": [
+            "tick"
+          ]
+        },
+        {
+          "entityId": "calibration-note-56",
+          "kind": "note",
+          "type": "TAP",
+          "tick": 822.8571428571429,
+          "nativeTick": 823,
+          "startErrorMs": 0.7440476190474499,
+          "maxErrorMs": 0.7440476190474499,
+          "fields": [
+            "tick"
+          ]
+        },
+        {
+          "entityId": "calibration-note-57",
+          "kind": "note",
+          "type": "TAP",
+          "tick": 836.5714285714286,
+          "nativeTick": 837,
+          "startErrorMs": 2.232142857143238,
+          "maxErrorMs": 2.232142857143238,
+          "fields": [
+            "tick"
+          ]
+        },
+        {
+          "entityId": "calibration-note-58",
+          "kind": "note",
+          "type": "TAP",
+          "tick": 850.2857142857143,
+          "nativeTick": 850,
+          "startErrorMs": -1.488095238095788,
+          "maxErrorMs": 1.488095238095788,
+          "fields": [
+            "tick"
+          ]
+        },
+        {
+          "entityId": "calibration-note-60",
+          "kind": "note",
+          "type": "TAP",
+          "tick": 877.7142857142857,
+          "nativeTick": 878,
+          "startErrorMs": 1.488095238095788,
+          "maxErrorMs": 1.488095238095788,
+          "fields": [
+            "tick"
+          ]
+        },
+        {
+          "entityId": "calibration-note-61",
+          "kind": "note",
+          "type": "TAP",
+          "tick": 891.4285714285714,
+          "nativeTick": 891,
+          "startErrorMs": -2.232142857143238,
+          "maxErrorMs": 2.232142857143238,
+          "fields": [
+            "tick"
+          ]
+        },
+        {
+          "entityId": "calibration-note-62",
+          "kind": "note",
+          "type": "TAP",
+          "tick": 905.1428571428571,
+          "nativeTick": 905,
+          "startErrorMs": -0.7440476190474499,
+          "maxErrorMs": 0.7440476190474499,
+          "fields": [
+            "tick"
+          ]
+        },
+        {
+          "entityId": "calibration-note-63",
+          "kind": "note",
+          "type": "TAP",
+          "tick": 918.8571428571429,
+          "nativeTick": 919,
+          "startErrorMs": 0.7440476190474499,
+          "maxErrorMs": 0.7440476190474499,
+          "fields": [
+            "tick"
+          ]
+        },
+        {
+          "entityId": "calibration-note-64",
+          "kind": "note",
+          "type": "TAP",
+          "tick": 932.5714285714286,
+          "nativeTick": 933,
+          "startErrorMs": 2.232142857143238,
+          "maxErrorMs": 2.232142857143238,
+          "fields": [
+            "tick"
+          ]
+        },
+        {
+          "entityId": "calibration-note-65",
+          "kind": "note",
+          "type": "TAP",
+          "tick": 946.2857142857142,
+          "nativeTick": 946,
+          "startErrorMs": -1.488095238095788,
+          "maxErrorMs": 1.488095238095788,
+          "fields": [
+            "tick"
+          ]
+        },
+        {
+          "entityId": "calibration-note-67",
+          "kind": "note",
+          "type": "TAP",
+          "tick": 973.7142857142858,
+          "nativeTick": 974,
+          "startErrorMs": 1.488095238095788,
+          "maxErrorMs": 1.488095238095788,
+          "fields": [
+            "tick"
+          ]
+        },
+        {
+          "entityId": "calibration-note-68",
+          "kind": "note",
+          "type": "TAP",
+          "tick": 987.4285714285714,
+          "nativeTick": 987,
+          "startErrorMs": -2.232142857143238,
+          "maxErrorMs": 2.232142857143238,
+          "fields": [
+            "tick"
+          ]
+        },
+        {
+          "entityId": "calibration-note-69",
+          "kind": "note",
+          "type": "TAP",
+          "tick": 1001.1428571428571,
+          "nativeTick": 1001,
+          "startErrorMs": -0.7440476190474499,
+          "maxErrorMs": 0.7440476190474499,
+          "fields": [
+            "tick"
+          ]
+        },
+        {
+          "entityId": "calibration-note-70",
+          "kind": "note",
+          "type": "TAP",
+          "tick": 1014.8571428571429,
+          "nativeTick": 1015,
+          "startErrorMs": 0.7440476190474499,
+          "maxErrorMs": 0.7440476190474499,
+          "fields": [
+            "tick"
+          ]
+        },
+        {
+          "entityId": "calibration-note-71",
+          "kind": "note",
+          "type": "TAP",
+          "tick": 1028.5714285714284,
+          "nativeTick": 1029,
+          "startErrorMs": 2.232142857143238,
+          "maxErrorMs": 2.232142857143238,
+          "fields": [
+            "tick"
+          ]
+        },
+        {
+          "entityId": "calibration-note-72",
+          "kind": "note",
+          "type": "TAP",
+          "tick": 1042.2857142857142,
+          "nativeTick": 1042,
+          "startErrorMs": -1.488095238095788,
+          "maxErrorMs": 1.488095238095788,
+          "fields": [
+            "tick"
+          ]
+        },
+        {
+          "entityId": "calibration-note-74",
+          "kind": "note",
+          "type": "TAP",
+          "tick": 1069.7142857142858,
+          "nativeTick": 1070,
+          "startErrorMs": 1.488095238095788,
+          "maxErrorMs": 1.488095238095788,
+          "fields": [
+            "tick"
+          ]
+        },
+        {
+          "entityId": "calibration-note-75",
+          "kind": "note",
+          "type": "TAP",
+          "tick": 1083.4285714285716,
+          "nativeTick": 1083,
+          "startErrorMs": -2.232142857143238,
+          "maxErrorMs": 2.232142857143238,
+          "fields": [
+            "tick"
+          ]
+        },
+        {
+          "entityId": "calibration-note-76",
+          "kind": "note",
+          "type": "TAP",
+          "tick": 1097.142857142857,
+          "nativeTick": 1097,
+          "startErrorMs": -0.7440476190465617,
+          "maxErrorMs": 0.7440476190465617,
+          "fields": [
+            "tick"
+          ]
+        },
+        {
+          "entityId": "calibration-note-77",
+          "kind": "note",
+          "type": "TAP",
+          "tick": 1110.857142857143,
+          "nativeTick": 1111,
+          "startErrorMs": 0.7440476190465617,
+          "maxErrorMs": 0.7440476190465617,
+          "fields": [
+            "tick"
+          ]
+        },
+        {
+          "entityId": "calibration-note-78",
+          "kind": "note",
+          "type": "TAP",
+          "tick": 1124.5714285714284,
+          "nativeTick": 1125,
+          "startErrorMs": 2.232142857143238,
+          "maxErrorMs": 2.232142857143238,
+          "fields": [
+            "tick"
+          ]
+        },
+        {
+          "entityId": "calibration-note-79",
+          "kind": "note",
+          "type": "TAP",
+          "tick": 1138.2857142857142,
+          "nativeTick": 1138,
+          "startErrorMs": -1.488095238095788,
+          "maxErrorMs": 1.488095238095788,
+          "fields": [
+            "tick"
+          ]
+        },
+        {
+          "entityId": "calibration-note-80",
+          "kind": "note",
+          "type": "HOLD",
+          "tick": 1206.857142857143,
+          "nativeTick": 1207,
+          "startErrorMs": 0.7440476190465617,
+          "maxErrorMs": 0.7440476190465617,
+          "fields": [
+            "tick",
+            "duration"
+          ],
+          "endTick": 1481.142857142857,
+          "nativeEndTick": 1481,
+          "endErrorMs": -0.7440476190465617
+        },
+        {
+          "entityId": "calibration-note-81",
+          "kind": "note",
+          "type": "HOLD",
+          "tick": 1536,
+          "nativeTick": 1536,
+          "startErrorMs": 0,
+          "maxErrorMs": 0.4464285714274041,
+          "fields": [
+            "duration"
+          ],
+          "endTick": 1865.142857142857,
+          "nativeEndTick": 1865,
+          "endErrorMs": -0.4464285714274041
+        },
+        {
+          "entityId": "calibration-note-82",
+          "kind": "note",
+          "type": "TAP",
+          "tick": 1920,
+          "nativeTick": 1920,
+          "startErrorMs": 0.1488095238091347,
+          "maxErrorMs": 0.1488095238091347,
+          "fields": []
+        },
+        {
+          "entityId": "calibration-note-83",
+          "kind": "note",
+          "type": "TAP",
+          "tick": 1974.857142857143,
+          "nativeTick": 1975,
+          "startErrorMs": 0.7440476190474499,
+          "maxErrorMs": 0.7440476190474499,
+          "fields": [
+            "tick"
+          ]
+        },
+        {
+          "entityId": "calibration-note-84",
+          "kind": "note",
+          "type": "TAP",
+          "tick": 2029.7142857142858,
+          "nativeTick": 2030,
+          "startErrorMs": 1.339285714285765,
+          "maxErrorMs": 1.339285714285765,
+          "fields": [
+            "tick"
+          ]
+        },
+        {
+          "entityId": "calibration-note-85",
+          "kind": "note",
+          "type": "TAP",
+          "tick": 2084.5714285714284,
+          "nativeTick": 2085,
+          "startErrorMs": 1.9345238095240802,
+          "maxErrorMs": 1.9345238095240802,
+          "fields": [
+            "tick"
+          ]
+        },
+        {
+          "entityId": "calibration-note-86",
+          "kind": "note",
+          "type": "TAP",
+          "tick": 2139.4285714285716,
+          "nativeTick": 2139,
+          "startErrorMs": -1.6369047619058108,
+          "maxErrorMs": 1.6369047619058108,
+          "fields": [
+            "tick"
+          ]
+        },
+        {
+          "entityId": "calibration-note-87",
+          "kind": "note",
+          "type": "TAP",
+          "tick": 2194.285714285714,
+          "nativeTick": 2194,
+          "startErrorMs": -1.0416666666657193,
+          "maxErrorMs": 1.0416666666657193,
+          "fields": [
+            "tick"
+          ]
+        },
+        {
+          "entityId": "calibration-note-88",
+          "kind": "note",
+          "type": "EXTAP",
+          "tick": 2249.1428571428573,
+          "nativeTick": 2249,
+          "startErrorMs": -0.44642857142918047,
+          "maxErrorMs": 0.44642857142918047,
+          "fields": [
+            "tick"
+          ]
+        },
+        {
+          "entityId": "calibration-note-89",
+          "kind": "note",
+          "type": "TAP",
+          "tick": 2304,
+          "nativeTick": 2304,
+          "startErrorMs": 0.1488095238091347,
+          "maxErrorMs": 0.1488095238091347,
+          "fields": []
+        },
+        {
+          "entityId": "calibration-note-90",
+          "kind": "note",
+          "type": "TAP",
+          "tick": 2358.8571428571427,
+          "nativeTick": 2359,
+          "startErrorMs": 0.7440476190492262,
+          "maxErrorMs": 0.7440476190492262,
+          "fields": [
+            "tick"
+          ]
+        },
+        {
+          "entityId": "calibration-note-91",
+          "kind": "note",
+          "type": "TAP",
+          "tick": 2413.714285714286,
+          "nativeTick": 2414,
+          "startErrorMs": 1.339285714285765,
+          "maxErrorMs": 1.339285714285765,
+          "fields": [
+            "tick"
+          ]
+        },
+        {
+          "entityId": "calibration-note-92",
+          "kind": "note",
+          "type": "TAP",
+          "tick": 2468.5714285714284,
+          "nativeTick": 2469,
+          "startErrorMs": 1.9345238095240802,
+          "maxErrorMs": 1.9345238095240802,
+          "fields": [
+            "tick"
+          ]
+        },
+        {
+          "entityId": "calibration-note-93",
+          "kind": "note",
+          "type": "TAP",
+          "tick": 2523.4285714285716,
+          "nativeTick": 2523,
+          "startErrorMs": -1.6369047619058108,
+          "maxErrorMs": 1.6369047619058108,
+          "fields": [
+            "tick"
+          ]
+        },
+        {
+          "entityId": "calibration-note-94",
+          "kind": "note",
+          "type": "TAP",
+          "tick": 2578.285714285714,
+          "nativeTick": 2578,
+          "startErrorMs": -1.0416666666674956,
+          "maxErrorMs": 1.0416666666674956,
+          "fields": [
+            "tick"
+          ]
+        },
+        {
+          "entityId": "calibration-note-95",
+          "kind": "note",
+          "type": "EXTAP",
+          "tick": 2633.1428571428573,
+          "nativeTick": 2633,
+          "startErrorMs": -0.44642857142918047,
+          "maxErrorMs": 0.44642857142918047,
+          "fields": [
+            "tick"
+          ]
+        },
+        {
+          "entityId": "calibration-note-96",
+          "kind": "note",
+          "type": "TAP",
+          "tick": 2688,
+          "nativeTick": 2688,
+          "startErrorMs": 0.14880952381091106,
+          "maxErrorMs": 0.14880952381091106,
+          "fields": []
+        },
+        {
+          "entityId": "calibration-note-97",
+          "kind": "note",
+          "type": "TAP",
+          "tick": 2742.8571428571427,
+          "nativeTick": 2743,
+          "startErrorMs": 0.7440476190474499,
+          "maxErrorMs": 0.7440476190474499,
+          "fields": [
+            "tick"
+          ]
+        },
+        {
+          "entityId": "calibration-note-98",
+          "kind": "note",
+          "type": "TAP",
+          "tick": 2797.714285714286,
+          "nativeTick": 2798,
+          "startErrorMs": 1.3392857142839887,
+          "maxErrorMs": 1.3392857142839887,
+          "fields": [
+            "tick"
+          ]
+        },
+        {
+          "entityId": "calibration-note-99",
+          "kind": "note",
+          "type": "TAP",
+          "tick": 2852.5714285714284,
+          "nativeTick": 2853,
+          "startErrorMs": 1.9345238095258566,
+          "maxErrorMs": 1.9345238095258566,
+          "fields": [
+            "tick"
+          ]
+        },
+        {
+          "entityId": "calibration-note-100",
+          "kind": "note",
+          "type": "TAP",
+          "tick": 2907.4285714285716,
+          "nativeTick": 2907,
+          "startErrorMs": -1.6369047619058108,
+          "maxErrorMs": 1.6369047619058108,
+          "fields": [
+            "tick"
+          ]
+        },
+        {
+          "entityId": "calibration-note-101",
+          "kind": "note",
+          "type": "TAP",
+          "tick": 2962.285714285714,
+          "nativeTick": 2962,
+          "startErrorMs": -1.0416666666657193,
+          "maxErrorMs": 1.0416666666657193,
+          "fields": [
+            "tick"
+          ]
+        },
+        {
+          "entityId": "calibration-note-102",
+          "kind": "note",
+          "type": "EXTAP",
+          "tick": 3017.1428571428573,
+          "nativeTick": 3017,
+          "startErrorMs": -0.4464285714309568,
+          "maxErrorMs": 0.4464285714309568,
+          "fields": [
+            "tick"
+          ]
+        },
+        {
+          "entityId": "calibration-note-103",
+          "kind": "note",
+          "type": "TAP",
+          "tick": 3072,
+          "nativeTick": 3072,
+          "startErrorMs": 0.1488095238091347,
+          "maxErrorMs": 0.1488095238091347,
+          "fields": []
+        },
+        {
+          "entityId": "calibration-note-104",
+          "kind": "note",
+          "type": "TAP",
+          "tick": 3126.8571428571427,
+          "nativeTick": 3127,
+          "startErrorMs": 1.1408730158741776,
+          "maxErrorMs": 1.1408730158741776,
+          "fields": [
+            "tick"
+          ]
+        },
+        {
+          "entityId": "calibration-note-105",
+          "kind": "note",
+          "type": "TAP",
+          "tick": 3181.714285714286,
+          "nativeTick": 3182,
+          "startErrorMs": 2.1329365079356677,
+          "maxErrorMs": 2.1329365079356677,
+          "fields": [
+            "tick"
+          ]
+        },
+        {
+          "entityId": "calibration-note-106",
+          "kind": "note",
+          "type": "TAP",
+          "tick": 3236.5714285714284,
+          "nativeTick": 3237,
+          "startErrorMs": 3.1250000000007105,
+          "maxErrorMs": 3.1250000000007105,
+          "fields": [
+            "tick"
+          ]
+        },
+        {
+          "entityId": "calibration-note-107",
+          "kind": "note",
+          "type": "TAP",
+          "tick": 3291.4285714285716,
+          "nativeTick": 3291,
+          "startErrorMs": -2.827380952380665,
+          "maxErrorMs": 2.827380952380665,
+          "fields": [
+            "tick"
+          ]
+        },
+        {
+          "entityId": "calibration-note-108",
+          "kind": "note",
+          "type": "TAP",
+          "tick": 3346.285714285714,
+          "nativeTick": 3346,
+          "startErrorMs": -1.835317460315622,
+          "maxErrorMs": 1.835317460315622,
+          "fields": [
+            "tick"
+          ]
+        },
+        {
+          "entityId": "calibration-note-109",
+          "kind": "note",
+          "type": "EXTAP",
+          "tick": 3401.1428571428573,
+          "nativeTick": 3401,
+          "startErrorMs": -0.8432539682559081,
+          "maxErrorMs": 0.8432539682559081,
+          "fields": [
+            "tick"
+          ]
+        },
+        {
+          "entityId": "calibration-note-110",
+          "kind": "note",
+          "type": "TAP",
+          "tick": 3456,
+          "nativeTick": 3456,
+          "startErrorMs": 0.14880952381091106,
+          "maxErrorMs": 0.14880952381091106,
+          "fields": []
+        },
+        {
+          "entityId": "calibration-note-111",
+          "kind": "note",
+          "type": "TAP",
+          "tick": 3510.8571428571427,
+          "nativeTick": 3511,
+          "startErrorMs": 1.1408730158741776,
+          "maxErrorMs": 1.1408730158741776,
+          "fields": [
+            "tick"
+          ]
+        },
+        {
+          "entityId": "calibration-note-112",
+          "kind": "note",
+          "type": "TAP",
+          "tick": 3565.714285714286,
+          "nativeTick": 3566,
+          "startErrorMs": 2.1329365079338913,
+          "maxErrorMs": 2.1329365079338913,
+          "fields": [
+            "tick"
+          ]
+        },
+        {
+          "entityId": "calibration-note-113",
+          "kind": "note",
+          "type": "TAP",
+          "tick": 3620.5714285714284,
+          "nativeTick": 3621,
+          "startErrorMs": 3.1250000000007105,
+          "maxErrorMs": 3.1250000000007105,
+          "fields": [
+            "tick"
+          ]
+        },
+        {
+          "entityId": "calibration-note-114",
+          "kind": "note",
+          "type": "TAP",
+          "tick": 3675.4285714285716,
+          "nativeTick": 3675,
+          "startErrorMs": -2.827380952382441,
+          "maxErrorMs": 2.827380952382441,
+          "fields": [
+            "tick"
+          ]
+        },
+        {
+          "entityId": "calibration-note-115",
+          "kind": "note",
+          "type": "TAP",
+          "tick": 3730.285714285714,
+          "nativeTick": 3730,
+          "startErrorMs": -1.835317460315622,
+          "maxErrorMs": 1.835317460315622,
+          "fields": [
+            "tick"
+          ]
+        },
+        {
+          "entityId": "calibration-note-116",
+          "kind": "note",
+          "type": "EXTAP",
+          "tick": 3785.1428571428573,
+          "nativeTick": 3785,
+          "startErrorMs": -0.8432539682559081,
+          "maxErrorMs": 0.8432539682559081,
+          "fields": [
+            "tick"
+          ]
+        },
+        {
+          "entityId": "calibration-note-117",
+          "kind": "note",
+          "type": "TAP",
+          "tick": 3840,
+          "nativeTick": 3840,
+          "startErrorMs": 0.14880952380735835,
+          "maxErrorMs": 0.14880952380735835,
+          "fields": []
+        },
+        {
+          "entityId": "calibration-note-118",
+          "kind": "note",
+          "type": "TAP",
+          "tick": 3894.8571428571427,
+          "nativeTick": 3895,
+          "startErrorMs": 1.1408730158741776,
+          "maxErrorMs": 1.1408730158741776,
+          "fields": [
+            "tick"
+          ]
+        },
+        {
+          "entityId": "calibration-note-119",
+          "kind": "note",
+          "type": "TAP",
+          "tick": 3949.714285714286,
+          "nativeTick": 3950,
+          "startErrorMs": 2.1329365079338913,
+          "maxErrorMs": 2.1329365079338913,
+          "fields": [
+            "tick"
+          ]
+        },
+        {
+          "entityId": "calibration-note-120",
+          "kind": "note",
+          "type": "TAP",
+          "tick": 4004.5714285714284,
+          "nativeTick": 4005,
+          "startErrorMs": 3.1250000000007105,
+          "maxErrorMs": 3.1250000000007105,
+          "fields": [
+            "tick"
+          ]
+        },
+        {
+          "entityId": "calibration-note-121",
+          "kind": "note",
+          "type": "TAP",
+          "tick": 4059.4285714285716,
+          "nativeTick": 4059,
+          "startErrorMs": -2.827380952382441,
+          "maxErrorMs": 2.827380952382441,
+          "fields": [
+            "tick"
+          ]
+        },
+        {
+          "entityId": "calibration-note-122",
+          "kind": "note",
+          "type": "TAP",
+          "tick": 4114.285714285715,
+          "nativeTick": 4114,
+          "startErrorMs": -1.8353174603191746,
+          "maxErrorMs": 1.8353174603191746,
+          "fields": [
+            "tick"
+          ]
+        },
+        {
+          "entityId": "calibration-note-123",
+          "kind": "note",
+          "type": "EXTAP",
+          "tick": 4169.142857142857,
+          "nativeTick": 4169,
+          "startErrorMs": -0.8432539682559081,
+          "maxErrorMs": 0.8432539682559081,
+          "fields": [
+            "tick"
+          ]
+        },
+        {
+          "entityId": "calibration-note-124",
+          "kind": "note",
+          "type": "TAP",
+          "tick": 4224,
+          "nativeTick": 4224,
+          "startErrorMs": 0.14880952381091106,
+          "maxErrorMs": 0.14880952381091106,
+          "fields": []
+        },
+        {
+          "entityId": "calibration-note-125",
+          "kind": "note",
+          "type": "TAP",
+          "tick": 4278.857142857143,
+          "nativeTick": 4279,
+          "startErrorMs": 1.1408730158741776,
+          "maxErrorMs": 1.1408730158741776,
+          "fields": [
+            "tick"
+          ]
+        },
+        {
+          "entityId": "calibration-note-126",
+          "kind": "note",
+          "type": "TAP",
+          "tick": 4333.714285714285,
+          "nativeTick": 4334,
+          "startErrorMs": 2.1329365079409968,
+          "maxErrorMs": 2.1329365079409968,
+          "fields": [
+            "tick"
+          ]
+        },
+        {
+          "entityId": "calibration-note-127",
+          "kind": "note",
+          "type": "TAP",
+          "tick": 4388.571428571428,
+          "nativeTick": 4389,
+          "startErrorMs": 3.124999999997158,
+          "maxErrorMs": 3.124999999997158,
+          "fields": [
+            "tick"
+          ]
+        },
+        {
+          "entityId": "calibration-note-128",
+          "kind": "note",
+          "type": "TAP",
+          "tick": 4443.428571428572,
+          "nativeTick": 4443,
+          "startErrorMs": -2.827380952382441,
+          "maxErrorMs": 2.827380952382441,
+          "fields": [
+            "tick"
+          ]
+        },
+        {
+          "entityId": "calibration-note-129",
+          "kind": "note",
+          "type": "TAP",
+          "tick": 4498.285714285715,
+          "nativeTick": 4498,
+          "startErrorMs": -1.8353174603227274,
+          "maxErrorMs": 1.8353174603227274,
+          "fields": [
+            "tick"
+          ]
+        },
+        {
+          "entityId": "calibration-note-130",
+          "kind": "note",
+          "type": "EXTAP",
+          "tick": 4553.142857142857,
+          "nativeTick": 4553,
+          "startErrorMs": -0.8432539682523554,
+          "maxErrorMs": 0.8432539682523554,
+          "fields": [
+            "tick"
+          ]
+        },
+        {
+          "entityId": "sevenths-bpm-150",
+          "kind": "event",
+          "type": "BPM",
+          "tick": 1590.857142857143,
+          "nativeTick": 1591,
+          "startErrorMs": 0.7440476190474499,
+          "maxErrorMs": 0.7440476190474499,
+          "fields": [
+            "tick"
+          ]
+        },
+        {
+          "entityId": "sevenths-bpm-90",
+          "kind": "event",
+          "type": "BPM",
+          "tick": 3072,
+          "nativeTick": 3072,
+          "startErrorMs": 0.1488095238091347,
+          "maxErrorMs": 0.1488095238091347,
+          "fields": []
+        }
+      ],
+      "maxErrorMs": 3.1250000000007105,
+      "affectedCount": 83,
+      "roundedEntityCount": 75
+    },
+    "nativeExported": false
+  },
+  "files": [
+    {
+      "path": "calibration.assets/audio.wav",
+      "bytes": 5030444,
+      "sha256": "70f15872a25b113a2753897797269348c8e47172ecf218aae5b7cd7333b7327d"
+    },
+    {
+      "path": "calibration.assets/cover.png",
+      "bytes": 24710,
+      "sha256": "2cc90c78709a2e6407507ad6cb9cf9f87d75c22aa959420a04f2f3b27a673d85"
+    },
+    {
+      "path": "calibration.chuni.json",
+      "bytes": 11332,
+      "sha256": "ad558e052fad968d18da82df6c81c194a5fcd3f3be483e7373f661a9cec83c6c"
+    },
+    {
+      "path": "exported/AZ01/cueFile/cueFile007000/CueFile.xml",
+      "bytes": 309,
+      "sha256": "e2586d109dc3cc7f3e0864390d1b29077838cf35c9bb0169cfd266e69ec1cf90"
+    },
+    {
+      "path": "exported/AZ01/cueFile/cueFile007000/music7000.acb",
+      "bytes": 6216,
+      "sha256": "2818779e091e56dfc3d11f4257a34202d38178ad67a7329193ce0e9011091aac"
+    },
+    {
+      "path": "exported/AZ01/cueFile/cueFile007000/music7000.awb",
+      "bytes": 1258624,
+      "sha256": "40bba2dc226d57cd4c64dc5a109552ad0161c1ea64ece5f9b10d598d6a2f6994"
+    },
+    {
+      "path": "exported/AZ01/event/event09107000/Event.xml",
+      "bytes": 3103,
+      "sha256": "ce7de581df0686be90c09a25d5fc2f6e87712dde83857eb36bc69a0b362147c7"
+    },
+    {
+      "path": "exported/AZ01/music/MusicSort.xml",
+      "bytes": 193465,
+      "sha256": "8231ee34f4fe99daea36adbbe01ab217be6d754f0b22ea26cd4e02e71efdc651"
+    },
+    {
+      "path": "exported/AZ01/music/music7000/7000_05.c2s",
+      "bytes": 1235,
+      "sha256": "31ef2b82907b1a57a19c7835051f01372e82dfee401f74781dc66a50c745b587"
+    },
+    {
+      "path": "exported/AZ01/music/music7000/CHU_UI_Jacket_7000.dds",
+      "bytes": 45128,
+      "sha256": "6752dbd60e8925df2921b6ebf0b21aab6632103344bda71626efb46fe4a45c46"
+    },
+    {
+      "path": "exported/AZ01/music/music7000/Music.xml",
+      "bytes": 3723,
+      "sha256": "a0da4e687af2c34120c2a162a50d105feb816f51b907eb98587cd1b6e2adc19a"
+    },
+    {
+      "path": "exported/AZ01-安装说明.txt",
+      "bytes": 1943,
+      "sha256": "960332dd313138d4c811522cd417e2f46fb61246014d5cdd07c9fca9dc1d45a9"
+    },
+    {
+      "path": "sevenths.assets/audio.wav",
+      "bytes": 5030444,
+      "sha256": "324010875cd150ff60d3084898fe16c6cf7f6044cfdaddab672428cf7001ebea"
+    },
+    {
+      "path": "sevenths.assets/cover.png",
+      "bytes": 24710,
+      "sha256": "2cc90c78709a2e6407507ad6cb9cf9f87d75c22aa959420a04f2f3b27a673d85"
+    },
+    {
+      "path": "sevenths.chuni.json",
+      "bytes": 16336,
+      "sha256": "fced537573c0a7bdca9b27ca294c7cf66e66e9a9ebedab7d6d2e68094478e831"
+    },
+    {
+      "path": "校准说明.txt",
+      "bytes": 3386,
+      "sha256": "edc3bc9ebb4467d620000c0d49137bbf7b21b69252428075d8cde6d7b5aa1b9d"
+    }
+  ],
+  "warnings": [
+    "已通过文件结构与音频回读校验；尚未在原游戏中验证加载、同步和特殊玩法。"
+  ]
+}

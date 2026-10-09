@@ -1,0 +1,749 @@
+{
+  "format": "chunithm-studio",
+  "formatVersion": 1,
+  "id": "example-sevenths-v1",
+  "metadata": {
+    "title": "Sevenfold — 7等分演示",
+    "artist": "Chuni Studio Original Synthesis",
+    "designer": "Chuni Studio",
+    "difficulty": "MASTER",
+    "level": "8"
+  },
+  "audio": {
+    "path": "sevenths.assets/audio.wav",
+    "offset": 0,
+    "previewStart": 8,
+    "previewEnd": 14.4
+  },
+  "coverPath": "sevenths.assets/cover.png",
+  "exportSettings": {
+    "optId": "AZ01",
+    "musicId": 7000,
+    "cueId": 7000,
+    "weTag": "改",
+    "stars": 3
+  },
+  "chart": {
+    "version": "1.15.00",
+    "resolution": 384,
+    "defaultBpm": 120,
+    "notes": [
+      {
+        "id": "calibration-note-45",
+        "type": "TAP",
+        "tick": 384,
+        "lane": 0,
+        "width": 4,
+        "attributes": {}
+      },
+      {
+        "id": "calibration-note-46",
+        "type": "TAP",
+        "tick": 438.85714285714283,
+        "lane": 4,
+        "width": 4,
+        "attributes": {}
+      },
+      {
+        "id": "calibration-note-47",
+        "type": "TAP",
+        "tick": 493.7142857142857,
+        "lane": 8,
+        "width": 4,
+        "attributes": {}
+      },
+      {
+        "id": "calibration-note-48",
+        "type": "TAP",
+        "tick": 548.5714285714286,
+        "lane": 12,
+        "width": 4,
+        "attributes": {}
+      },
+      {
+        "id": "calibration-note-49",
+        "type": "TAP",
+        "tick": 603.4285714285714,
+        "lane": 0,
+        "width": 4,
+        "attributes": {}
+      },
+      {
+        "id": "calibration-note-50",
+        "type": "TAP",
+        "tick": 658.2857142857142,
+        "lane": 4,
+        "width": 4,
+        "attributes": {}
+      },
+      {
+        "id": "calibration-note-51",
+        "type": "TAP",
+        "tick": 713.1428571428571,
+        "lane": 8,
+        "width": 4,
+        "attributes": {}
+      },
+      {
+        "id": "calibration-note-52",
+        "type": "TAP",
+        "tick": 768,
+        "lane": 0,
+        "width": 4,
+        "attributes": {}
+      },
+      {
+        "id": "calibration-note-53",
+        "type": "TAP",
+        "tick": 781.7142857142857,
+        "lane": 4,
+        "width": 4,
+        "attributes": {}
+      },
+      {
+        "id": "calibration-note-54",
+        "type": "TAP",
+        "tick": 795.4285714285714,
+        "lane": 8,
+        "width": 4,
+        "attributes": {}
+      },
+      {
+        "id": "calibration-note-55",
+        "type": "TAP",
+        "tick": 809.1428571428571,
+        "lane": 12,
+        "width": 4,
+        "attributes": {}
+      },
+      {
+        "id": "calibration-note-56",
+        "type": "TAP",
+        "tick": 822.8571428571429,
+        "lane": 0,
+        "width": 4,
+        "attributes": {}
+      },
+      {
+        "id": "calibration-note-57",
+        "type": "TAP",
+        "tick": 836.5714285714286,
+        "lane": 4,
+        "width": 4,
+        "attributes": {}
+      },
+      {
+        "id": "calibration-note-58",
+        "type": "TAP",
+        "tick": 850.2857142857143,
+        "lane": 8,
+        "width": 4,
+        "attributes": {}
+      },
+      {
+        "id": "calibration-note-59",
+        "type": "TAP",
+        "tick": 864,
+        "lane": 12,
+        "width": 4,
+        "attributes": {}
+      },
+      {
+        "id": "calibration-note-60",
+        "type": "TAP",
+        "tick": 877.7142857142857,
+        "lane": 0,
+        "width": 4,
+        "attributes": {}
+      },
+      {
+        "id": "calibration-note-61",
+        "type": "TAP",
+        "tick": 891.4285714285714,
+        "lane": 4,
+        "width": 4,
+        "attributes": {}
+      },
+      {
+        "id": "calibration-note-62",
+        "type": "TAP",
+        "tick": 905.1428571428571,
+        "lane": 8,
+        "width": 4,
+        "attributes": {}
+      },
+      {
+        "id": "calibration-note-63",
+        "type": "TAP",
+        "tick": 918.8571428571429,
+        "lane": 12,
+        "width": 4,
+        "attributes": {}
+      },
+      {
+        "id": "calibration-note-64",
+        "type": "TAP",
+        "tick": 932.5714285714286,
+        "lane": 0,
+        "width": 4,
+        "attributes": {}
+      },
+      {
+        "id": "calibration-note-65",
+        "type": "TAP",
+        "tick": 946.2857142857142,
+        "lane": 4,
+        "width": 4,
+        "attributes": {}
+      },
+      {
+        "id": "calibration-note-66",
+        "type": "TAP",
+        "tick": 960,
+        "lane": 8,
+        "width": 4,
+        "attributes": {}
+      },
+      {
+        "id": "calibration-note-67",
+        "type": "TAP",
+        "tick": 973.7142857142858,
+        "lane": 12,
+        "width": 4,
+        "attributes": {}
+      },
+      {
+        "id": "calibration-note-68",
+        "type": "TAP",
+        "tick": 987.4285714285714,
+        "lane": 0,
+        "width": 4,
+        "attributes": {}
+      },
+      {
+        "id": "calibration-note-69",
+        "type": "TAP",
+        "tick": 1001.1428571428571,
+        "lane": 4,
+        "width": 4,
+        "attributes": {}
+      },
+      {
+        "id": "calibration-note-70",
+        "type": "TAP",
+        "tick": 1014.8571428571429,
+        "lane": 8,
+        "width": 4,
+        "attributes": {}
+      },
+      {
+        "id": "calibration-note-71",
+        "type": "TAP",
+        "tick": 1028.5714285714284,
+        "lane": 12,
+        "width": 4,
+        "attributes": {}
+      },
+      {
+        "id": "calibration-note-72",
+        "type": "TAP",
+        "tick": 1042.2857142857142,
+        "lane": 0,
+        "width": 4,
+        "attributes": {}
+      },
+      {
+        "id": "calibration-note-73",
+        "type": "TAP",
+        "tick": 1056,
+        "lane": 4,
+        "width": 4,
+        "attributes": {}
+      },
+      {
+        "id": "calibration-note-74",
+        "type": "TAP",
+        "tick": 1069.7142857142858,
+        "lane": 8,
+        "width": 4,
+        "attributes": {}
+      },
+      {
+        "id": "calibration-note-75",
+        "type": "TAP",
+        "tick": 1083.4285714285716,
+        "lane": 12,
+        "width": 4,
+        "attributes": {}
+      },
+      {
+        "id": "calibration-note-76",
+        "type": "TAP",
+        "tick": 1097.142857142857,
+        "lane": 0,
+        "width": 4,
+        "attributes": {}
+      },
+      {
+        "id": "calibration-note-77",
+        "type": "TAP",
+        "tick": 1110.857142857143,
+        "lane": 4,
+        "width": 4,
+        "attributes": {}
+      },
+      {
+        "id": "calibration-note-78",
+        "type": "TAP",
+        "tick": 1124.5714285714284,
+        "lane": 8,
+        "width": 4,
+        "attributes": {}
+      },
+      {
+        "id": "calibration-note-79",
+        "type": "TAP",
+        "tick": 1138.2857142857142,
+        "lane": 12,
+        "width": 4,
+        "attributes": {}
+      },
+      {
+        "id": "calibration-note-80",
+        "type": "HOLD",
+        "tick": 1206.857142857143,
+        "lane": 2,
+        "width": 4,
+        "duration": 274.2857142857143,
+        "endLane": 2,
+        "endWidth": 4,
+        "attributes": {}
+      },
+      {
+        "id": "calibration-note-81",
+        "type": "HOLD",
+        "tick": 1536,
+        "lane": 10,
+        "width": 4,
+        "duration": 329.14285714285717,
+        "endLane": 10,
+        "endWidth": 4,
+        "attributes": {}
+      },
+      {
+        "id": "calibration-note-82",
+        "type": "TAP",
+        "tick": 1920,
+        "lane": 0,
+        "width": 4,
+        "attributes": {}
+      },
+      {
+        "id": "calibration-note-83",
+        "type": "TAP",
+        "tick": 1974.857142857143,
+        "lane": 4,
+        "width": 4,
+        "attributes": {}
+      },
+      {
+        "id": "calibration-note-84",
+        "type": "TAP",
+        "tick": 2029.7142857142858,
+        "lane": 8,
+        "width": 4,
+        "attributes": {}
+      },
+      {
+        "id": "calibration-note-85",
+        "type": "TAP",
+        "tick": 2084.5714285714284,
+        "lane": 12,
+        "width": 4,
+        "attributes": {}
+      },
+      {
+        "id": "calibration-note-86",
+        "type": "TAP",
+        "tick": 2139.4285714285716,
+        "lane": 0,
+        "width": 4,
+        "attributes": {}
+      },
+      {
+        "id": "calibration-note-87",
+        "type": "TAP",
+        "tick": 2194.285714285714,
+        "lane": 4,
+        "width": 4,
+        "attributes": {}
+      },
+      {
+        "id": "calibration-note-88",
+        "type": "EXTAP",
+        "tick": 2249.1428571428573,
+        "lane": 8,
+        "width": 4,
+        "attributes": {}
+      },
+      {
+        "id": "calibration-note-89",
+        "type": "TAP",
+        "tick": 2304,
+        "lane": 0,
+        "width": 4,
+        "attributes": {}
+      },
+      {
+        "id": "calibration-note-90",
+        "type": "TAP",
+        "tick": 2358.8571428571427,
+        "lane": 4,
+        "width": 4,
+        "attributes": {}
+      },
+      {
+        "id": "calibration-note-91",
+        "type": "TAP",
+        "tick": 2413.714285714286,
+        "lane": 8,
+        "width": 4,
+        "attributes": {}
+      },
+      {
+        "id": "calibration-note-92",
+        "type": "TAP",
+        "tick": 2468.5714285714284,
+        "lane": 12,
+        "width": 4,
+        "attributes": {}
+      },
+      {
+        "id": "calibration-note-93",
+        "type": "TAP",
+        "tick": 2523.4285714285716,
+        "lane": 0,
+        "width": 4,
+        "attributes": {}
+      },
+      {
+        "id": "calibration-note-94",
+        "type": "TAP",
+        "tick": 2578.285714285714,
+        "lane": 4,
+        "width": 4,
+        "attributes": {}
+      },
+      {
+        "id": "calibration-note-95",
+        "type": "EXTAP",
+        "tick": 2633.1428571428573,
+        "lane": 8,
+        "width": 4,
+        "attributes": {}
+      },
+      {
+        "id": "calibration-note-96",
+        "type": "TAP",
+        "tick": 2688,
+        "lane": 0,
+        "width": 4,
+        "attributes": {}
+      },
+      {
+        "id": "calibration-note-97",
+        "type": "TAP",
+        "tick": 2742.8571428571427,
+        "lane": 4,
+        "width": 4,
+        "attributes": {}
+      },
+      {
+        "id": "calibration-note-98",
+        "type": "TAP",
+        "tick": 2797.714285714286,
+        "lane": 8,
+        "width": 4,
+        "attributes": {}
+      },
+      {
+        "id": "calibration-note-99",
+        "type": "TAP",
+        "tick": 2852.5714285714284,
+        "lane": 12,
+        "width": 4,
+        "attributes": {}
+      },
+      {
+        "id": "calibration-note-100",
+        "type": "TAP",
+        "tick": 2907.4285714285716,
+        "lane": 0,
+        "width": 4,
+        "attributes": {}
+      },
+      {
+        "id": "calibration-note-101",
+        "type": "TAP",
+        "tick": 2962.285714285714,
+        "lane": 4,
+        "width": 4,
+        "attributes": {}
+      },
+      {
+        "id": "calibration-note-102",
+        "type": "EXTAP",
+        "tick": 3017.1428571428573,
+        "lane": 8,
+        "width": 4,
+        "attributes": {}
+      },
+      {
+        "id": "calibration-note-103",
+        "type": "TAP",
+        "tick": 3072,
+        "lane": 0,
+        "width": 4,
+        "attributes": {}
+      },
+      {
+        "id": "calibration-note-104",
+        "type": "TAP",
+        "tick": 3126.8571428571427,
+        "lane": 4,
+        "width": 4,
+        "attributes": {}
+      },
+      {
+        "id": "calibration-note-105",
+        "type": "TAP",
+        "tick": 3181.714285714286,
+        "lane": 8,
+        "width": 4,
+        "attributes": {}
+      },
+      {
+        "id": "calibration-note-106",
+        "type": "TAP",
+        "tick": 3236.5714285714284,
+        "lane": 12,
+        "width": 4,
+        "attributes": {}
+      },
+      {
+        "id": "calibration-note-107",
+        "type": "TAP",
+        "tick": 3291.4285714285716,
+        "lane": 0,
+        "width": 4,
+        "attributes": {}
+      },
+      {
+        "id": "calibration-note-108",
+        "type": "TAP",
+        "tick": 3346.285714285714,
+        "lane": 4,
+        "width": 4,
+        "attributes": {}
+      },
+      {
+        "id": "calibration-note-109",
+        "type": "EXTAP",
+        "tick": 3401.1428571428573,
+        "lane": 8,
+        "width": 4,
+        "attributes": {}
+      },
+      {
+        "id": "calibration-note-110",
+        "type": "TAP",
+        "tick": 3456,
+        "lane": 0,
+        "width": 4,
+        "attributes": {}
+      },
+      {
+        "id": "calibration-note-111",
+        "type": "TAP",
+        "tick": 3510.8571428571427,
+        "lane": 4,
+        "width": 4,
+        "attributes": {}
+      },
+      {
+        "id": "calibration-note-112",
+        "type": "TAP",
+        "tick": 3565.714285714286,
+        "lane": 8,
+        "width": 4,
+        "attributes": {}
+      },
+      {
+        "id": "calibration-note-113",
+        "type": "TAP",
+        "tick": 3620.5714285714284,
+        "lane": 12,
+        "width": 4,
+        "attributes": {}
+      },
+      {
+        "id": "calibration-note-114",
+        "type": "TAP",
+        "tick": 3675.4285714285716,
+        "lane": 0,
+        "width": 4,
+        "attributes": {}
+      },
+      {
+        "id": "calibration-note-115",
+        "type": "TAP",
+        "tick": 3730.285714285714,
+        "lane": 4,
+        "width": 4,
+        "attributes": {}
+      },
+      {
+        "id": "calibration-note-116",
+        "type": "EXTAP",
+        "tick": 3785.1428571428573,
+        "lane": 8,
+        "width": 4,
+        "attributes": {}
+      },
+      {
+        "id": "calibration-note-117",
+        "type": "TAP",
+        "tick": 3840,
+        "lane": 0,
+        "width": 4,
+        "attributes": {}
+      },
+      {
+        "id": "calibration-note-118",
+        "type": "TAP",
+        "tick": 3894.8571428571427,
+        "lane": 4,
+        "width": 4,
+        "attributes": {}
+      },
+      {
+        "id": "calibration-note-119",
+        "type": "TAP",
+        "tick": 3949.714285714286,
+        "lane": 8,
+        "width": 4,
+        "attributes": {}
+      },
+      {
+        "id": "calibration-note-120",
+        "type": "TAP",
+        "tick": 4004.5714285714284,
+        "lane": 12,
+        "width": 4,
+        "attributes": {}
+      },
+      {
+        "id": "calibration-note-121",
+        "type": "TAP",
+        "tick": 4059.4285714285716,
+        "lane": 0,
+        "width": 4,
+        "attributes": {}
+      },
+      {
+        "id": "calibration-note-122",
+        "type": "TAP",
+        "tick": 4114.285714285715,
+        "lane": 4,
+        "width": 4,
+        "attributes": {}
+      },
+      {
+        "id": "calibration-note-123",
+        "type": "EXTAP",
+        "tick": 4169.142857142857,
+        "lane": 8,
+        "width": 4,
+        "attributes": {}
+      },
+      {
+        "id": "calibration-note-124",
+        "type": "TAP",
+        "tick": 4224,
+        "lane": 0,
+        "width": 4,
+        "attributes": {}
+      },
+      {
+        "id": "calibration-note-125",
+        "type": "TAP",
+        "tick": 4278.857142857143,
+        "lane": 4,
+        "width": 4,
+        "attributes": {}
+      },
+      {
+        "id": "calibration-note-126",
+        "type": "TAP",
+        "tick": 4333.714285714285,
+        "lane": 8,
+        "width": 4,
+        "attributes": {}
+      },
+      {
+        "id": "calibration-note-127",
+        "type": "TAP",
+        "tick": 4388.571428571428,
+        "lane": 12,
+        "width": 4,
+        "attributes": {}
+      },
+      {
+        "id": "calibration-note-128",
+        "type": "TAP",
+        "tick": 4443.428571428572,
+        "lane": 0,
+        "width": 4,
+        "attributes": {}
+      },
+      {
+        "id": "calibration-note-129",
+        "type": "TAP",
+        "tick": 4498.285714285715,
+        "lane": 4,
+        "width": 4,
+        "attributes": {}
+      },
+      {
+        "id": "calibration-note-130",
+        "type": "EXTAP",
+        "tick": 4553.142857142857,
+        "lane": 8,
+        "width": 4,
+        "attributes": {}
+      }
+    ],
+    "events": [
+      {
+        "id": "sevenths-bpm-120",
+        "type": "BPM",
+        "tick": 0,
+        "value": 120
+      },
+      {
+        "id": "sevenths-bpm-150",
+        "type": "BPM",
+        "tick": 1590.857142857143,
+        "value": 150
+      },
+      {
+        "id": "sevenths-bpm-90",
+        "type": "BPM",
+        "tick": 3072,
+        "value": 90
+      }
+    ],
+    "headerRecords": [],
+    "unknownRecords": []
+  }
+}

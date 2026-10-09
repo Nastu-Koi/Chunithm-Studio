@@ -1,0 +1,36 @@
+{
+  "name": "chunithm-studio",
+  "productName": "Chuni Studio",
+  "version": "0.1.10",
+  "description": "A local CHUNITHM chart editor and automatic preview player",
+  "private": true,
+  "type": "module",
+  "main": "dist-electron/main.cjs",
+  "scripts": {
+    "dev": "vite --host 127.0.0.1",
+    "build": "tsc --noEmit && vite build && node scripts/build-main.mjs",
+    "desktop": "npm run build && electron .",
+    "test": "tsx --test tests/*.test.ts",
+    "check": "tsc --noEmit",
+    "package:win": "npm run build && node scripts/package-win.mjs"
+  },
+  "dependencies": {
+    "fast-xml-parser": "^5.3.0",
+    "ffmpeg-static": "^5.2.0",
+    "sharp": "^0.34.4"
+  },
+  "devDependencies": {
+    "@electron/packager": "^18.3.6",
+    "@playwright/test": "^1.56.0",
+    "@types/node": "^22.18.0",
+    "electron": "44.7.0",
+    "esbuild": "^0.25.10",
+    "node": "22.20.0",
+    "tsx": "^4.20.6",
+    "typescript": "^5.9.3",
+    "vite": "6.4.4"
+  },
+  "optionalDependencies": {
+    "@img/sharp-win32-x64": "0.34.5"
+  }
+}

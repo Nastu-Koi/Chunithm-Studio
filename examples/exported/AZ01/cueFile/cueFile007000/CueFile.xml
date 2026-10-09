@@ -1,0 +1,15 @@
+﻿<?xml version="1.0" encoding="utf-8"?>
+<CueFileData>
+  <dataName>cueFile007000</dataName>
+  <name>
+    <id>7000</id>
+    <str>music7000</str>
+    <data/>
+  </name>
+  <acbFile>
+    <path>music7000.acb</path>
+  </acbFile>
+  <awbFile>
+    <path>music7000.awb</path>
+  </awbFile>
+</CueFileData>

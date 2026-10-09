@@ -1,0 +1,26 @@
+{
+  "source": "https://umgr.inonote.jp/files/Margrete_v1.8.0_23b6ce2d.zip",
+  "member": "Margrete_v1.8.0/data/note_icons.png",
+  "sha256": "ee71561582db900f2d1da962a2a30e95202bd95f9708c16a4c714ddd371c324e",
+  "dimensions": [
+    32,
+    64
+  ],
+  "copiedUnmodified": true,
+  "barWidth": 10,
+  "barHeight": 4,
+  "rows": {
+    "TAP": 0,
+    "EXTAP": 4,
+    "SLIDE_HEAD": 8,
+    "SLIDE_END": 12,
+    "HOLD_HEAD": 16,
+    "HOLD_END": 20,
+    "AIR_HOLD": 24,
+    "AIR_SLIDE": 28,
+    "AIR_CRUSH": 32,
+    "FLICK": 36,
+    "DAMAGE": 40,
+    "AIR_ARROW": 48
+  }
+}
