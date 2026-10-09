@@ -1,0 +1,11 @@
+node_modules/
+dist/
+dist-electron/
+release/
+out/
+.cache/
+test-results/
+playwright-report/
+native/**/bin/
+native/**/obj/
+*.user

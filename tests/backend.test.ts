@@ -1,0 +1,149 @@
+import test from 'node:test';
+import assert from 'node:assert/strict';
+import { mkdtemp, mkdir, writeFile, readFile, rename, readdir, rm } from 'node:fs/promises';
+import { tmpdir } from 'node:os';
+import path from 'node:path';
+import { scanLibrary, readLibraryXmlMetadata } from '../src/backend/library';
+import { readProject, saveProject } from '../src/backend/projects';
+import { decodeDDS } from '../src/backend/dds-preview';
+import { createProject, createNote } from '../src/core/model';
+import { getXmlMetadata } from '../src/core/xml-metadata';
+
+async function put(filename: string, contents: string | Buffer): Promise<void> {
+  await mkdir(path.dirname(filename), { recursive: true }); await writeFile(filename, contents);
+}
+function musicXml(id: number, title: string, cueId = id): string {
+  return `<MusicData><name><id>${id}</id><str>${title}</str></name><artistName><str>Test artist</str></artistName><cueFileName><id>${cueId}</id></cueFileName><jaketFile><path>art\\jacket.dds</path></jaketFile><worldsEndTagName><str>改</str></worldsEndTagName><starDifType>5</starDifType><fumens><MusicFumenData><enable>true</enable><type><id>5</id></type><file><path>${id}_05.c2s</path></file><level>0</level><levelDecimal>0</levelDecimal></MusicFumenData></fumens></MusicData>`;
+}
+
+test('OPT metadata overlays inherit charts, covers, and missing cue files independently', async t => {
+  const game = await mkdtemp(path.join(tmpdir(), 'chuni-library-')); t.after(() => rm(game, { recursive: true, force: true }));
+  const base = path.join(game, 'data', 'A000'); const overlay = path.join(game, 'bin', 'option', 'AZ01');
+  const song = 'music7000'; const lowerSong = path.join(base, 'music', song); const upperSong = path.join(overlay, 'music', song);
+  await put(path.join(lowerSong, 'Music.xml'), musicXml(7000, 'Base title'));
+  await put(path.join(lowerSong, '7000_05.c2s'), 'TAP\t0\t0\t0\t4\n');
+  await put(path.join(lowerSong, 'art', 'jacket.dds'), 'synthetic cover');
+  await put(path.join(upperSong, 'Music.xml'), musicXml(7000, 'Overlay title'));
+  await put(path.join(base, 'cueFile', 'cueFile7000', 'music7000.acb'), 'lower acb');
+  await put(path.join(base, 'cueFile', 'cueFile7000', 'music7000.awb'), 'lower awb');
+  await put(path.join(overlay, 'cueFile', 'cueFile7000', 'music7000.AWB'), 'upper awb');
+  await mkdir(path.join(overlay, 'cueFile', 'cueFile7000', 'fake.acb'), { recursive: true });
+  const [entry] = await scanLibrary(game);
+  assert.equal(entry.title, 'Overlay title'); assert.equal(entry.pack, 'AZ01');
+  assert.equal(entry.chartPath, path.join(lowerSong, '7000_05.c2s'));
+  assert.equal(entry.coverPath, path.join(lowerSong, 'art', 'jacket.dds'));
+  assert.equal(entry.acbPath, path.join(base, 'cueFile', 'cueFile7000', 'music7000.acb'));
+  assert.equal(entry.awbPath, path.join(overlay, 'cueFile', 'cueFile7000', 'music7000.AWB'));
+  assert.equal(entry.difficulty, 'WORLD’S END'); assert.equal(entry.stars, 3);
+
+  // A later pack can override assets without duplicating Music.xml.
+  const assetsOnly = path.join(game, 'bin', 'option', 'AZ02', 'music', song);
+  await put(path.join(assetsOnly, '7000_05.c2s'), 'TAP\t1\t0\t0\t4\n');
+  await put(path.join(assetsOnly, 'art', 'jacket.dds'), 'new synthetic cover');
+  const [overridden] = await scanLibrary(game);
+  assert.equal(overridden.title, 'Overlay title');
+  assert.equal(overridden.chartPath, path.join(assetsOnly, '7000_05.c2s'));
+  assert.equal(overridden.coverPath, path.join(assetsOnly, 'art', 'jacket.dds'));
+});
+
+test('empty cue directories and directories with audio suffixes never become audio file paths', async t => {
+  const game = await mkdtemp(path.join(tmpdir(), 'chuni-library-empty-')); t.after(() => rm(game, { recursive: true, force: true }));
+  const pack = path.join(game, 'data', 'A000');
+  await put(path.join(pack, 'music', 'music7001', 'Music.xml'), musicXml(7001, 'No assets'));
+  await put(path.join(pack, 'music', 'music7001', '7001_05.c2s'), 'TAP\t0\t0\t0\t4\n');
+  await mkdir(path.join(pack, 'cueFile', 'cueFile7001', 'fake.acb'), { recursive: true });
+  await mkdir(path.join(pack, 'cueFile', 'cueFile7001', 'fake.awb'), { recursive: true });
+  const [entry] = await scanLibrary(game);
+  assert.equal(entry.acbPath, ''); assert.equal(entry.awbPath, ''); assert.equal(entry.coverPath, '');
+});
+
+test('XML import uses winning metadata files, exact cue filenames, and keeps native difficulty decimals', async t => {
+  const game = await mkdtemp(path.join(tmpdir(), 'chuni-library-xml-')); t.after(() => rm(game, { recursive: true, force: true }));
+  const base = path.join(game, 'data/A000'), overlay = path.join(game, 'bin/option/AZ01');
+  const lowerSong = path.join(base, 'music/music7000'), upperSong = path.join(overlay, 'music/music7000');
+  const song = musicXml(7000, 'XML title', 265).replace('<level>0</level><levelDecimal>0</levelDecimal>', '<level>15</level><levelDecimal>20</levelDecimal><notesDesigner>XML designer</notesDesigner>').replace('</MusicData>', '<sortName>CUSTOMSORT</sortName><releaseDate>20240229</releaseDate><priority>3</priority><futureMusic><flag>retained</flag></futureMusic></MusicData>');
+  await put(path.join(upperSong, 'Music.xml'), song); await put(path.join(lowerSong, '7000_05.c2s'), 'TAP\t0\t0\t0\t4\n');
+  const cueFolder = path.join(base, 'cueFile/cueFile000265');
+  await put(path.join(cueFolder, 'CueFile.xml'), '<CueFileData xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance"><name><id>265</id><str>music0265</str></name><acbFile><path>registered.acb</path></acbFile><awbFile><path>registered.awb</path></awbFile><futureCue>retained</futureCue></CueFileData>');
+  for (const name of ['aaa-wrong.acb', 'aaa-wrong.awb', 'registered.acb', 'registered.awb']) await put(path.join(cueFolder, name), 'synthetic');
+  const [entry] = await scanLibrary(game);
+  assert.equal(entry.level, '15.2'); assert.equal(entry.notesDesigner, 'XML designer');
+  assert.equal(entry.musicXmlPath, path.join(upperSong, 'Music.xml'));
+  assert.equal(entry.cueXmlPath, path.join(cueFolder, 'CueFile.xml'));
+  assert.equal(entry.acbPath, path.join(cueFolder, 'registered.acb')); assert.equal(entry.awbPath, path.join(cueFolder, 'registered.awb'));
+  const metadata = await readLibraryXmlMetadata(entry);
+  assert.equal(metadata.music.sortName, 'CUSTOMSORT'); assert.equal(metadata.music.releaseDate, '20240229'); assert.equal(metadata.music.priority, 3);
+  assert.deepEqual(metadata.sourceMusic?.futureMusic, { flag: 'retained' }); assert.equal(metadata.sourceCue?.futureCue, 'retained');
+  assert.equal(metadata.sourceCue?.['@_xmlns:xsi'], 'http://www.w3.org/2001/XMLSchema-instance');
+  for (const [decimal, expected] of [[5, '15.05'], [50, '15+'], [75, '15.75']] as const) {
+    await put(path.join(upperSong, 'Music.xml'), song.replace('<levelDecimal>20</levelDecimal>', `<levelDecimal>${decimal}</levelDecimal>`));
+    assert.equal((await scanLibrary(game))[0].level, expected);
+  }
+});
+
+test('project saves bundle relative assets, preserve fractional chart data, and reload after moving with a previous-save backup', async t => {
+  const root = await mkdtemp(path.join(tmpdir(), 'chuni-project-')); t.after(() => rm(root, { recursive: true, force: true }));
+  const audio = path.join(root, 'inputs', 'original.wav'); const cover = path.join(root, 'inputs', 'original.png');
+  const audioBytes = Buffer.from([0, 1, 2, 255]); const coverBytes = Buffer.from([3, 4, 5, 254]);
+  await put(audio, audioBytes); await put(cover, coverBytes);
+  const project = createProject(); project.audio.path = audio; project.coverPath = cover;
+  project.metadata.title = 'First save'; project.chart.allowOutOfLane = true;
+  getXmlMetadata(project).music.releaseDate = '20260228'; getXmlMetadata(project).music.priority = 7;
+  getXmlMetadata(project).sourceMusic = { futureField: { '@_version': '2', enabled: 'true' } };
+  getXmlMetadata(project).sourceCue = { futureCue: 'retained' };
+  project.chart.notes = [createNote('TAP', 384 / 7)];
+  const original = structuredClone(project);
+  const directory = path.join(root, 'bundle'); const filename = path.join(directory, 'song.chuni.json');
+  const saved = await saveProject(filename, project);
+  assert.deepEqual(project, original);
+  assert.equal(path.isAbsolute(saved.audio.path), true);
+  const disk = JSON.parse(await readFile(filename, 'utf8'));
+  assert.equal(disk.audio.path, path.join('song.assets', 'audio.wav'));
+  assert.equal(disk.coverPath, path.join('song.assets', 'cover.png'));
+  assert.deepEqual(await readFile(saved.audio.path), audioBytes);
+  assert.deepEqual(await readFile(saved.coverPath), coverBytes);
+  saved.metadata.title = 'Second save'; await saveProject(filename, saved);
+  const backup = JSON.parse(await readFile(`${filename}.bak`, 'utf8'));
+  assert.equal(backup.metadata.title, 'First save');
+  assert.ok(!(await readdir(directory)).some(name => name.endsWith('.tmp')));
+  const moved = path.join(root, 'moved bundle'); await rename(directory, moved);
+  const loaded = await readProject(path.join(moved, 'song.chuni.json'));
+  assert.equal(loaded.metadata.title, 'Second save');
+  assert.equal(loaded.chart.notes[0].tick, 384 / 7); assert.equal(loaded.chart.allowOutOfLane, true);
+  assert.deepEqual(loaded.xmlMetadata, project.xmlMetadata);
+  assert.equal(loaded.audio.path, path.join(moved, 'song.assets', 'audio.wav'));
+  assert.deepEqual(await readFile(loaded.audio.path), audioBytes);
+  assert.deepEqual(await readFile(loaded.coverPath), coverBytes);
+  const previous = await readProject(path.join(moved, 'song.chuni.json.bak'));
+  assert.equal(previous.metadata.title, 'First save'); assert.deepEqual(await readFile(previous.audio.path), audioBytes);
+});
+
+test('reading an old project migrates XML defaults and invalid XML edits cannot be saved', async t => {
+  const root = await mkdtemp(path.join(tmpdir(), 'chuni-project-xml-')); t.after(() => rm(root, { recursive: true, force: true }));
+  const project = createProject(); delete project.xmlMetadata;
+  const filename = path.join(root, 'old.chuni.json'); await writeFile(filename, JSON.stringify(project));
+  const loaded = await readProject(filename); assert.equal(loaded.xmlMetadata?.version, 1);
+  getXmlMetadata(loaded).music.releaseDate = '20250230';
+  const invalid = path.join(root, 'invalid.chuni.json');
+  await assert.rejects(saveProject(invalid, loaded), /releaseDate/);
+  await assert.rejects(readFile(invalid), { code: 'ENOENT' });
+});
+
+function dxt1(width = 4, height = 4): Buffer {
+  const buffer = Buffer.alloc(136); buffer.write('DDS ', 0, 'ascii'); buffer.writeUInt32LE(124, 4);
+  buffer.writeUInt32LE(height, 12); buffer.writeUInt32LE(width, 16); buffer.writeUInt32LE(32, 76);
+  buffer.write('DXT1', 84, 'ascii'); buffer.writeUInt16LE(0xf800, 128); buffer.writeUInt16LE(0x07e0, 130);
+  buffer.writeUInt32LE(0xe4e4e4e4, 132); return buffer;
+}
+test('DDS preview decodes DXT1 color interpolation and clips partial four-pixel blocks', () => {
+  const image = decodeDDS(dxt1(3, 2));
+  assert.equal(image.width, 3); assert.equal(image.height, 2);
+  assert.deepEqual([...image.data], [255, 0, 0, 255, 0, 255, 0, 255, 170, 85, 0, 255, 255, 0, 0, 255, 0, 255, 0, 255, 170, 85, 0, 255]);
+  const transparent = dxt1(); transparent.writeUInt16LE(0, 128); transparent.writeUInt16LE(0xffff, 130); transparent.writeUInt32LE(0xffffffff, 132);
+  assert.ok(decodeDDS(transparent).data.every(channel => channel === 0));
+});
+
+test('DDS preview rejects truncated headers and truncated DXT1 payloads with clear errors', () => {
+  assert.throws(() => decodeDDS(dxt1().subarray(0, 20)), /DDS 文件头无效/);
+  assert.throws(() => decodeDDS(dxt1().subarray(0, 135)), /DDS 像素数据不完整/);
+});

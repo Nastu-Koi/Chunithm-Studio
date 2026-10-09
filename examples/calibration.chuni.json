@@ -1,0 +1,548 @@
+{
+  "format": "chunithm-studio",
+  "formatVersion": 1,
+  "id": "example-calibration-v1",
+  "metadata": {
+    "title": "Chuni Studio Calibration",
+    "artist": "Chuni Studio Original Synthesis",
+    "designer": "Chuni Studio",
+    "difficulty": "WORLD’S END",
+    "level": "0"
+  },
+  "audio": {
+    "path": "calibration.assets/audio.wav",
+    "offset": 0,
+    "previewStart": 8,
+    "previewEnd": 14.4
+  },
+  "coverPath": "calibration.assets/cover.png",
+  "exportSettings": {
+    "optId": "AZ01",
+    "musicId": 7000,
+    "cueId": 7000,
+    "weTag": "改",
+    "stars": 3
+  },
+  "chart": {
+    "version": "1.15.00",
+    "resolution": 384,
+    "defaultBpm": 120,
+    "notes": [
+      {
+        "id": "calibration-note-1",
+        "type": "TAP",
+        "tick": 384,
+        "lane": 0,
+        "width": 4,
+        "attributes": {}
+      },
+      {
+        "id": "calibration-note-2",
+        "type": "EXTAP",
+        "tick": 480,
+        "lane": 4,
+        "width": 4,
+        "attributes": {
+          "effect": "CE"
+        }
+      },
+      {
+        "id": "calibration-note-3",
+        "type": "FLICK",
+        "tick": 576,
+        "lane": 8,
+        "width": 4,
+        "attributes": {
+          "direction": "L"
+        }
+      },
+      {
+        "id": "calibration-note-4",
+        "type": "TAP",
+        "tick": 672,
+        "lane": 12,
+        "width": 4,
+        "attributes": {}
+      },
+      {
+        "id": "calibration-note-5",
+        "type": "AIR",
+        "tick": 672,
+        "lane": 12,
+        "width": 4,
+        "attributes": {
+          "direction": "UR",
+          "parent": "TAP",
+          "color": "DEF"
+        }
+      },
+      {
+        "id": "calibration-note-6",
+        "type": "HOLD",
+        "tick": 768,
+        "lane": 0,
+        "width": 4,
+        "duration": 288,
+        "endLane": 0,
+        "endWidth": 4,
+        "attributes": {}
+      },
+      {
+        "id": "calibration-note-7",
+        "type": "SLIDE",
+        "tick": 768,
+        "lane": 8,
+        "width": 4,
+        "duration": 96,
+        "endLane": 4,
+        "endWidth": 4,
+        "attributes": {
+          "visible": false,
+          "parent": "SLD"
+        }
+      },
+      {
+        "id": "calibration-note-8",
+        "type": "SLIDE",
+        "tick": 864,
+        "lane": 4,
+        "width": 4,
+        "duration": 192,
+        "endLane": 4,
+        "endWidth": 4,
+        "attributes": {
+          "visible": true,
+          "parent": "SLD"
+        }
+      },
+      {
+        "id": "calibration-note-9",
+        "type": "AIR",
+        "tick": 1056,
+        "lane": 0,
+        "width": 4,
+        "attributes": {
+          "direction": "UL",
+          "parent": "HLD",
+          "color": "DEF"
+        }
+      },
+      {
+        "id": "calibration-note-10",
+        "type": "TAP",
+        "tick": 1152,
+        "lane": 0,
+        "width": 4,
+        "attributes": {}
+      },
+      {
+        "id": "calibration-note-11",
+        "type": "AIR_HOLD",
+        "tick": 1152,
+        "lane": 0,
+        "width": 4,
+        "duration": 192,
+        "endLane": 0,
+        "endWidth": 4,
+        "attributes": {
+          "parent": "TAP",
+          "color": "DEF",
+          "visible": true
+        }
+      },
+      {
+        "id": "calibration-note-12",
+        "type": "AIR_HOLD",
+        "tick": 1344,
+        "lane": 0,
+        "width": 4,
+        "duration": 96,
+        "endLane": 0,
+        "endWidth": 4,
+        "attributes": {
+          "parent": "AHD",
+          "color": "DEF",
+          "visible": true
+        }
+      },
+      {
+        "id": "calibration-note-13",
+        "type": "TAP",
+        "tick": 1152,
+        "lane": 8,
+        "width": 4,
+        "attributes": {}
+      },
+      {
+        "id": "calibration-note-14",
+        "type": "AIR_SLIDE",
+        "tick": 1152,
+        "lane": 8,
+        "width": 4,
+        "duration": 192,
+        "endLane": 12,
+        "endWidth": 4,
+        "height": 5,
+        "endHeight": 5,
+        "attributes": {
+          "parent": "TAP",
+          "color": "DEF",
+          "visible": true
+        }
+      },
+      {
+        "id": "calibration-note-15",
+        "type": "AIR_SLIDE",
+        "tick": 1344,
+        "lane": 12,
+        "width": 4,
+        "duration": 96,
+        "endLane": 12,
+        "endWidth": 4,
+        "height": 5,
+        "endHeight": 5,
+        "attributes": {
+          "parent": "ASD",
+          "color": "DEF",
+          "visible": true
+        }
+      },
+      {
+        "id": "calibration-note-16",
+        "type": "TAP",
+        "tick": 1536,
+        "lane": 0,
+        "width": 4,
+        "attributes": {}
+      },
+      {
+        "id": "calibration-note-17",
+        "type": "TAP",
+        "tick": 1632,
+        "lane": 4,
+        "width": 4,
+        "attributes": {}
+      },
+      {
+        "id": "calibration-note-18",
+        "type": "TAP",
+        "tick": 1728,
+        "lane": 8,
+        "width": 4,
+        "attributes": {}
+      },
+      {
+        "id": "calibration-note-19",
+        "type": "TAP",
+        "tick": 1824,
+        "lane": 12,
+        "width": 4,
+        "attributes": {}
+      },
+      {
+        "id": "calibration-note-20",
+        "type": "DAMAGE",
+        "tick": 1680,
+        "lane": 6,
+        "width": 4,
+        "attributes": {}
+      },
+      {
+        "id": "calibration-note-21",
+        "type": "TAP",
+        "tick": 2112,
+        "lane": 2,
+        "width": 4,
+        "attributes": {}
+      },
+      {
+        "id": "calibration-note-22",
+        "type": "TAP",
+        "tick": 2208,
+        "lane": 10,
+        "width": 4,
+        "attributes": {}
+      },
+      {
+        "id": "calibration-note-23",
+        "type": "TAP",
+        "tick": 2496,
+        "lane": 2,
+        "width": 4,
+        "attributes": {}
+      },
+      {
+        "id": "calibration-note-24",
+        "type": "TAP",
+        "tick": 2592,
+        "lane": 10,
+        "width": 4,
+        "attributes": {}
+      },
+      {
+        "id": "calibration-note-25",
+        "type": "TAP",
+        "tick": 2784,
+        "lane": 10,
+        "width": 4,
+        "attributes": {}
+      },
+      {
+        "id": "calibration-note-26",
+        "type": "TAP",
+        "tick": 2880,
+        "lane": 2,
+        "width": 4,
+        "attributes": {}
+      },
+      {
+        "id": "calibration-note-27",
+        "type": "TAP",
+        "tick": 2976,
+        "lane": 10,
+        "width": 4,
+        "attributes": {}
+      },
+      {
+        "id": "calibration-note-28",
+        "type": "TAP",
+        "tick": 3072,
+        "lane": 2,
+        "width": 4,
+        "attributes": {}
+      },
+      {
+        "id": "calibration-note-29",
+        "type": "TAP",
+        "tick": 3168,
+        "lane": 4,
+        "width": 4,
+        "attributes": {}
+      },
+      {
+        "id": "calibration-note-30",
+        "type": "AIR_CRUSH",
+        "tick": 3264,
+        "lane": 6,
+        "width": 4,
+        "duration": 192,
+        "endLane": 6,
+        "endWidth": 4,
+        "height": 5,
+        "endHeight": 5,
+        "attributes": {
+          "interval": 48,
+          "color": "DEF",
+          "effect": "DEF"
+        }
+      },
+      {
+        "id": "calibration-note-31",
+        "type": "HOLD",
+        "tick": 3456,
+        "lane": 0,
+        "width": 4,
+        "duration": 288,
+        "endLane": 0,
+        "endWidth": 4,
+        "attributes": {}
+      },
+      {
+        "id": "calibration-note-32",
+        "type": "SLIDE",
+        "tick": 3456,
+        "lane": 12,
+        "width": 4,
+        "duration": 96,
+        "endLane": 8,
+        "endWidth": 4,
+        "attributes": {
+          "parent": "SLD",
+          "visible": false
+        }
+      },
+      {
+        "id": "calibration-note-33",
+        "type": "SLIDE",
+        "tick": 3552,
+        "lane": 8,
+        "width": 4,
+        "duration": 192,
+        "endLane": 8,
+        "endWidth": 4,
+        "attributes": {
+          "parent": "SLD",
+          "visible": true
+        }
+      },
+      {
+        "id": "calibration-note-34",
+        "type": "AIR",
+        "tick": 3744,
+        "lane": 8,
+        "width": 4,
+        "attributes": {
+          "direction": "IR",
+          "parent": "SLD",
+          "color": "DEF"
+        }
+      },
+      {
+        "id": "calibration-note-35",
+        "type": "TAP",
+        "tick": 3840,
+        "lane": 0,
+        "width": 4,
+        "attributes": {}
+      },
+      {
+        "id": "calibration-note-36",
+        "type": "DAMAGE",
+        "tick": 3936,
+        "lane": 12,
+        "width": 4,
+        "attributes": {}
+      },
+      {
+        "id": "calibration-note-37",
+        "type": "TAP",
+        "tick": 4032,
+        "lane": 6,
+        "width": 4,
+        "attributes": {}
+      },
+      {
+        "id": "calibration-note-38",
+        "type": "AIR",
+        "tick": 4032,
+        "lane": 6,
+        "width": 4,
+        "attributes": {
+          "direction": "DW",
+          "parent": "TAP",
+          "color": "DEF"
+        }
+      },
+      {
+        "id": "calibration-note-39",
+        "type": "TAP",
+        "tick": 4128,
+        "lane": 12,
+        "width": 4,
+        "attributes": {}
+      },
+      {
+        "id": "calibration-note-40",
+        "type": "TAP",
+        "tick": 4224,
+        "lane": 0,
+        "width": 4,
+        "attributes": {}
+      },
+      {
+        "id": "calibration-note-41",
+        "type": "TAP",
+        "tick": 4320,
+        "lane": 6,
+        "width": 4,
+        "attributes": {}
+      },
+      {
+        "id": "calibration-note-42",
+        "type": "FLICK",
+        "tick": 4416,
+        "lane": 12,
+        "width": 4,
+        "attributes": {
+          "direction": "L"
+        }
+      },
+      {
+        "id": "calibration-note-43",
+        "type": "EXTAP",
+        "tick": 4512,
+        "lane": 4,
+        "width": 8,
+        "attributes": {
+          "effect": "CE"
+        }
+      },
+      {
+        "id": "calibration-note-44",
+        "type": "AIR",
+        "tick": 4512,
+        "lane": 4,
+        "width": 8,
+        "attributes": {
+          "direction": "IR",
+          "parent": "CHR",
+          "color": "DEF"
+        }
+      }
+    ],
+    "events": [
+      {
+        "id": "bpm-120",
+        "type": "BPM",
+        "tick": 0,
+        "value": 120
+      },
+      {
+        "id": "bpm-150",
+        "type": "BPM",
+        "tick": 1536,
+        "value": 150
+      },
+      {
+        "id": "bpm-90",
+        "type": "BPM",
+        "tick": 3072,
+        "value": 90
+      },
+      {
+        "id": "stop-sfl",
+        "type": "SCROLL",
+        "tick": 1920,
+        "duration": 96,
+        "value": 0
+      },
+      {
+        "id": "reverse-sfl",
+        "type": "SCROLL",
+        "tick": 2304,
+        "duration": 96,
+        "value": -1
+      },
+      {
+        "id": "fast-group",
+        "type": "GROUP_SCROLL",
+        "tick": 2496,
+        "duration": 1152,
+        "value": 2,
+        "group": 1
+      },
+      {
+        "id": "assign-2784",
+        "type": "SCROLL_ASSIGNMENT",
+        "tick": 2784,
+        "duration": 1,
+        "lane": 10,
+        "width": 4,
+        "group": 1,
+        "value": 1
+      },
+      {
+        "id": "assign-2976",
+        "type": "SCROLL_ASSIGNMENT",
+        "tick": 2976,
+        "duration": 1,
+        "lane": 10,
+        "width": 4,
+        "group": 1,
+        "value": 1
+      }
+    ],
+    "headerRecords": [],
+    "unknownRecords": []
+  }
+}

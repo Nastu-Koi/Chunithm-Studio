@@ -1,0 +1,189 @@
+import type { Chart, NoteType } from '../core/model';
+import { tickToSeconds } from '../core/timing';
+import { getPlayerPlaybackPoints } from './playback-points';
+import type { GameHitSoundId, GameHitSounds } from '../core/game-sounds';
+import { buildJudgementTimeline } from '../core/judgement';
+export interface Hit { time: number; type: NoteType; lane: number; width: number; key: string; direction?: string }
+export function soundForHit(hit: Pick<Hit, 'type' | 'direction'>): GameHitSoundId | undefined {
+  switch (hit.type) {
+    case 'TAP': return 'tap';
+    case 'EXTAP': return 'ex';
+    case 'FLICK': return 'flick';
+    case 'HOLD': return 'hold';
+    case 'SLIDE': return 'slide';
+    case 'AIR': return ['DOWN', 'DW', 'DL', 'DR', 'ADW', 'ADL', 'ADR'].includes(hit.direction ?? '') ? 'airDown' : 'airUp';
+    case 'AIR_HOLD': case 'AIR_SLIDE': return 'airHold';
+    case 'AIR_CRUSH': return 'airCrush';
+    case 'DAMAGE': return undefined;
+  }
+}
+export function getChartHits(chart: Chart): Hit[] {
+  const hits: Hit[] = [];
+  const crushNotes = new Map(chart.notes.filter(note => note.type === 'AIR_CRUSH').map(note => [note.id, note]));
+  if (crushNotes.size) for (const point of buildJudgementTimeline(chart).points) {
+    if (point.kind !== 'crush') continue;
+    const note = crushNotes.get(point.noteId); if (!note) continue;
+    const progress = note.duration ? (point.tick - note.tick) / note.duration : 0;
+    hits.push({ time: tickToSeconds(chart, point.tick), type: note.type,
+      lane: note.lane + ((note.endLane ?? note.lane) - note.lane) * progress,
+      width: note.width + ((note.endWidth ?? note.width) - note.width) * progress,
+      key: `${note.id}:crush:${point.tick}` });
+  }
+  for (const n of chart.notes) {
+    if (n.type === 'DAMAGE' || n.type === 'AIR_CRUSH') continue;
+    for (const point of getPlayerPlaybackPoints(chart, n)) if (point.sound) hits.push({ time: tickToSeconds(chart, point.tick), type: point.type, lane: point.lane, width: point.width, key: `${n.id}:${point.position}`, direction: point.direction });
+  }
+  hits.sort((a, b) => a.time - b.time);
+  return hits;
+}
+/** The audio clock is the only playback clock; rendering samples it, never advances it. */
+export class Transport {
+  private context: AudioContext | null = null;
+  private buffer: AudioBuffer | null = null;
+  private source: AudioBufferSourceNode | null = null;
+  private musicGain: GainNode | null = null;
+  private effectsGain: GainNode | null = null;
+  private activeEffects = new Set<AudioScheduledSourceNode>();
+  private anchorSeconds = 0;
+  private anchorClock = 0;
+  private scheduledIndex = 0;
+  private timer: ReturnType<typeof setInterval> | null = null;
+  private hits: Hit[] = [];
+  private loadGeneration = 0;
+  private playGeneration = 0;
+  private playRequested = false;
+  private effectsGeneration = 0;
+  private samples = new Map<GameHitSoundId, { buffer: AudioBuffer; gain: number; playbackRate: number }[]>();
+  playing = false;
+  rate = 1;
+  offset = 0;
+  volume = 0.8;
+  private effectsEnabled = true;
+  get effects(): boolean { return this.effectsEnabled; }
+  set effects(enabled: boolean) {
+    this.effectsEnabled = enabled;
+    if (this.effectsGain) this.effectsGain.gain.value = enabled ? 0.23 : 0;
+    if (!enabled) this.stopEffects();
+  }
+  loop: { start: number; end: number } | null = null;
+  onLoop?: () => void;
+  get duration(): number { return this.buffer?.duration ?? 0; }
+  get hasAudio(): boolean { return this.buffer !== null; }
+  get seconds(): number { return this.playing && this.context ? this.anchorSeconds + (this.context.currentTime - this.anchorClock) * this.rate : this.anchorSeconds; }
+  private audioContext(): AudioContext {
+    if (!this.context) {
+      this.context = new AudioContext({ latencyHint: 'interactive' });
+      this.musicGain = this.context.createGain(); this.musicGain.gain.value = this.volume; this.musicGain.connect(this.context.destination);
+      this.effectsGain = this.context.createGain(); this.effectsGain.gain.value = this.effectsEnabled ? 0.23 : 0; this.effectsGain.connect(this.context.destination);
+    }
+    return this.context;
+  }
+  async load(bytes: ArrayBuffer): Promise<{ peaks: Float32Array; duration: number }> {
+    this.pause(); const context = this.audioContext(), generation = ++this.loadGeneration;
+    const decoded = await context.decodeAudioData(bytes.slice(0));
+    if (generation !== this.loadGeneration) return { peaks: new Float32Array(), duration: 0 };
+    this.buffer = decoded;
+    const channel = this.buffer.getChannelData(0), length = Math.min(18000, Math.ceil(this.buffer.duration * 80));
+    const peaks = new Float32Array(length);
+    const block = Math.max(1, Math.floor(channel.length / length));
+    for (let i = 0; i < length; i++) { let peak = 0; for (let j = i * block; j < Math.min(channel.length, (i + 1) * block); j++) peak = Math.max(peak, Math.abs(channel[j])); peaks[i] = peak; }
+    return { peaks, duration: this.buffer.duration };
+  }
+  clearAudio(): void { this.pause(); this.loadGeneration++; this.buffer = null; }
+  clearGameSounds(): void { this.effectsGeneration++; this.samples.clear(); }
+  async setGameSounds(sounds: GameHitSounds, read: (path: string) => Promise<Uint8Array>): Promise<{ loaded: number; failed: string[] }> {
+    const generation = ++this.effectsGeneration, context = this.audioContext();
+    const decoded = new Map<string, Promise<AudioBuffer>>(), next: typeof this.samples = new Map(), failed: string[] = [];
+    await Promise.all(Object.entries(sounds.sounds).map(async ([id, sound]) => {
+      try {
+        const layers = await Promise.all(sound.layers.map(async layer => {
+          if (!Number.isFinite(layer.gain) || layer.gain < 0 || !Number.isFinite(layer.playbackRate) || layer.playbackRate <= 0) throw new Error('音效参数无效');
+          if (!decoded.has(layer.path)) decoded.set(layer.path, read(layer.path).then(bytes => context.decodeAudioData(new Uint8Array(bytes).buffer)));
+          return { buffer: await decoded.get(layer.path)!, gain: layer.gain, playbackRate: layer.playbackRate };
+        }));
+        if (layers.length) next.set(id as GameHitSoundId, layers);
+      } catch (error) { failed.push(`${sound.cueName}: ${error instanceof Error ? error.message : error}`); }
+    }));
+    if (generation !== this.effectsGeneration) return { loaded: 0, failed: [] };
+    this.samples = next; return { loaded: next.size, failed };
+  }
+  setChart(chart: Chart): void { this.hits = getChartHits(chart); this.resetScheduler(); }
+  private resetScheduler(): void {
+    const time = this.seconds - 0.0001;
+    let lo = 0, hi = this.hits.length;
+    while (lo < hi) { const mid = (lo + hi) >>> 1; if (this.hits[mid].time < time) lo = mid + 1; else hi = mid; }
+    this.scheduledIndex = lo;
+  }
+  async play(): Promise<void> {
+    if (this.playing) return;
+    const context = this.audioContext(), generation = ++this.playGeneration; this.playRequested = true;
+    try { await context.resume(); }
+    catch (error) { if (generation === this.playGeneration) this.playRequested = false; throw error; }
+    if (generation !== this.playGeneration || this.playing) return;
+    this.anchorClock = context.currentTime; this.playing = true;
+    this.startMusic(); this.resetScheduler(); this.schedule();
+    if (generation !== this.playGeneration || !this.playing) return;
+    this.timer = setInterval(() => this.schedule(), 25);
+  }
+  pause(): void {
+    this.playGeneration++; this.playRequested = false; this.anchorSeconds = this.seconds; this.playing = false;
+    this.stopSources(); if (this.timer) clearInterval(this.timer); this.timer = null;
+  }
+  seek(seconds: number): void {
+    const resume = this.playing || this.playRequested; this.pause(); this.anchorSeconds = Math.max(0, seconds); this.resetScheduler(); if (resume) void this.play();
+  }
+  setRate(value: number): void { const resume = this.playing || this.playRequested; this.pause(); this.rate = Math.max(0.1, Math.min(2, value)); if (resume) void this.play(); }
+  setOffset(value: number): void { const resume = this.playing || this.playRequested; this.pause(); this.offset = value; if (resume) void this.play(); }
+  setVolume(value: number): void { this.volume = value; if (this.musicGain) this.musicGain.gain.value = value; }
+  private startMusic(): void {
+    if (!this.buffer || !this.context || !this.musicGain) return;
+    const audioOffset = this.anchorSeconds - this.offset;
+    if (audioOffset >= this.buffer.duration) return;
+    this.source = this.context.createBufferSource(); this.source.buffer = this.buffer; this.source.playbackRate.value = this.rate;
+    this.source.connect(this.musicGain); this.source.start(this.anchorClock + Math.max(0, -audioOffset) / this.rate, Math.max(0, audioOffset));
+  }
+  private stopSources(): void {
+    if (this.source) { try { this.source.stop(); } catch { /* Already ended. */ } this.source.disconnect(); this.source = null; }
+    this.stopEffects();
+  }
+  private stopEffects(): void {
+    for (const effect of this.activeEffects) { try { effect.stop(); } catch { /* Already ended. */ } effect.disconnect(); }
+    this.activeEffects.clear();
+  }
+  private schedule(): void {
+    if (!this.playing || !this.context) return;
+    const now = this.seconds;
+    if (this.loop && this.loop.end > this.loop.start && now >= this.loop.end) { this.seek(this.loop.start); this.onLoop?.(); return; }
+    const horizon = now + 0.10 * this.rate;
+    while (this.scheduledIndex < this.hits.length && this.hits[this.scheduledIndex].time < horizon) {
+      const hit = this.hits[this.scheduledIndex++];
+      if (this.effects && hit.time >= now - 0.03 && (!this.loop || hit.time < this.loop.end)) this.scheduleEffect(hit, this.anchorClock + (hit.time - this.anchorSeconds) / this.rate);
+    }
+  }
+  private scheduleEffect(hit: Hit, when: number): void {
+    const context = this.context!, destination = this.effectsGain!;
+    when = Math.max(when, context.currentTime);
+    const soundId = soundForHit(hit), layers = soundId ? this.samples.get(soundId) : undefined;
+    if (layers?.length) {
+      for (const layer of layers) {
+        const source = context.createBufferSource(), gain = context.createGain();
+        source.buffer = layer.buffer; source.playbackRate.value = layer.playbackRate; gain.gain.value = layer.gain;
+        source.connect(gain); gain.connect(destination); this.activeEffects.add(source);
+        source.onended = () => { this.activeEffects.delete(source); source.disconnect(); gain.disconnect(); };
+        source.start(when);
+      }
+      return;
+    }
+    const air = hit.type.startsWith('AIR'), ex = hit.type === 'EXTAP';
+    const oscillator = context.createOscillator(), gain = context.createGain();
+    const duration = air ? 0.13 : ex ? 0.09 : 0.045;
+    oscillator.type = hit.type === 'FLICK' ? 'triangle' : 'sine';
+    oscillator.frequency.setValueAtTime(air ? 1500 : ex ? 1850 : 1000, when);
+    oscillator.frequency.exponentialRampToValueAtTime(air ? 500 : 320, when + duration);
+    gain.gain.setValueAtTime(0.001, when); gain.gain.linearRampToValueAtTime(air ? 0.28 : 0.65, when + 0.001);
+    gain.gain.exponentialRampToValueAtTime(0.001, when + duration);
+    oscillator.connect(gain); gain.connect(destination); oscillator.start(when); oscillator.stop(when + duration + 0.01);
+    this.activeEffects.add(oscillator); oscillator.onended = () => { this.activeEffects.delete(oscillator); oscillator.disconnect(); gain.disconnect(); };
+  }
+  destroy(): void { this.pause(); this.clearGameSounds(); this.loadGeneration++; void this.context?.close(); }
+}

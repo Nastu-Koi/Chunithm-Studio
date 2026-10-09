@@ -1,0 +1,36 @@
+import test from 'node:test';
+import assert from 'node:assert/strict';
+import { readFile } from 'node:fs/promises';
+import { createNote } from '../src/core/model';
+import { getNativeHeadModel, nativeAirBaseHeight, AIR_HEIGHT_STEP, projectNativeNotePoint } from '../src/renderer/native-notes';
+import { projectTrackPoint } from '../src/renderer/player-scene';
+
+test('every standard note family and AIR direction selects an actual copied model, across all 16 widths', async () => {
+  const { textures } = JSON.parse(await readFile(new URL('../assets/game/manifest.json', import.meta.url), 'utf8'));
+  for (const type of ['TAP', 'EXTAP', 'HOLD', 'SLIDE', 'FLICK', 'DAMAGE', 'AIR_HOLD', 'AIR_SLIDE', 'AIR_CRUSH'] as const) {
+    for (let width = 1; width <= 16; width++) {
+      const model = getNativeHeadModel(createNote(type, 0, 0, width))!;
+      assert.ok(textures.models[model.key].meshes.length > 0, `${type} width ${width}`);
+    }
+  }
+  for (const direction of ['IR', 'UL', 'UR', 'DW', 'DL', 'DR']) for (let width = 1; width <= 16; width++) {
+    const note = createNote('AIR', 0, 0, width); note.attributes.direction = direction;
+    const model = getNativeHeadModel(note)!;
+    assert.ok(textures.models[model.key].meshes.length >= 2);
+    assert.equal(model.mirror, ['UL', 'DL'].includes(direction) ? -1 : 1);
+  }
+  for (const type of ['HOLD', 'SLIDE'] as const) for (let width = 1; width <= 16; width++) {
+    const model = getNativeHeadModel(createNote(type, 0, 0, width), width, true)!;
+    assert.ok(model.key.endsWith('_point')); assert.ok(textures.models[model.key].meshes.length > 0);
+  }
+});
+
+test('normal AIR adds no invented elevation, while original source geometry retains height and depth', () => {
+  assert.equal(nativeAirBaseHeight(1), 0); assert.equal(nativeAirBaseHeight(2), AIR_HEIGHT_STEP);
+  const base = projectTrackPoint(8, .5), origin = projectNativeNotePoint(8, .5, [0, 0, 0]);
+  assert.ok(Math.abs(base.x - origin.x) < 1e-10 && Math.abs(base.y - origin.y) < 1e-10);
+  assert.ok(projectNativeNotePoint(8, .5, [0, 15.574, 0]).y < origin.y);
+  const left = projectNativeNotePoint(8, .5, [-5.5, 15, -5]), right = projectNativeNotePoint(8, .5, [5.5, 15, -5]);
+  assert.ok(Math.abs(left.x + right.x - 2 * base.x) < 1e-9);
+  assert.notEqual(projectNativeNotePoint(8, .5, [5.5, 15, 0]).x, right.x);
+});
