@@ -1,9 +1,13 @@
 {
   "name": "chunithm-studio",
   "productName": "Chuni Studio",
-  "version": "0.1.10",
+  "version": "0.1.12",
   "description": "A local CHUNITHM chart editor and automatic preview player",
   "private": true,
+  "engines": {
+    "node": ">=22 <25",
+    "npm": ">=10"
+  },
   "type": "module",
   "main": "dist-electron/main.cjs",
   "scripts": {

@@ -3,7 +3,7 @@ import assert from 'node:assert/strict';
 import { mkdtemp, mkdir, writeFile, readFile, rename, readdir, rm } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
-import { scanLibrary, readLibraryXmlMetadata } from '../src/backend/library';
+import { scanLibrary, readLibraryXmlMetadata, librarySignature, resourceRoots } from '../src/backend/library';
 import { readProject, saveProject } from '../src/backend/projects';
 import { decodeDDS } from '../src/backend/dds-preview';
 import { createProject, createNote } from '../src/core/model';
@@ -146,4 +146,29 @@ test('DDS preview decodes DXT1 color interpolation and clips partial four-pixel 
 test('DDS preview rejects truncated headers and truncated DXT1 payloads with clear errors', () => {
   assert.throws(() => decodeDDS(dxt1().subarray(0, 20)), /DDS 文件头无效/);
   assert.throws(() => decodeDDS(dxt1().subarray(0, 135)), /DDS 像素数据不完整/);
+});
+
+test('library scans are cached by folder fingerprint and refreshed when a song folder appears or a rescan is forced', async t => {
+  const game = await mkdtemp(path.join(tmpdir(), 'chuni-library-cache-')); t.after(() => rm(game, { recursive: true, force: true }));
+  const base = path.join(game, 'data', 'A000');
+  await put(path.join(base, 'music', 'music7000', 'Music.xml'), musicXml(7000, 'Cached title'));
+  await put(path.join(base, 'music', 'music7000', '7000_05.c2s'), 'TAP\t0\t0\t0\t4\n');
+  const cacheFile = path.join(game, 'cache', 'library.json'), messages: string[] = [];
+  const first = await scanLibrary(game, { cacheFile, onProgress: m => messages.push(m) });
+  assert.equal(first.length, 1); assert.ok(messages.some(m => m.includes('正在读取曲目信息')));
+  const cached = JSON.parse(await readFile(cacheFile, 'utf8'));
+  assert.equal(cached.signature, await librarySignature(await resourceRoots(game)));
+  messages.length = 0;
+  const second = await scanLibrary(game, { cacheFile, onProgress: m => messages.push(m) });
+  assert.deepEqual(second, first); assert.ok(messages.some(m => m.includes('使用上次扫描')), messages.join(' | '));
+  messages.length = 0;
+  const forced = await scanLibrary(game, { cacheFile, force: true, onProgress: m => messages.push(m) });
+  assert.deepEqual(forced, first); assert.ok(!messages.some(m => m.includes('使用上次扫描')));
+  // A new song folder changes the fingerprint, so the next default scan sees it without --force.
+  await put(path.join(base, 'music', 'music7001', 'Music.xml'), musicXml(7001, 'Second title'));
+  await put(path.join(base, 'music', 'music7001', '7001_05.c2s'), 'TAP\t0\t0\t0\t4\n');
+  const third = await scanLibrary(game, { cacheFile });
+  assert.deepEqual(third.map(e => e.title), ['Cached title', 'Second title']);
+  // Without a cache file nothing is written or read.
+  assert.equal((await scanLibrary(game)).length, 2);
 });

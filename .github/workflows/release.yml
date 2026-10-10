@@ -1,0 +1,39 @@
+name: Release
+on:
+  push:
+    tags: ['v*']
+  workflow_dispatch:
+jobs:
+  package-win:
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+      - uses: actions/setup-dotnet@v4
+        with:
+          dotnet-version: 9.0.x
+      - run: npm ci
+      - name: Fetch the Windows sharp binary matching package-lock
+        shell: bash
+        run: |
+          version=$(node -p "require('./node_modules/sharp/package.json').optionalDependencies['@img/sharp-win32-x64']")
+          mkdir -p out && npm pack "@img/sharp-win32-x64@$version" --pack-destination out
+      - run: npm run check
+      - run: npm test
+      - run: npm run package:win
+      - name: Zip the portable directory
+        shell: bash
+        run: |
+          version=$(node -p "require('./package.json').version")
+          cd "release/$version" && 7z a -tzip "../chuni-studio-win-$version.zip" "Chuni Studio-win32-x64"
+      - uses: actions/upload-artifact@v4
+        with:
+          name: chuni-studio-win
+          path: release/chuni-studio-win-*.zip
+      - uses: softprops/action-gh-release@v2
+        if: startsWith(github.ref, 'refs/tags/')
+        with:
+          files: release/chuni-studio-win-*.zip

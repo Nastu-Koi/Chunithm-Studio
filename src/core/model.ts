@@ -6,6 +6,25 @@ export const NOTE_TYPES = ['TAP', 'EXTAP', 'FLICK', 'HOLD', 'SLIDE', 'AIR', 'AIR
 export type NoteType = (typeof NOTE_TYPES)[number];
 export type Difficulty = 'BASIC' | 'ADVANCED' | 'EXPERT' | 'MASTER' | 'ULTIMA' | 'WORLD’S END';
 export type Scalar = string | number | boolean;
+/** Native note attributes. Every key is optional; absent means the native default. */
+export interface NoteAttributes {
+  /** Segment-end kind for SLIDE / AIR HOLD / AIR SLIDE: true = SLD/AHD/ASD, false = control SLC/AHX/ASC. */
+  visible?: boolean;
+  /** Native parent token of an AIR-family note or chained segment (TAP, HLD, SLD, ASD …). */
+  parent?: string;
+  /** Native colour token; DEF or absent is the default colour. */
+  color?: string;
+  /** AIR direction token: IR, UL, UR, DW, DL, DR. */
+  direction?: string;
+  /** EX variant of TAP / HOLD / SLIDE (CHR, HXD, SXD/SXC). */
+  ex?: boolean;
+  /** EX effect token written after SXD/SXC. */
+  effect?: string;
+  /** AIR-CRUSH judgement interval in ticks; 0 is a decorative segment. */
+  interval?: number;
+  /** Native scroll group kept from grouped charts. */
+  speedGroup?: number;
+}
 export interface NativeRecord {
   /** Stable link to the original record, for preserving ordering and unknown columns. */
   recordId: string;
@@ -26,8 +45,7 @@ export interface Note {
   endWidth?: number;
   height?: number;
   endHeight?: number;
-  /** Native parent kind, direction, visibility, color, ex effect, crush interval. */
-  attributes: Record<string, Scalar>;
+  attributes: NoteAttributes;
   native?: NativeRecord;
 }
 export type EventType = 'BPM' | 'METER' | 'SCROLL' | 'NOTE_SPEED' | 'GROUP_SCROLL' | 'SCROLL_ASSIGNMENT' | 'STOP';
