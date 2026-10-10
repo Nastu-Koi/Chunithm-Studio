@@ -78,10 +78,10 @@ async function prepareVgAudio() {
   }
   let head = '';
   try { head = execFileSync('git', ['-C', source, 'rev-parse', 'HEAD'], { encoding: 'utf8', stdio: ['ignore', 'pipe', 'ignore'] }).trim(); } catch { head = ''; }
-  if (head !== VGAUDIO.commit) {
-    run('git', ['-C', source, 'fetch', '--quiet', 'origin', VGAUDIO.commit]);
-    run('git', ['-C', source, 'checkout', '--quiet', '--detach', VGAUDIO.commit]);
-  }
+  if (head !== VGAUDIO.commit) run('git', ['-C', source, 'fetch', '--quiet', 'origin', VGAUDIO.commit]);
+  // Always materialise the tree: a --no-checkout clone whose HEAD already equals the pinned commit has no files yet.
+  run('git', ['-C', source, 'checkout', '--quiet', '--detach', VGAUDIO.commit]);
+  if (!await exists(path.join(source, 'src', 'VGAudio', 'Codecs', 'CriHca', 'CriHcaKey.cs'))) throw new Error(`VGAudio 源码未就绪：${source}`);
   return source;
 }
 
