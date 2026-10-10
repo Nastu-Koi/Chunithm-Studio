@@ -11,15 +11,21 @@ dotnet native/bin/Release/net9.0/ChunithmAudio.dll decode input.hca output.wav
 dotnet native/bin/Release/net9.0/ChunithmAudio.dll decode-adx input.adx output.wav
 ```
 
-Publish the self-contained Windows helper:
+`native/win-x64` is not tracked in git. `scripts/prepare-native.mjs` (also run by `npm run package:win`) rebuilds it from pinned sources: it clones VGAudio at the commit above into `native/VGAudio`, publishes the helper with the .NET SDK, downloads the ffmpeg-static `b6.1.1` Windows build and verifies its SHA-256, and copies the VGAudio, FFmpeg and .NET license files beside the binaries. Re-running skips work whose inputs are unchanged; `--force` rebuilds everything.
 
 ```sh
-dotnet publish native/AudioHelper.csproj -c Release -r win-x64 --self-contained true -o native/win-x64
+node scripts/prepare-native.mjs
+```
+
+The equivalent manual publish is:
+
+```sh
+dotnet publish native/AudioHelper.csproj -c Release -r win-x64 --self-contained true -o native/win-x64 -p:RuntimeFrameworkVersion=9.0.20
 ```
 
 The desktop app includes `native/win-x64` as a unit. It requires no separately installed .NET runtime. `configureAudioRuntime({ nativeDirectory })` points to the parent `native` directory. Development on Linux uses the built .NET 9 DLL.
 
-`native/win-x64/ffmpeg.exe` is the original 6.1.1 Windows executable distributed by the ffmpeg-static project at https://github.com/eugeneware/ffmpeg-static/releases/tag/b6.1.1. `FFmpeg.LICENSE` and `FFmpeg.README` accompany it; the latter identifies the upstream FFmpeg source revision and build configuration. This binary uses GPL v3. It is invoked as a separate local conversion process. Keep its license and source information with redistributed builds.
+`native/win-x64/ffmpeg.exe` is the original 6.1.1 Windows executable distributed by the ffmpeg-static project at https://github.com/eugeneware/ffmpeg-static/releases/tag/b6.1.1 (SHA-256 pinned in `scripts/prepare-native.mjs`). `FFmpeg.LICENSE` and `FFmpeg.README` accompany it; the latter identifies the upstream FFmpeg source revision and build configuration. This binary uses GPL v3. It is invoked as a separate local conversion process. Keep its license and source information with redistributed builds.
 
 The self-contained .NET runtime license and notices are copied from the official Microsoft.NETCore.App.Runtime.win-x64 9.0.20 package into `DotNet.LICENSE` and `DotNet.THIRD-PARTY-NOTICES`.
 
