@@ -1,0 +1,100 @@
+import test from 'node:test';
+import assert from 'node:assert/strict';
+import { chromium } from '@playwright/test';
+
+// Margrete-style tools and default keys on the real canvas. Run against Vite, with CHUNI_BROWSER when using installed Edge.
+test('editor follows Margrete tools and keys: eraser, flip, time scale, curve, left-edge width, mirrored paste and note keys', { skip: !process.env.CHUNI_UI_URL, timeout: 60_000 }, async () => {
+  const browser = await chromium.launch({ headless: true, ...(process.env.CHUNI_BROWSER ? { executablePath: process.env.CHUNI_BROWSER } : {}), args: ['--no-sandbox'] });
+  try {
+    const page = await browser.newPage({ viewport: { width: 1280, height: 900 } });
+    const errors: string[] = [];
+    page.on('pageerror', error => errors.push(error.message));
+    await page.route('**/__editor_margrete_test__', route => route.fulfill({ contentType: 'text/html', body: `<!doctype html><html><head><meta charset="utf-8"><link rel="stylesheet" href="/src/renderer/editor.css"><style>body{margin:0}#editor{height:100vh}</style></head><body><main id="editor"></main><script type="module">
+      import { ChartEditor } from '/src/renderer/editor.ts';
+      import { createChart } from '/src/core/model.ts';
+      const state = { chart: createChart() };
+      const editor = new ChartEditor(document.querySelector('#editor'), {
+        onChange(chart) { state.chart = chart; editor.setChart(chart); }, onCursor() {}, onUndo() {}, onRedo() {}
+      });
+      editor.setChart(state.chart); window.testEditor = { editor, state };
+    </script></body></html>` }));
+    await page.goto(`${process.env.CHUNI_UI_URL}/__editor_margrete_test__`); await page.waitForFunction(() => Boolean((window as any).testEditor));
+    const canvas = page.locator('.editor-viewport canvas'), box = await canvas.boundingBox(); assert.ok(box);
+    const left = Number(await canvas.getAttribute('data-track-left')), laneWidth = Number(await canvas.getAttribute('data-lane-width'));
+    const zoom = Number(await page.locator('[data-option="zoom"]').inputValue());
+    // `lane` is a coordinate across the track: 2.5 is the middle of the third lane, 2 its left edge.
+    const point = (tick: number, lane: number) => ({ x: box.x + left + lane * laneWidth, y: box.y + box.height - 30 - tick * zoom });
+    const click = async (tick: number, lane: number) => { const p = point(tick, lane); await page.mouse.click(p.x, p.y); };
+    const drag = async (from: { x: number; y: number }, to: { x: number; y: number }) => { await page.mouse.move(from.x, from.y); await page.mouse.down(); await page.mouse.move(to.x, to.y, { steps: 8 }); await page.mouse.up(); };
+    type Row = { type: string; tick: number; lane: number; width: number; duration: number; endLane: number; direction?: string; visible?: boolean };
+    const notes = (): Promise<Row[]> => page.evaluate(() => (window as any).testEditor.state.chart.notes.map((n: any) => ({ type: n.type, tick: n.tick, lane: n.lane, width: n.width, duration: n.duration, endLane: n.endLane, direction: n.attributes.direction, visible: n.attributes.visible })));
+    const status = () => page.locator('.editor-status').textContent();
+    const frame = () => page.evaluate(() => new Promise(resolve => requestAnimationFrame(() => requestAnimationFrame(resolve))));
+
+    // Note keys: 1 places TAP; 8 places a downward AIR on the note under the pointer.
+    await page.locator('.editor-viewport').focus();
+    await page.keyboard.press('1'); await click(96, 2.5);
+    await page.keyboard.press('8'); await click(96, 2.5);
+    assert.deepEqual((await notes()).map(n => [n.type, n.tick, n.lane, n.width, n.direction]), [['TAP', 96, 2, 2, undefined], ['AIR', 96, 2, 2, 'DW']]);
+    // Eraser: one click removes the topmost object; a dragged box removes everything it touches.
+    await page.keyboard.press('e'); await frame(); assert.match(String(await status()), /橡皮擦/);
+    await click(96, 2.5); assert.deepEqual((await notes()).map(n => n.type), ['TAP']);
+    await page.keyboard.press('1'); await click(48, 6.5); await click(144, 10.5);
+    await page.keyboard.press('e'); await drag(point(24, 1.2), point(168, 12.8));
+    assert.deepEqual(await notes(), []);
+
+    // Front-back flip, time scale and left-right mirror act on the selection.
+    await page.keyboard.press('1'); await click(48, 0.5); await click(144, 4.5);
+    await page.keyboard.press('s'); await page.keyboard.press('Control+a'); await page.keyboard.press('v');
+    assert.deepEqual((await notes()).map(n => [n.lane, n.tick]), [[0, 144], [4, 48]]);
+    await page.locator('[data-option="scale"]').fill('2'); await page.locator('[data-action="scale"]').click();
+    assert.deepEqual((await notes()).map(n => [n.lane, n.tick]), [[0, 240], [4, 48]]);
+    await page.locator('.editor-viewport').focus(); await page.keyboard.press('h');
+    assert.deepEqual((await notes()).map(n => [n.lane, n.tick]), [[14, 240], [10, 48]]);
+    // The left edge resizes against a fixed right edge.
+    await page.keyboard.press('Control+Shift+a'); await frame(); assert.doesNotMatch(String(await status()), /已选/);
+    const edge = point(48, 10); await drag({ x: edge.x + 1, y: edge.y }, { x: point(48, 8).x, y: edge.y });
+    assert.deepEqual((await notes()).map(n => [n.lane, n.width]), [[14, 2], [8, 4]]);
+
+    // 5 draws a SLIDE whose joints are relay points; R turns the straight segment into a control-point curve.
+    await page.keyboard.press('5'); await drag(point(288, 0.5), point(480, 6.5));
+    assert.deepEqual((await notes()).filter(n => n.type === 'SLIDE').map(n => [n.tick, n.duration, n.lane, n.endLane, n.visible]), [[288, 192, 0, 6, true]]);
+    await page.keyboard.press('r');
+    const curve = (await notes()).filter(n => n.type === 'SLIDE');
+    assert.equal(curve.length, 8); assert.deepEqual([curve[0].lane, curve.at(-1)!.endLane, curve.at(-1)!.tick + curve.at(-1)!.duration], [0, 6, 480]);
+    assert.ok(curve.every((segment, index) => index === 0 || segment.lane === curve[index - 1].endLane && segment.tick === curve[index - 1].tick + curve[index - 1].duration));
+    assert.deepEqual(curve.map(segment => segment.visible), [false, false, false, false, false, false, false, true]);
+
+    // Ctrl+Shift+V pastes a left-right mirrored copy at the cursor.
+    await page.keyboard.press('s'); await click(48, 9.5); await page.keyboard.press('Control+c');
+    await click(600, 14.5); await page.keyboard.press('Control+Shift+v');
+    assert.deepEqual((({ tick, lane, width }) => [tick, lane, width])((await notes()).at(-1)!), [600, 4, 4]);
+    // B inserts a BPM event at the cursor; Shift + wheel steps the quantize division.
+    const events = (): Promise<string[]> => page.evaluate(() => (window as any).testEditor.state.chart.events.map((event: any) => event.type));
+    const before = (await events()).length; await page.keyboard.press('b');
+    assert.equal((await events()).length, before + 1); assert.equal((await events()).at(-1), 'BPM');
+    await page.mouse.move(point(300, 8).x, point(300, 8).y); await page.keyboard.down('Shift'); await page.mouse.wheel(0, 100); await page.keyboard.up('Shift');
+    assert.equal(await page.locator('[data-option="snap"]').inputValue(), '24');
+
+    // HOLD / SLIDE bodies are opaque: the gradient uses the joint texture's colours, and a supplied texture replaces it.
+    await page.keyboard.press('6'); await drag(point(672, 12.5), point(864, 12.5));
+    await page.keyboard.press('s'); await page.mouse.move(box.x + 40, box.y + 40); await frame();
+    const pixel = (tick: number, lane: number): Promise<number[]> => page.evaluate(([x, y]) => {
+      const element = document.querySelector<HTMLCanvasElement>('.editor-viewport canvas')!, ratio = element.width / element.getBoundingClientRect().width;
+      return [...element.getContext('2d')!.getImageData(Math.round(x * ratio), Math.round(y * ratio), 1, 1).data];
+    }, [point(tick, lane).x - box.x, point(tick, lane).y - box.y]);
+    assert.equal(await canvas.getAttribute('data-body-textures'), null);
+    const hold = await pixel(768, 12.5), slide = await pixel(384, 3.2);
+    assert.ok(hold[0] > 230 && hold[1] > 170 && hold[2] < 40, `HOLD body centre ${hold}`);
+    assert.ok(slide[0] < 80 && slide[1] > 170 && slide[2] > 220, `SLIDE body centre ${slide}`);
+    await page.evaluate(() => {
+      const tile = document.createElement('canvas'); tile.width = tile.height = 4;
+      const context = tile.getContext('2d')!; context.fillStyle = '#00ff00'; context.fillRect(0, 0, 4, 4);
+      (window as any).testEditor.editor.setBodyTextures({ HoldJoint: { dataUrl: tile.toDataURL() } });
+    });
+    await page.waitForFunction(() => document.querySelector<HTMLCanvasElement>('.editor-viewport canvas')?.dataset.bodyTextures === 'game'); await frame();
+    const textured = await pixel(768, 12.5);
+    assert.ok(textured[0] < 40 && textured[1] > 230 && textured[2] < 40, `HOLD body with a texture ${textured}`);
+    assert.deepEqual(errors, []);
+  } finally { await browser.close(); }
+});

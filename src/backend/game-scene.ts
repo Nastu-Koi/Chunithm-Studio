@@ -9,7 +9,7 @@ import type { GameSceneAssets, GameSceneSprite, GameTexture } from '../core/game
 
 type Value = number | string | number[] | null;
 export interface SrdRecord { tag: string; offset: number; fields: [number, Value][] }
-const selectedTags = new Set(['SCN ', 'LAYR', 'NODE', 'TRS2', 'CIMG', 'CNUM', 'CREF', 'TEX ', 'CROP']);
+const selectedTags = new Set(['SCN ', 'LAYR', 'NODE', 'TRS2', 'CIMG', 'CNUM', 'CSLI', 'CREF', 'TEX ', 'CROP']);
 
 /** Reads the typed fields used by static Surfride layouts. Animation records are skipped. */
 export function parseSrdRecords(buffer: Buffer): SrdRecord[] {
@@ -63,6 +63,50 @@ function list(row: SrdRecord): Map<number, Value>[] {
     else if (key !== 0xfd) item.set(key, value);
   }
   if (item.size) result.push(item);
+  return result;
+}
+export interface SrdCast {
+  /** Static screen position and accumulated scale of the node; animations are not evaluated. */
+  x: number; y: number; scaleX: number; scaleY: number; visible: boolean;
+  /** Cast box after pivot and scale. Plain group nodes have none. */
+  rect?: { x: number; y: number; width: number; height: number };
+  /** `[texture, crop]` pairs of the CREF owned by this cast, in pattern order. */
+  crops: number[][];
+}
+/** Resolves every named node of each layer as `layer/node`; the first node of a repeated name wins. */
+export function resolveSrdCasts(records: readonly SrdRecord[]): Map<string, SrdCast> {
+  const result = new Map<string, SrdCast>();
+  let layer = '', nodes: Map<number, Value>[] = [], resolved: (SrdCast | undefined)[] = [], current: number | undefined;
+  for (const row of records) {
+    if (row.tag === 'LAYR') { layer = String(field(row, 0x03)); nodes = []; resolved = []; current = undefined; }
+    else if (row.tag === 'NODE') nodes = list(row);
+    else if (row.tag === 'TRS2') {
+      const transforms = list(row), parents = new Array<number>(nodes.length).fill(-1);
+      for (const [parent, node] of nodes.entries()) for (let child = Number(node.get(0x3c) ?? -1), guard = 0; child >= 0 && child < nodes.length && guard++ < nodes.length; child = Number(nodes[child].get(0x3d) ?? -1)) parents[child] = parent;
+      const place = (index: number, depth = 0): SrdCast | undefined => {
+        if (resolved[index]) return resolved[index];
+        const transform = transforms[index], translation = transform?.get(0x34) as number[] | undefined, scale = transform?.get(0x36) as number[] | undefined;
+        if (!translation || !scale || depth > nodes.length) return undefined;
+        const parent = parents[index] < 0 ? { x: 0, y: 0, scaleX: 1, scaleY: 1 } : place(parents[index], depth + 1);
+        if (!parent) return undefined;
+        return resolved[index] = { x: parent.x + translation[0] * parent.scaleX, y: parent.y + translation[1] * parent.scaleY, scaleX: parent.scaleX * scale[0], scaleY: parent.scaleY * scale[1], visible: transform!.get(0x3b) !== 0, crops: [] };
+      };
+      for (const [index, node] of nodes.entries()) {
+        const cast = place(index), key = `${layer}/${node.get(0x03)}`;
+        if (cast && !result.has(key)) result.set(key, cast);
+      }
+    } else if (row.tag === 'CIMG' || row.tag === 'CNUM' || row.tag === 'CSLI') {
+      current = Number(field(row, 0x51));
+      const cast = resolved[current], size = [0x40, 0x41, 0x42, 0x43].map(id => Number(field(row, id)));
+      // Float32 scales such as 0.7 are rounded back to the authored four decimals.
+      const tidy = (value: number): number => Math.round(value * 1e4) / 1e4;
+      if (cast && size.every(Number.isFinite)) cast.rect = { x: tidy(cast.x - size[2] * cast.scaleX), y: tidy(cast.y - size[3] * cast.scaleY), width: tidy(size[0] * cast.scaleX), height: tidy(size[1] * cast.scaleY) };
+    } else if (row.tag === 'CREF' && current !== undefined) {
+      const cast = resolved[current];
+      if (cast) cast.crops = row.fields.filter(pair => pair[0] === 0x4a).map(pair => pair[1] as number[]);
+      current = undefined;
+    }
+  }
   return result;
 }
 async function boundedRead(file: string): Promise<Buffer> {
@@ -203,4 +247,63 @@ async function loadHud(scene: GameSceneAssets, data: string): Promise<void> {
     }
   }
   if (found.size !== 4) throw new Error('未找到全部 HUD 数字用途引用');
+  // Remaining play-screen casts take both crop and placement from their named SRD node.
+  const casts = resolveSrdCasts(records);
+  const cast = (key: string): SrdCast => { const value = casts.get(key); if (!value) throw new Error(`HUD 节点不存在: ${key}`); return value; };
+  const addCast = (name: string, key: string, pattern = 0, placed = true): void => {
+    const source = cast(key), ref = source.crops[pattern];
+    if (!ref || ref[0] !== atlasIndex) throw new Error(`HUD 节点贴图与已核对版本不同: ${key}`);
+    add(name, ref[1], placed ? source.rect : undefined);
+  };
+  addCast('scoreComma', 'L_Playing_gauge/C_score_num', 10, false); addCast('speedDot', 'L_Playing_music/NUM_speed', 10, false);
+  addCast('mirrorOff', 'L_Playing_music/PAT_mirror', 0); addCast('mirrorOn', 'L_Playing_music/PAT_mirror', 1);
+  addCast('gaugeEdge', 'L_Playing_gauge/C_gauge_eff_00', 0, false);
+  for (const [index, side] of ['Left', 'Center', 'Right'].entries()) addCast(`frameShadow${side}`, 'L_Playing_difficulty/Shadow', index);
+  // Each stock box is a linked layer drawn at its reference node; twelve are visible before any animation.
+  const stocks = Array.from({ length: 20 }, (_, index) => cast(`L_Playing_gauge/C_gauge_stock_ref_${String(index).padStart(2, '0')}`));
+  if (stocks.filter(stock => stock.visible).length !== 12 || stocks.some((stock, index) => stock.x !== stocks[0].x + 37 * index || stock.y !== stocks[0].y)) throw new Error('技能槽方块位置与已核对版本不同');
+  const empty = cast('L_Playing_gauge_stock_box/C_gauge_empty');
+  addCast('stockEmpty', 'L_Playing_gauge_stock_box/C_gauge_empty', 0, false);
+  scene.hud.stockEmpty.layout = { ...empty.rect!, x: empty.rect!.x + stocks[0].x, y: empty.rect!.y + stocks[0].y };
+  await loadPlayerPlate(scene, data, cast('L_Playing_gauge/DMY_Frame').rect!);
+}
+
+/** The frame and player plate are textures the game composes at run time; both use the default-owned item 1. */
+async function loadPlayerPlate(scene: GameSceneAssets, data: string, frameLayout: NonNullable<GameSceneSprite['layout']>): Promise<void> {
+  const item = async (folder: string, file: string, root: string, layout: NonNullable<GameSceneSprite['layout']>): Promise<GameSceneSprite> => {
+    const sourceLayout = path.join(data, 'A000', folder, file), xml = new XMLParser().parse(await boundedRead(sourceLayout))[root];
+    if (Number(xml?.name?.id) !== 1 || xml?.defaultHave !== true) throw new Error(`${root} 默认项与已核对版本不同`);
+    const source = path.join(path.dirname(sourceLayout), String(xml.image?.path ?? '')), decoded = await image(await boundedRead(source), source, path.basename(source, '.dds'), 0);
+    if (decoded.width !== layout.width || decoded.height !== layout.height) throw new Error(`${root} 尺寸与原布局不一致`);
+    return { image: decoded, rect: { x: 0, y: 0, width: decoded.width, height: decoded.height }, layout, sourceLayout, sourceOffset: 0 };
+  };
+  scene.hud.frame = await item('frame/frame00000001', 'Frame.xml', 'FrameData', frameLayout);
+  const textures = new Map<string, GameTexture>();
+  const layoutSprites = async (file: string, wanted: [name: string, key: string, origin?: string][]): Promise<Map<string, SrdCast>> => {
+    const sourceLayout = path.join(data, 'surfboard/common', file), records = parseSrdRecords(await boundedRead(sourceLayout)), casts = resolveSrdCasts(records);
+    const textureRows = records.filter(row => row.tag === 'TEX '), cropRows = records.filter(row => row.tag === 'CROP');
+    for (const [name, key, origin] of wanted) {
+      const source = casts.get(key), base = origin ? casts.get(origin) : { x: 0, y: 0 }, ref = source?.crops[0];
+      const atlasName = ref && textureRows[ref[0]] && field(textureRows[ref[0]], 0x61), crop = ref && cropRows[ref[0]]?.fields.filter(pair => pair[0] === 0x65)[ref[1]]?.[1] as number[] | undefined;
+      if (!source?.rect || !base || typeof atlasName !== 'string' || !/^CHU_UI_\w+$/.test(atlasName) || crop?.length !== 4) throw new Error(`玩家信息节点与已核对版本不同: ${key}`);
+      if (!textures.has(atlasName)) { const atlasPath = path.join(data, 'surfboard/texture', `${atlasName}.dds`); textures.set(atlasName, await image(await boundedRead(atlasPath), atlasPath, atlasName, 0)); }
+      const atlas = textures.get(atlasName)!;
+      if (crop[0] < 0 || crop[1] < 0 || crop[2] > atlas.width || crop[3] > atlas.height || crop[2] <= crop[0] || crop[3] <= crop[1]) throw new Error('玩家信息裁剪边界无效');
+      scene.hud[name] = { image: atlas, rect: { x: crop[0], y: crop[1], width: crop[2] - crop[0], height: crop[3] - crop[1] }, layout: { ...source.rect, x: source.rect.x + base.x, y: source.rect.y + base.y }, sourceLayout, sourceOffset: cropRows[ref![0]].offset };
+    }
+    return casts;
+  };
+  // Level and rating use the original hidden-value casts: the preview has no player profile to show.
+  const player = await layoutSprites('playerData/CHU_UI_PlayerData_00_v10.srd', [
+    ['nameBase', 'L_Playing_player/C_base'], ['charaBase', 'L_Playing_player/C_chara_base'],
+    ['levelLabel', 'L_Playing_player/C_player_level_txt'], ['levelHidden', 'L_Playing_player/C_no_disp'],
+    ['ratingLabel', 'L_CHU_UI_Common_Rating_00/C_player_rating_no_disp_06', 'L_Playing_player/C_player_rating'],
+    ['ratingHidden', 'L_CHU_UI_Common_Rating_00/C_player_rating_no_disp_01', 'L_Playing_player/C_player_rating'],
+  ]);
+  const plate = player.get('L_Playing_player/C_nameplate_dummy')?.rect, trophy = player.get('L_Playing_player/C_player_character_title_rank')?.rect;
+  if (!plate || !trophy) throw new Error('未找到名牌或称号节点');
+  scene.hud.namePlate = await item('namePlate/namePlate00000001', 'NamePlate.xml', 'NamePlateData', plate);
+  // The plate shows a run-time texture of the trophy bar; the normal-rank bar is placed where its dummy sits.
+  await layoutSprites('trophyRank/CHU_UI_Character_title_rank_00_v10.srd', [['trophyBase', 'L_player_character_title_rank_big_org/C_player_title_base']]);
+  scene.hud.trophyBase.layout = trophy;
 }

@@ -33,10 +33,14 @@ async function copyImage(image: GameTexture): Promise<StoredGameTexture> {
 }
 for (const [id, material] of Object.entries(scene.materials)) stored.materials[id] = await copyImage(material);
 for (const [id, sprite] of Object.entries(scene.hud)) stored.hud[id] = { ...sprite, sourceLayout: relative(sprite.sourceLayout), image: await copyImage(sprite.image) };
+// Sprites added by other importers (copy-game-font) are not part of the scene loader's output.
+for (const [id, sprite] of Object.entries(manifest.textures.scene?.hud ?? {})) stored.hud[id] ??= sprite;
 for (const [id, mesh] of Object.entries(scene.geometry.meshes)) stored.geometry.meshes[id] = { ...mesh, sourcePath: relative(mesh.sourcePath) };
 manifest.textures.scene = stored;
-await writeFile(path.join(destination, 'sha256.json'), JSON.stringify(digests, null, 2));
-const temporary = path.join(destination, `manifest.scene-${process.pid}.json`);
-await writeFile(temporary, JSON.stringify(manifest, null, 2));
+// Same compact manifest and recorded manifest hash as the other importers, so their outputs stay interchangeable.
+const serialized = JSON.stringify(manifest), temporary = path.join(destination, `manifest.scene-${process.pid}.json`);
+await writeFile(temporary, serialized);
 await rename(temporary, path.join(destination, 'manifest.json'));
+digests['manifest.json'] = createHash('sha256').update(serialized).digest('hex');
+await writeFile(path.join(destination, 'sha256.json'), `${JSON.stringify(digests, null, 2)}\n`);
 console.log(JSON.stringify({ destination, materials: Object.keys(stored.materials), hud: Object.keys(stored.hud).length, images: copied.size, meshes: Object.fromEntries(Object.entries(stored.geometry.meshes).map(([key, value]) => [key, { vertices: value.vertexCount, indices: value.indices?.length, bounds: value.bounds }])) }, null, 2));

@@ -2,7 +2,7 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import { createChart, createNote } from '../src/core/model';
 import { parseC2S, serializeC2S } from '../src/core/c2s';
-import { mirrorEditorSelection, moveEditorSelection, parseEditorFraction, splitEditorNote, appendEditorNote, copyEditorSelection } from '../src/renderer/editor';
+import { mirrorEditorSelection, moveEditorSelection, parseEditorFraction, splitEditorNote, appendEditorNote, copyEditorSelection, flipEditorSelection, scaleEditorSelection, curveEditorSlide } from '../src/renderer/editor';
 import { getNoteScrollGroup } from '../src/core/timing';
 
 test('moving a mixed selection clamps the whole group without changing spacing or source records', () => {
@@ -187,4 +187,58 @@ test('copying a grouped middle segment keeps its effective group without copying
   assert.equal(getNoteScrollGroup(pasted, pasted.notes[0]), 3);
   const native = parseC2S(serializeC2S(pasted)); assert.equal(getNoteScrollGroup(native, native.notes[0]), 3);
   assert.equal(chart.events.length, 1); assert.equal(chart.events[0].duration, 192);
+});
+
+test('front-back flip reverses notes inside the selection span and keeps the node kind of a chain joint at that joint', () => {
+  const chart = createChart();
+  const early = createNote('TAP', 0, 0, 2), late = createNote('TAP', 96, 4, 2), untouched = createNote('TAP', 480, 0, 4);
+  const first = { ...createNote('SLIDE', 0, 8, 2), duration: 48, endLane: 10, endWidth: 3, attributes: { visible: false } };
+  const second = { ...createNote('SLIDE', 48, 10, 3), duration: 96, endLane: 12, endWidth: 4, attributes: { visible: true } };
+  const air = { ...createNote('AIR_SLIDE', 0, 0, 2), duration: 144, endLane: 2, height: 1, endHeight: 4 };
+  chart.notes = [early, late, untouched, first, second, air];
+  const flipped = flipEditorSelection(chart, new Set([early.id, late.id, first.id, second.id, air.id]));
+  const get = (id: string) => flipped.notes.find(note => note.id === id)!;
+  // The span is 0…144: point notes mirror about its middle, the unselected note stays.
+  assert.equal(get(early.id).tick, 144); assert.equal(get(late.id).tick, 48); assert.equal(get(untouched.id), untouched);
+  // The later segment now comes first, runs the other way and ends on the same control joint.
+  assert.deepEqual([get(second.id).tick, get(second.id).lane, get(second.id).width, get(second.id).endLane, get(second.id).endWidth, get(second.id).attributes.visible], [0, 12, 4, 10, 3, false]);
+  assert.deepEqual([get(first.id).tick, get(first.id).lane, get(first.id).width, get(first.id).endLane, get(first.id).endWidth, get(first.id).attributes.visible], [96, 10, 3, 8, 2, undefined]);
+  assert.deepEqual([get(air.id).tick, get(air.id).lane, get(air.id).endLane, get(air.id).height, get(air.id).endHeight], [0, 2, 0, 4, 1]);
+  assert.equal(flipEditorSelection(chart, new Set()), chart);
+  // Flipping twice restores every position.
+  const twice = flipEditorSelection(flipped, new Set([early.id, late.id, first.id, second.id, air.id]));
+  for (const note of chart.notes) assert.deepEqual([get(note.id).duration, twice.notes.find(item => item.id === note.id)!.tick, twice.notes.find(item => item.id === note.id)!.lane], [note.duration, note.tick, note.lane]);
+});
+
+test('time scaling keeps the first selected tick and scales intervals, durations and selected events', () => {
+  const chart = createChart();
+  const a = createNote('TAP', 96, 0, 2), b = createNote('TAP', 144, 2, 2), hold = { ...createNote('HOLD', 192, 4, 2), duration: 96 }, outside = createNote('TAP', 24, 0, 2);
+  chart.notes = [outside, a, b, hold];
+  chart.events = [{ id: 'bpm', type: 'BPM', tick: 192, value: 180 }, { id: 'scroll', type: 'SCROLL', tick: 288, value: 2, duration: 96 }];
+  const half = scaleEditorSelection(chart, new Set([a.id, b.id, hold.id, 'scroll']), 1 / 2);
+  assert.deepEqual(half.notes.map(note => [note.tick, note.duration]), [[24, undefined], [96, undefined], [120, undefined], [144, 48]]);
+  assert.deepEqual(half.events.map(event => [event.tick, event.duration]), [[192, undefined], [192, 48]]);
+  // Seven notes written as eighths become an exact 7-in-the-space-of-6 group.
+  const tuplet = createChart(); tuplet.notes = Array.from({ length: 7 }, (_, index) => createNote('TAP', 384 + index * 48, 0, 2));
+  const scaled = scaleEditorSelection(tuplet, new Set(tuplet.notes.map(note => note.id)), 6 / 7);
+  assert.ok(scaled.notes.every((note, index) => Math.abs(note.tick - (384 + index * 288 / 7)) < 1e-9));
+  for (const factor of [0, -1, Number.NaN, Infinity]) assert.equal(scaleEditorSelection(chart, new Set([a.id]), factor), chart);
+});
+
+test('curved SLIDE replaces one straight segment by connected control segments on an ease-in-out path', () => {
+  const chart = createChart();
+  const slide = { ...createNote('SLIDE', 96, 0, 4), duration: 384, endLane: 8, endWidth: 2, attributes: { visible: true } }, tap = createNote('TAP', 0, 0, 4);
+  chart.notes = [tap, slide];
+  const curved = curveEditorSlide(chart, slide.id, 96), segments = curved.notes.filter(note => note.type === 'SLIDE');
+  assert.equal(segments.length, 4); assert.equal(segments[0].id, slide.id); assert.equal(curved.notes[0], tap);
+  assert.deepEqual(segments.map(note => [note.tick, note.duration, note.lane, note.endLane, note.width, note.endWidth]), [[96, 96, 0, 1, 4, 4], [192, 96, 1, 4, 4, 3], [288, 96, 4, 7, 3, 2], [384, 96, 7, 8, 2, 2]]);
+  // Inserted joints are control points; the original end keeps its own node kind.
+  assert.deepEqual(segments.map(note => note.attributes.visible), [false, false, false, true]);
+  assert.deepEqual(segments.slice(1).map(note => note.attributes.parent), ['SLD', 'SLD', 'SLD']);
+  const air = { ...createNote('AIR_SLIDE', 0, 2, 2), duration: 96, endLane: 6, height: 1, endHeight: 5 }; chart.notes.push(air);
+  const lifted = curveEditorSlide(chart, air.id, 48).notes.filter(note => note.type === 'AIR_SLIDE');
+  assert.deepEqual(lifted.map(note => [note.height, note.endHeight]), [[1, 3], [3, 5]]);
+  // Nothing to curve: no sideways change, fewer than two steps, or another note type.
+  assert.equal(curveEditorSlide({ ...chart, notes: [{ ...slide, endLane: 0, endWidth: 4 }] }, slide.id, 96).notes.length, 1);
+  assert.equal(curveEditorSlide(chart, slide.id, 384), chart); assert.equal(curveEditorSlide(chart, tap.id, 24), chart);
 });

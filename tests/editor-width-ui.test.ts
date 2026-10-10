@@ -40,9 +40,10 @@ test('editor track width preserves chart coordinates, fixed AIR controls and the
     const click = async (tick: number, lane: number) => { const p = await point(tick, lane); await page.mouse.click(p.x, p.y); };
     const original = await raw(), initial = await layout();
     await widthControl.focus(); await widthControl.press('End');
-    await page.waitForFunction(() => document.querySelector('canvas')?.dataset.trackScale === '2');
+    await page.waitForFunction(() => document.querySelector('canvas')?.dataset.trackScale === '3');
     const wide = await layout();
-    assert.equal(wide.trackWidth, initial.trackWidth * 2); assert.equal(wide.airLeft, initial.airLeft); assert.equal(wide.airWidth, initial.airWidth);
+    // 100% is the standard 30 px lane, independent of the window; the slider ends at 300%.
+    assert.equal(initial.laneWidth, 30); assert.equal(wide.trackWidth, initial.trackWidth * 3); assert.equal(wide.airLeft, initial.airLeft); assert.equal(wide.airWidth, initial.airWidth);
     assert.equal(await raw(), original, 'Display width must not alter the native chart.');
     assert.equal(await panControl.isVisible(), true);
     await panControl.focus(); await panControl.press('Home');
@@ -85,8 +86,8 @@ test('editor track width preserves chart coordinates, fixed AIR controls and the
     assert.equal(await widthControl.inputValue(), '50');
     await page.locator('[data-action="fit-track-width"]').click();
     assert.equal(await widthControl.inputValue(), '100'); assert.equal(await panControl.isVisible(), false);
-    // A smaller host still exposes all 16 lanes at fit width, without moving the AIR pane.
-    await page.setViewportSize({ width: 960, height: 760 });
+    // A host narrower than the standard track still exposes all 16 lanes, without moving the AIR pane.
+    await page.setViewportSize({ width: 800, height: 760 });
     await page.waitForFunction(previous => Number(document.querySelector('canvas')?.dataset.trackRight) < previous - 100, initial.right);
     const resized = await layout(); assert.equal(resized.offset, 0); assert.equal(resized.right, resized.width - 18); assert.equal(resized.airLeft, initial.airLeft);
     await page.locator('[data-tool="TAP"]').click(); await click(96, 14); assert.equal((await state()).notes.at(-1).lane, 14);

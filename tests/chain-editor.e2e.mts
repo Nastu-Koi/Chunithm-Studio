@@ -16,8 +16,8 @@ try {
   await page.goto(`${process.env.CHUNI_UI_URL || 'http://127.0.0.1:5173'}/__chain_editor_test__`);
   await page.waitForFunction(() => Boolean((window as any).test));
   const box = (await page.locator('canvas').boundingBox())!;
-  const trackLeft = Number(await page.locator('canvas').getAttribute('data-track-left'));
-  const point = (tick: number, lane: number) => ({ x: box.x + trackLeft + (lane + .5) * (box.width - trackLeft - 18) / 16, y: box.y + box.height - 30 - tick * .75 });
+  const trackLeft = Number(await page.locator('canvas').getAttribute('data-track-left')), laneWidth = Number(await page.locator('canvas').getAttribute('data-lane-width'));
+  const point = (tick: number, lane: number) => ({ x: box.x + trackLeft + (lane + .5) * laneWidth, y: box.y + box.height - 30 - tick * .75 });
   const click = async (tick: number, lane: number) => { const p = point(tick, lane); await page.mouse.click(p.x, p.y); };
   await page.evaluate(() => {
     const t = (window as any).test, chart = t.createChart();

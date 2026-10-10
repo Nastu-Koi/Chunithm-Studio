@@ -6,7 +6,7 @@ import { getScrollPosition, getGrid, tickToSeconds, secondsToTick, bpmAtTick, ge
 import { getPlayerPlaybackPoints } from './playback-points';
 import { fitSceneViewport, projectTrackPoint, TRACK_REFERENCE, SCENE_WIDTH, SCENE_HEIGHT } from './player-scene';
 import { buildJudgementTimeline, getAutoScoreAtTick, type JudgementTimeline } from '../core/judgement';
-import { drawPlayerHud } from './player-hud';
+import { drawPlayerHud, type HudSprite } from './player-hud';
 import { createClassicRingRenderer, type ClassicRingRenderer, type StagePosition } from './classic-stage';
 import { sampleStageSkinMatrices, transformStagePoint, type StageAnimation } from '../core/stage-animation';
 import { createStageModelSampler, getStageCamera } from '../core/stage-program';
@@ -22,7 +22,7 @@ import { getNativeAirSlideGeometry, getNativeAirCrushGeometry, getNativeAirHoldM
 const colors: Record<Note['type'], string> = { TAP: '#fb4769', EXTAP: '#ffd55c', FLICK: '#74d9ff', HOLD: '#ffbc4a', SLIDE: '#56b9ff', AIR: '#6ef2a0', AIR_HOLD: '#ff72c0', AIR_SLIDE: '#fe8bd5', AIR_CRUSH: '#cd7fff', DAMAGE: '#9e74d3' };
 const nativeColors: Record<string, string> = { RED: '#ff566b', ORN: '#ffa158', YEL: '#ffe67c', GRN: '#70f1a6', CYN: '#73eeed', BLU: '#6abaff', PPL: '#be90ff', PNK: '#ff94d1', VLT: '#b195ff', GRY: '#bdc8d8', BLK: '#24283a' };
 type Point = { x: number; y: number; scale: number };
-type Sprite = { image: HTMLImageElement; x: number; y: number; width: number; height: number };
+type Sprite = HudSprite;
 const headModels: Partial<Record<Note['type'], string>> = { TAP: 'NotesTap', EXTAP: 'NotesChara', FLICK: 'NotesFlick', DAMAGE: 'NotesMine', HOLD: 'NotesHold', SLIDE: 'NotesSlide', AIR_HOLD: 'NotesAirHold_Tap' };
 /** Only these records contain a complete, inspected head image. AIR records are mesh materials. */
 export function getPlayerHeadTextureKey(note: Note, width = note.width): string | undefined {
@@ -210,18 +210,18 @@ export class ChartPlayer {
       }
       return pending;
     };
-    const entries: { key: string; texture: GameTexture; rectangle?: GameModelTexture['rectangle']; target: Map<string, Sprite> }[] = [];
+    const entries: { key: string; texture: GameTexture; rectangle?: GameModelTexture['rectangle']; target: Map<string, Sprite>; layout?: Sprite['layout'] }[] = [];
     for (const [key, model] of Object.entries(assets.models)) if (/^(Notes(Tap|Chara|CharaNoEff|Flick|Mine|Hold|Slide|AirHold_Tap)_\d{2}|GoalLine)$/.test(key) && model.images[0]) entries.push({ key, texture: model.images[0], rectangle: model.rectangle, target: models });
     for (const [key, texture] of Object.entries(assets.textures)) if (bodyKeys.has(key)) entries.push({ key, texture, target: bodies });
     for (const [key, texture] of Object.entries(assets.scene?.materials ?? {})) entries.push({ key, texture, target: materials });
     for (const [key, sprite] of Object.entries(assets.scene?.hud ?? {})) {
-      const { rect, image } = sprite;
-      entries.push({ key, texture: image, rectangle: { u0: rect.x / image.width, v0: rect.y / image.height, u1: (rect.x + rect.width) / image.width, v1: (rect.y + rect.height) / image.height }, target: hud });
+      const { rect, image, layout } = sprite;
+      entries.push({ key, texture: image, rectangle: { u0: rect.x / image.width, v0: rect.y / image.height, u1: (rect.x + rect.width) / image.width, v1: (rect.y + rect.height) / image.height }, target: hud, layout });
     }
-    for (let index = 0; index < entries.length; index += 8) await Promise.all(entries.slice(index, index + 8).map(async ({ key, texture, rectangle, target }) => {
+    for (let index = 0; index < entries.length; index += 8) await Promise.all(entries.slice(index, index + 8).map(async ({ key, texture, rectangle, target, layout }) => {
       const image = await decode(texture), rect = getPlayerTextureRectangle(texture, rectangle);
       if (!image || ![rect.x, rect.y, rect.width, rect.height].every(Number.isFinite) || rect.x < 0 || rect.y < 0 || rect.width <= 0 || rect.height <= 0 || rect.x + rect.width > image.naturalWidth + .001 || rect.y + rect.height > image.naturalHeight + .001) { failed.push(`${key}: 贴图无法解码或 UV 范围无效`); return; }
-      target.set(key, { image, ...rect }); loaded++;
+      target.set(key, { image, ...rect, layout }); loaded++;
     }));
     const nativeModels = new Map<string, { model: GameModelTexture; images: HTMLImageElement[] }>();
     await Promise.all(Object.entries(assets.models).filter(([, model]) => model.meshes?.length).map(async ([key, model]) => {
@@ -432,7 +432,7 @@ export class ChartPlayer {
     this.texturedQuad({ ...sprite, y: sprite.y + sprite.height * (1 - last), height: sprite.height * (last - first) }, [points[3], points[2], points[1], points[0]],
       note.type === 'HOLD' || note.type === 'SLIDE' ? { blendSource: 4, blendDestination: 1, blendOperation: 0 } : {});
   }
-  render(seconds: number, playing: boolean): void {
+  render(seconds: number): void {
     if (!this.hostWidth || !this.hostHeight) return;
     if (this.textureLayer && !this.textureLayer.available) {
       this.textureLayer.destroy(); this.textureLayer = undefined;
@@ -443,7 +443,8 @@ export class ChartPlayer {
     this.canvas.dataset.frame = String(++this.frameNumber); this.canvas.dataset.score = String(score.score); this.canvas.dataset.combo = String(score.combo);
     this.canvas.dataset.title = this.title; this.canvas.dataset.difficulty = this.difficulty;
     const viewport = fitSceneViewport(this.hostWidth, this.hostHeight);
-    c.setTransform(this.dpr, 0, 0, this.dpr, 0, 0); c.fillStyle = '#000000'; c.fillRect(0, 0, this.hostWidth, this.hostHeight);
+    // Neutral letterbox: the black 16:9 game screen stays distinct from the space around it.
+    c.setTransform(this.dpr, 0, 0, this.dpr, 0, 0); c.fillStyle = '#161616'; c.fillRect(0, 0, this.hostWidth, this.hostHeight);
     c.save(); c.translate(viewport.x, viewport.y); c.scale(viewport.scale, viewport.scale);
     c.beginPath(); c.rect(0, 0, w, h); c.clip();
     c.fillStyle = '#000000'; c.fillRect(0, 0, w, h);
@@ -587,7 +588,7 @@ export class ChartPlayer {
     this.canvas.dataset.nativeEffectPrimitives = String(effectPrimitives);
     if (this.textureLayer) c.drawImage(this.textureLayer.finish(), 0, 0, w, h);
     c.restore();
-    drawPlayerHud(c, this.hudSprites, { font: this.hudFont, scoreStatus: this.scoreTimeline.status, headerMatched: this.scoreTimeline.header.matches === true, title: this.title, artist: this.artist, difficulty: this.difficulty, level: this.level, weTag: this.weTag, stars: this.stars, cover: this.cover, score: score.score, combo: score.combo, total: score.total, speed: this.speed, playing });
+    drawPlayerHud(c, this.hudSprites, { font: this.hudFont, scoreStatus: this.scoreTimeline.status, headerMatched: this.scoreTimeline.header.matches === true, title: this.title, artist: this.artist, difficulty: this.difficulty, level: this.level, weTag: this.weTag, stars: this.stars, cover: this.cover, score: score.score, combo: score.combo, total: score.total, speed: this.speed });
     c.restore();
   }
   private bar(left: Point, right: Point, color: string, type: Note['type'], note?: Note, laneWidth = note?.width): void {

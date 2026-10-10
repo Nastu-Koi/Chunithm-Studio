@@ -42,12 +42,13 @@ async function loadGameResources(): Promise<void> {
   try {
     const assets = await bridge.loadGameResources();
     const [visuals, sounds] = await Promise.all([player.setGameTextures(assets.textures), transport.setGameSounds(assets.sounds, file => bridge.readAudio(file))]);
+    editor.setBodyTextures(assets.textures.textures);
     resourceWarnings = [...assets.textures.warnings, ...(assets.textures.scene?.warnings ?? []), ...assets.sounds.warnings, ...visuals.failed, ...sounds.failed];
     status.textContent = '原版资源副本'; status.dataset.loaded = 'true';
     status.dataset.textures = String(visuals.loaded); status.dataset.sounds = String(sounds.loaded);
-    resourceDescription = `已从程序目录载入 ${Object.keys(assets.textures.models).length} 个原始音符模型、${visuals.loaded} 项贴图映射、${sounds.loaded} 类打击音。音符、AIR、CRUSH 与打击效果使用原始模型、材质和动画数据；游玩文字使用复制的游戏字体。演示背景为纯黑，分数和 COMBO 按判定时间表计算。`;
+    resourceDescription = `已从程序目录载入 ${Object.keys(assets.textures.models).length} 个原始音符模型、${visuals.loaded} 项贴图映射、${sounds.loaded} 类打击音。音符、AIR、CRUSH 与打击效果使用原始模型、材质和动画数据；游玩文字使用复制的游戏字体，顶部 HUD 使用原判定条、默认 Frame 与名牌布局。演示背景为纯黑，分数和 COMBO 按判定时间表计算；技能槽按已判定比例填充，不模拟技能与槽数。`;
   } catch (error) {
-    player.clearGameTextures(); transport.clearGameSounds();
+    player.clearGameTextures(); transport.clearGameSounds(); editor.setBodyTextures(undefined);
     status.textContent = '简化资源 · 副本未载入'; status.dataset.loaded = 'false';
     resourceDescription = '资源副本未能载入，当前使用简化贴图与合成打击音。请检查程序目录中的 assets/game 文件是否完整。';
     resourceWarnings = [error instanceof Error ? error.message : String(error)];
@@ -248,7 +249,11 @@ $<HTMLInputElement>('#scroll-speed').oninput = event => { player.speed = Number(
 document.addEventListener('keydown', event => {
   if (event.defaultPrevented || modal.open || (event.target as HTMLElement)?.closest('input,select,textarea,[contenteditable="true"]')) return;
   const mod = event.ctrlKey || event.metaKey;
-  if (event.code === 'Space') { event.preventDefault(); void actions.toggle(); }
+  // Space, Ctrl+Space, P, F4 and F5 follow Margrete's default keys.
+  if (event.code === 'Space') { event.preventDefault(); if (mod) void run(async () => { transport.pause(); await actions.restart(); await transport.play(); }); else void actions.toggle(); }
+  else if (event.key === 'F4') { event.preventDefault(); showValidation(); }
+  else if (event.key === 'F5') { event.preventDefault(); showExport(); }
+  else if (!mod && !event.altKey && event.key.toLowerCase() === 'p') { event.preventDefault(); settings(); }
   else if (mod && event.key.toLowerCase() === 'g') { event.preventDefault(); showMeasureNavigation(); }
   else if (event.key === 'Tab') { event.preventDefault(); switchView(view === 'edit' ? 'player' : 'edit'); }
   else if (mod && ['s', 'o', 'n'].includes(event.key.toLowerCase())) { event.preventDefault(); const action = event.key.toLowerCase() === 's' ? () => save(event.shiftKey) : event.key.toLowerCase() === 'o' ? actions.open : actions.new; void run(async () => { await action(); }); }
@@ -263,7 +268,7 @@ function frame(): void {
   const seconds = transport.seconds, duration = playbackDuration();
   if (transport.playing && seconds > duration && !transport.loop) transport.pause();
   cursor = secondsToTick(project.chart, seconds);
-  if (view === 'edit') editor.setCursor(cursor, transport.playing); else player.render(seconds, transport.playing);
+  if (view === 'edit') editor.setCursor(cursor, transport.playing); else player.render(seconds);
   $('#time-current').textContent = formatTime(seconds); $('#time-total').textContent = `/ ${formatTime(duration)}`;
   $('#play-button').textContent = transport.playing ? 'Ⅱ' : '▶';
   const seek = $<HTMLInputElement>('#seek'); seek.max = String(duration); seek.value = String(seconds);

@@ -47,7 +47,7 @@ try {
   for (const [name, notes] of Object.entries(scenes)) {
     report[name] = await page.evaluate(notes => {
       const chart = NativeNotes.createChart(); chart.notes = notes.map((n, i) => ({ ...NativeNotes.createNote(n.type, n.tick, n.lane, n.width), ...n, id: `native-${i}` }));
-      drawnModels.clear(); fixturePlayer.setChart(chart); fixturePlayer.render(0, false);
+      drawnModels.clear(); fixturePlayer.setChart(chart); fixturePlayer.render(0);
       const canvas = document.querySelector('.player-canvas'); return { renderer: canvas.dataset.noteRenderer, models: Number(canvas.dataset.nativeModels), width: canvas.width, height: canvas.height, drawn: [...drawnModels] };
     }, notes);
     assert.equal(report[name].renderer, 'webgl2'); assert.ok(report[name].models >= 407); assert.ok(report[name].drawn.length > 1, 'Original model meshes must actually draw');
@@ -58,7 +58,7 @@ try {
     const quads=[], heads=[], draw=fixturePlayer.texturedQuad.bind(fixturePlayer), head=fixturePlayer.nativeHead.bind(fixturePlayer);
     fixturePlayer.texturedQuad=(sprite,...args)=>{if(sprite.image===fixturePlayer.bodySprites.get('SlideJoint').image)quads.push({y:sprite.y,height:sprite.height});return draw(sprite,...args)};
     fixturePlayer.nativeHead=(note,...args)=>{heads.push(note.id);return head(note,...args)};
-    fixturePlayer.setChart(chart);fixturePlayer.render(0,false);
+    fixturePlayer.setChart(chart);fixturePlayer.render(0);
     fixturePlayer.texturedQuad=draw;fixturePlayer.nativeHead=head;
     return {quads,heads};
   }, scenes.slcVsSld);
@@ -73,7 +73,7 @@ try {
     const body=fixturePlayer.ribbon.bind(fixturePlayer), head=fixturePlayer.nativeHead.bind(fixturePlayer), order=[];
     fixturePlayer.ribbon=(...args)=>{order.push('body');return body(...args)};
     fixturePlayer.nativeHead=(...args)=>{order.push('head');return head(...args)};
-    fixturePlayer.setChart(chart); fixturePlayer.title='神威';fixturePlayer.level='15.2';fixturePlayer.render(0,false);
+    fixturePlayer.setChart(chart); fixturePlayer.title='神威';fixturePlayer.level='15.2';fixturePlayer.render(0);
     fixturePlayer.ribbon=body;fixturePlayer.nativeHead=head;
     return {order,fontGlyphs:Object.keys(fixturePlayer.hudFont.font.glyphs).length, cachedTiles:fixturePlayer.hudFont.tinted.size};
   }, scenes.overlapping);
@@ -82,14 +82,14 @@ try {
   await page.locator('.player-canvas').screenshot({path:path.join(output,'native-overlapping-bpm.png')});
   report.effects = await page.evaluate(() => {
     const chart = NativeNotes.createChart(); chart.notes = ['TAP', 'EXTAP', 'FLICK', 'HOLD', 'SLIDE', 'AIR', 'AIR_HOLD', 'AIR_SLIDE', 'AIR_CRUSH'].map((type, i) => ({ ...NativeNotes.createNote(type, 96, i % 4 * 4, 4), id: `effect-${i}` }));
-    fixturePlayer.setChart(chart); fixturePlayer.render(.58, false);
+    fixturePlayer.setChart(chart); fixturePlayer.render(.58);
     return { primitives: Number(document.querySelector('.player-canvas').dataset.nativeEffectPrimitives), diagnostics: fixturePlayer.getResourceDiagnostics() };
   });
   assert.ok(report.effects.primitives > 0, 'Original effect programs must draw visible primitives');
   await page.locator('.player-canvas').screenshot({ path: path.join(output, 'native-effects.png') });
   report.denseEffects = await page.evaluate(() => {
     const chart = NativeNotes.createChart(); chart.notes = Array.from({ length: 128 }, (_, i) => ({ ...NativeNotes.createNote('TAP', 96, i % 4 * 4, 4), id: `dense-${i}` }));
-    fixturePlayer.setChart(chart); fixturePlayer.render(.58, false);
+    fixturePlayer.setChart(chart); fixturePlayer.render(.58);
     return { primitives: Number(document.querySelector('.player-canvas').dataset.nativeEffectPrimitives), total: fixturePlayer.getJudgements().total };
   });
   assert.equal(report.denseEffects.primitives, 4096, 'Dense effects must share one frame budget');

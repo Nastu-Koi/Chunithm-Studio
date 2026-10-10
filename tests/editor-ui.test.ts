@@ -28,7 +28,7 @@ test('real canvas editor: mouse editing, keyboard history, connected nodes and n
     const canvas = page.locator('.editor-viewport canvas');
     const box = await canvas.boundingBox(); assert.ok(box);
     const trackLeft = Number(await canvas.getAttribute('data-track-left'));
-    const laneWidth = (box.width - trackLeft - 18) / 16;
+    const laneWidth = Number(await canvas.getAttribute('data-lane-width'));
     const zoom = Number(await page.locator('[data-option="zoom"]').inputValue());
     const point = (tick: number, lane: number) => ({ x: box.x + trackLeft + (lane + .5) * laneWidth, y: box.y + box.height - 30 - tick * zoom });
     const state = () => page.evaluate(() => (window as any).testEditor.state.chart);

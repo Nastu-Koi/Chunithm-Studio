@@ -397,7 +397,7 @@ try {
   await page.locator('#edit-tab').click(); await page.locator('[data-tool="select"]').click();
   await page.keyboard.press('Home');
   const canvas = page.locator('.editor-viewport canvas'), box = await canvas.boundingBox(); assert.ok(box);
-  const trackLeft = Number(await canvas.getAttribute('data-track-left')), laneWidth = (box.width - trackLeft - 18) / 16;
+  const trackLeft = Number(await canvas.getAttribute('data-track-left')), laneWidth = Number(await canvas.getAttribute('data-lane-width'));
   const zoom = Number(await page.locator('[data-option="zoom"]').inputValue());
   const point = (tick, lane) => ({ x: box.x + trackLeft + (lane + .5) * laneWidth, y: box.y + box.height - 30 - tick * zoom });
   for (const [type, lane] of [['SLIDE', 1.2], ['AIR_HOLD', 6.4], ['AIR_SLIDE', 10.7]]) {

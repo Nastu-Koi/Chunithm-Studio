@@ -1,5 +1,8 @@
 import type { GameBitmapFont, GameTexture } from '../core/game-assets';
-/** Draw the copied RFZ glyphs; no system-font substitution for existing glyphs. */
+/**
+ * Draw the copied RFZ glyphs; no system-font substitution for existing glyphs. Characters the game font
+ * lacks (it is a Japanese set, so many Simplified Chinese ones) use the canvas font at the same size.
+ */
 export class NativeHudFont {
   private tinted = new Map<string, HTMLCanvasElement>();
   private constructor(private font: GameBitmapFont, private pages: HTMLImageElement[]) {}
@@ -9,15 +12,20 @@ export class NativeHudFont {
   }
   private scale(c: CanvasRenderingContext2D): number { return Number(c.font.match(/([\d.]+)px/)?.[1] ?? 24) / this.font.height; }
   measure(c: CanvasRenderingContext2D, text: string): number {
-    return [...text].reduce((w, ch) => w + (this.font.glyphs[String(ch.codePointAt(0))]?.advance ?? this.font.glyphs['63'].advance), 0) * this.scale(c);
+    const size = this.scale(c);
+    return [...text].reduce((w, ch) => { const glyph = this.font.glyphs[String(ch.codePointAt(0))]; return w + (glyph ? glyph.advance * size : c.measureText(ch).width); }, 0);
   }
   draw(c: CanvasRenderingContext2D, text: string, x: number, baseline: number, maxWidth = Infinity): void {
     const size = this.scale(c), width = this.measure(c,text), sx = size * Math.min(1,maxWidth / Math.max(1,width)), actualWidth = width * sx / size;
     let pen = x - (c.textAlign === 'center' ? actualWidth/2 : c.textAlign === 'right' || c.textAlign === 'end' ? actualWidth : 0);
     const color = typeof c.fillStyle === 'string' ? c.fillStyle : '#fff';
     for (const ch of text) {
-      const code = this.font.glyphs[String(ch.codePointAt(0))] ? String(ch.codePointAt(0)) : '63';
-      const glyph = this.font.glyphs[code];
+      const code = String(ch.codePointAt(0)), glyph = this.font.glyphs[code];
+      if (!glyph) {
+        const advance = c.measureText(ch).width * sx / size;
+        c.save(); c.textAlign = 'left'; c.fillText(ch, pen, baseline, advance); c.restore();
+        pen += advance; continue;
+      }
       if (glyph.page !== 65535 && glyph.width > 0 && glyph.height > 0) {
         const key = `${color}:${code}`;
         let tile = this.tinted.get(key);

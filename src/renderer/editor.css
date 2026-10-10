@@ -41,6 +41,7 @@
 .editor-legend-normal { background: #b75bb9; }
 .editor-legend-control { background: #151515; transform: rotate(45deg); margin-left: 7px; }
 .editor-zoom input { width: 58px; }
+.editor-options .editor-scale input { width: 44px; height: 23px; padding: 2px 4px; font-size: 11px; }
 .editor-track-controls { display: inline-flex; align-items: center; gap: 4px; }
 .editor-track-controls input { width: 72px; }
 .editor-track-controls output { min-width: 31px; text-align: right; font-variant-numeric: tabular-nums; }
@@ -64,7 +65,8 @@
 .editor-canvas-heading i { color: #888; font-size: 8px; font-style: normal; margin-left: 5px; }
 .editor-viewport { flex: 1; min-height: 140px; min-width: 0; position: relative; overflow: hidden; outline: none; touch-action: none; }
 .editor-viewport canvas { position: absolute; inset: 0; display: block; user-select: none; touch-action: none; }
-.editor-hint { pointer-events: none; position: absolute; top: 6px; left: calc(var(--editor-track-left, 250px) + 9px); right: 20px; width: fit-content; max-width: calc(100% - var(--editor-track-left, 250px) - 29px); font-size: 9px; line-height: 1.6; color: #aaa; padding: 1px 4px; background: #000b; }
+/* The hint sits at the canvas's top right, beside a standard-width track, so it does not cover notes. */
+.editor-hint { pointer-events: none; position: absolute; top: 6px; right: 20px; width: fit-content; max-width: calc(100% - var(--editor-track-left, 250px) - 29px); text-align: right; font-size: 9px; line-height: 1.6; color: #aaa; padding: 1px 4px; background: #000b; }
 .editor-root kbd { font: 9px "Segoe UI", sans-serif; background: #303030; border: 1px solid #555; border-radius: 1px; padding: 0 3px; color: #ccc; }
 .editor-navigation { height: 23px; flex: none; display: flex; align-items: center; gap: 8px; padding: 0 9px; background: #252525; color: #aaa; font-size: 9px; border-top: 1px solid #454545; }
 .editor-navigation input { flex: 1; }

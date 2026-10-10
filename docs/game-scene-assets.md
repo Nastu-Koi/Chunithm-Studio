@@ -81,7 +81,33 @@ SRD 是 `VTBF/SRFF`。本项目独立实现了受边界检查的静态记录读�
 - WORLD’S END 属性字中心 `(1799,87)`，原60×60节点缩放0.7，显示42×42。星条左上 `(1765,44)`，高16；满1至5星使用 CROP 49/52/54/56/51，宽14/28/42/55/70，不按各条宽度重新居中。
 - TRACK 数字节点锚点 `(1572,56)`、pivot=(0,9)，所以字形左上 `(1572,47)`。数字0至9来自 CROP 68..77，各14×18。卡片原图已有 TRACK 标签。
 
-中间 `DMY_Frame` 引用 `CHU_UI_DMY_Frame_00`。该名称和纹理指向运行时替换用占位对象，**本轮未把它当作真正分数框背景导入**。
+中间 `DMY_Frame` 引用 `CHU_UI_DMY_Frame_00`，是运行时替换用的占位对象；实际贴图见下节的 Frame。
+
+### 原生 HUD 补全：Frame、名牌与按节点解析的裁剪
+
+`resolveSrdCasts` 按 `图层/节点名` 解析每个 SRD 节点：位置由父子链的静态 `TRS2` 平移与缩放累乘得到，矩形再扣除 pivot，裁剪取该节点自己的 `CREF`（`CSLI` 切片节点同样拥有紧随其后的 `CREF`）。下列条目的裁剪与 `layout` 都由节点名解析，不再手工抄写索引；节点或贴图与已核对版本不同时导入直接报错。不求值动画，隐藏状态只读取静态可见标记。
+
+| HUD key | 来源节点 | 裁剪 / 静态矩形 |
+|---|---|---|
+| frame | `L_Playing_gauge/DMY_Frame` 的位置；贴图为 `A000/frame/frame00000001`（名称 NEW，`defaultHave=true`） | 764×140 整图，放在 `(578,36)`。贴图自带 `MAX COMBO :`、`SCORE :` 字样；gauge 窗口 `x=111…652, y=44…83` 透明 |
+| frameShadowLeft / Center / Right | `L_Playing_difficulty/Shadow`（三段切片） | 16/6/16×152，整体绘制到 `(568,36,784,128)`，位于 Frame 之下 |
+| scoreComma | `C_score_num` 第 11 个引用 | 12×32 |
+| speedDot | `NUM_speed` 第 11 个引用 | 6×8 |
+| mirrorOff / mirrorOn | `PAT_mirror` 图案 0 / 1 | 36×16，`(1768,13)`，顶点色 `#c8c8c8` |
+| gaugeEdge | `C_gauge_eff_00` | 82×4，节点色 `#ffff5d`，加法混合，显示尺寸 83×58 |
+| stockEmpty | `L_Playing_gauge_stock_box/C_gauge_empty`，挂在 `C_gauge_stock_ref_00` | 64×46，首格 `(708,129)`；20 个引用节点间隔 37，静态可见 12 个 |
+| namePlate | `common/playerData` 的 `C_nameplate_dummy`；贴图为 `A000/namePlate/namePlate00000001`（ノーマル，`defaultHave=true`） | 576×228，`(0,0)` |
+| nameBase | `L_Playing_player/C_base` | 328×90，`(140,83)` |
+| trophyBase | 位置取 `C_player_character_title_rank`（608×72 缩放 0.7）；贴图取 `common/trophyRank` 的 `C_player_title_base` 图案 0 | `(135.2,38.8,425.6,50.4)` |
+| charaBase | `L_Playing_player/C_chara_base` | 88×88，`(465,84)` |
+| levelLabel / levelHidden | `C_player_level_txt` / `C_no_disp` | `Lv.` 40×36 在 `(143,104)`；`＊` 32×32 在 `(172,104)`，第二个右移 21 |
+| ratingLabel / ratingHidden | `L_CHU_UI_Common_Rating_00` 的 `C_player_rating_no_disp_06` / `_01`，挂在 `C_player_rating (143,145)` | `RATING` 68×28 在 `(148,144)`；`*****` 86×17 在 `(214,148)` |
+
+玩家信息在游玩画面中是一张 576×228 的运行时合成图（`play/playerInfo` 的 `C_PlayerData_dummy`，位于屏幕原点）。本项目按 `common/playerData` 的静态布局合成同一张图。预览没有玩家档案：等级与 RATING 使用原布局自带的隐藏值节点（`＊＊` 与 `*****`），称号条文字为 `CHUNI STUDIO`，名字为 8 个全角字 `ＡＵＴＯＰＬＡＹ`（原名字框 226×50、28px 等宽）。角色图标、组队、票券和段位徽章不绘制。
+
+数字节点（`CNUM`）的字格与间距：分数 / MAX COMBO 为 24×32、间距 −4、父节点缩放 0.9，分数带千位逗号；判定计数与流速为 12×14、间距 −2；等级为 28×42、间距 −4，以节点为中心 `(1798,93)`，加号固定在 `(1820,65,18,18)`。判定计数中心与节点色：JC `(802,20)` `#f0ca22`、JUSTICE `(968,20)` `#fb8500`、ATTACK `(1135,20)` `#03d308`、MISS `(1286,20)` `#95a4a9`。节点色字段按 `0xBBGGRRAA` 读取。逗号、小数点以字格底边对齐后再下移 7 / 4 像素：这一竖直偏移是对照官方截图与字形像素得到的解释，字段含义未经原程序确认。
+
+曲名为 24pt 字体缩放 0.9、颜色 `#283232`，文本框 340×24 止于 `y=139`；作者为 14pt、`#505a5a`，文本框止于 `y=159`。文本在框内的对齐方式未解码，按底边对齐绘制。
 
 此外提供完整原始文字图片：
 
@@ -98,13 +124,13 @@ SRD 是 `VTBF/SRFF`。本项目独立实现了受边界检查的静态记录读�
 
 轨道主面和两侧边带采用原 `notesField/fieldSide` 图片，远端取 V=0、近端取 V=1，与原顶点方向一致；两片 Canvas 仿射三角形用于绘制透视四边形，尚不等同于原 GPU 的透视纹理插值。镜头、滚动与 AIR 高度仍使用预览标定。
 
-右侧曲目卡片使用原难度图集，封面、曲名和作者取当前工程。分数与 COMBO 小数字使用原 SRD 对应裁剪，中央 COMBO 标签使用原 AFB 图片。中央背景、进度条和部分文字由编辑器绘制，不能称为完整原生 HUD。计分状态与原谱分类对照见 [native-judgement.md](native-judgement.md)。
+右侧曲目卡片使用原难度图集，封面、曲名和作者取当前工程。中央使用原判定条、Frame、gauge 与数字裁剪，左上使用原名牌布局，中央 COMBO 标签使用原 AFB 图片。以下仍是预览行为，不是原生规则：gauge 按“已判定 / 总判定”填充并始终使用蓝色图案，不模拟技能、槽数与 CLEAR 演出，12 个 stock 方块保持空槽；gauge 前缘高光固定贴在填充末端，原动画未求值；HUD 进场与数值变化动画未求值。计分状态与原谱分类对照见 [native-judgement.md](native-judgement.md)。
 
 资源加载只解码 bundled loader 返回的 `data:image/...` 和副本中的动画 JSON，不将 `sourcePath/sourceLayout` 当作图片 URL 或访问原游戏。
 
 ## 副本、验证与限制
 
-执行 `node --import tsx scripts/copy-game-scene-resources.ts` 可在已有副本上追加本轮资源；该脚本不会读取音频或重新提取先前的205张图片。新场景共9项材质、74项HUD、12张去重 PNG 和5份几何数据。完整初始化脚本 `copy-game-resources.ts` 同样包含场景导入。
+执行 `node --import tsx scripts/copy-game-scene-resources.ts` 可在已有副本上追加本轮资源（保留字体导入脚本写入的 `mainComboDigit*`，清单保持紧凑格式并更新 `sha256.json` 中的清单校验值）；该脚本不会读取音频或重新提取先前的205张图片。新场景共9项材质、74项HUD、12张去重 PNG 和5份几何数据。完整初始化脚本 `copy-game-resources.ts` 同样包含场景导入。
 
 `assets/game/manifest.json` 存裁剪、布局、顶点与来源；`sha256.json` 记录每个 PNG 的完整摘要。测试检查所有场景 PNG 的 SHA-256、bundled路径、图集矩形边界、网格索引边界，以及环4008顶点、轨道宽64/长470这些已读事实。资源测试不是原游戏视觉验收。
 
@@ -119,6 +145,13 @@ SRD 是 `VTBF/SRFF`。本项目独立实现了受边界检查的静态记录读�
 | CHU_UI_playing_00_v11.dds | 8803878103a659f31e30074de00e418b9772c99b2ab858910df16a2e85f83afb |
 | chu_count_combo.afb | 4e6ef667aeb770ca9e30de66146bd9462608055ed041193fa7ea90fdac4bad5a |
 | chu_count_score.afb | 5abbe24ff4da4833d3fc3332e723143cad6a7441de121b9e127287d5b9df475e |
+| frame00000001/CHU_UI_Frame_00000001.dds | ac2c8b0047f6c136d2797a73aa55943df950e1c52a843702ca2eed9335b2975a |
+| namePlate00000001/CHU_UI_NamePlate_00000001.dds | 2708df5eaf07574b2d5ae42f931f10e285722e3bfca872574b1d37f27cdf39a2 |
+| CHU_UI_PlayerData_00_v10.srd | bc61c671a1eef99a6d8069d2967ab36185a6c369d9042bc218fe3388816b2ae5 |
+| CHU_UI_Character_title_rank_00_v10.srd | e62bf761e5b012db3b54eb3181e00a5491d19150dc200380edc2221fbb8c2434 |
+| CHU_UI_Common_01_v11.dds | 87017454e622e1b9396922977deb6b368a38e1d597337845d6167f12f3889aa4 |
+| CHU_UI_Common_rating_00_v13.dds | 2de937384a3ed52b66e3c8f794581850e1539d10505d854ef41da976e8f6320f |
+| CHU_UI_title_rank_00_v10.dds | fddcbbc2c94c17b89f697c106513837c1c5e15fd2603aae6b179122cdae7d62e |
 
 尚未确定：AFB 相机与世界变换的完整语义、动作编排与实际帧率、光照/雾/bloom、运行时替换的中央框、HUD 动画与部分原生计分规则。不能由贴图、静态顶点或界面相似度声称这些已经复现。
 

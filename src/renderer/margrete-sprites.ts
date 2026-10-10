@@ -16,7 +16,9 @@ export class MargreteNoteSprites {
     if (type === 'AIR') {
       const down = String(note.attributes.direction ?? '').startsWith('D');
       c.translate(x,y); if (down) c.scale(1,-1);
-      c.drawImage(this.image,0,48,12,8,0,-6,width,12);
+      // The arrow grows with wide notes (12 to 20 px) so its chevron stays readable instead of flattening.
+      const height=Math.max(12,Math.min(20,width*.2));
+      c.drawImage(this.image,0,48,12,8,0,-height/2,width,height);
     } else {
       const height=6, cap=Math.min(3,width/2), middle=width-cap*2;
       c.drawImage(this.image,0,row,2,4,x,y-height/2,cap,height);

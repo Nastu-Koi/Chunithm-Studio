@@ -128,3 +128,43 @@ AIR高度换算、AH顶面透明度、AS跨ASC节点的纹理相位、CRUSH固�
 长条黑缝回归覆盖2072个不透明像素、2072个半透明像素及3799个连续变宽/透视像素，暗缝和重叠亮缝均为0。舞台改用批量GPU绘制；隔离优化与完整播放测量分别记录在`performance.md`。俯视编辑轨道支持50%～200%宽度、水平移动、复位和设置持久化；真实画布放置/拖动/高度联动等测试另在Windows浏览器中执行。
 
 0.1.8 最终Windows便携版全流程回归通过，renderer错误0：资源副本加载、原曲播放、XML信息、节点六标签、AIR高度连接、小节定位、倍速、舞台编排/定位复现和8文件OPT导出均通过。最终证据为`out/windows-test/evidence-0.1.8.json`，其中记录实际构建哈希；17项GPU材质/透明度/纹理边界/上下文失效检查全部通过。同校准谱8秒完整播放平均帧间隔6.35ms、p99为6.4ms、2帧超过25ms，其中1帧81.1ms；这些结果反映本机测试，未宣称所有谱面均无卡顿。程序和ZIP的资源副本另按SHA-256逐项核对。
+
+## HUD 原生布局补全（0.1.10 之后，尚未打包）
+
+游玩 HUD 改为按原 SRD 节点绘制：中央判定条、默认 Frame、gauge、stock 方块与带逗号的分数，左上的默认名牌布局，右上的流速数字与镜像 `OFF`。新增 18 项 HUD 裁剪和 5 张去重 PNG（共 274 张）；资源清单除 `scene.hud` 新增项外与更新前逐项相同，`sha256.json` 仅新增 5 个图片摘要并更新清单摘要。裁剪和位置的来源见 `game-scene-assets.md`。
+
+`npm test` 共 238 项，234 通过、4 项可选环境测试跳过、失败 0；`tsc --noEmit` 与 `npm run build` 通过。新增单元测试覆盖节点位置的父子链累乘、pivot、隐藏标记、重名节点、切片节点的 `CREF` 归属，以及复制后各新增条目的裁剪与静态矩形。
+
+`tests/windows-hud.mjs` 在 0.1.10 便携版的 Electron 运行时内载入当前源码打包，以 2880×1620（1920×1080 设计画幅，缩放 1.5）绘制 MASTER、BASIC 开局、EXPERT 结尾、WORLD’S END、ULTIMA 与无资源副本的简化画面，renderer 错误 0：每个原生场景都实际绘制了 Frame、名牌、RATING 图集、称号图集、公共图集和游玩图集中的图片；Frame、名牌和判定条的取样颜色符合原贴图；gauge 在开局为空、结尾填满，满分显示 `1,010,000`。截图保存为 `out/screenshots/hud-*.png`，已人工对照 SEGA 官方游玩截图的三段式顶栏布局。
+
+未验证：没有与本机当前版本游戏的实机画面逐像素对照。官方截图来自较旧版本，名牌内部排布与当前 SRD 不同，只用于核对整体区域。逗号与小数点的竖直偏移、文本框内的对齐方式属于未经原程序确认的解释；gauge 填充规则、stock 方块状态与前缘高光为预览行为，未模拟技能、槽数和 CLEAR 演出。
+
+## 剩余验证、制谱页 Margrete 对照与显示调整（0.1.10 之后，尚未打包）
+
+### 运行方式
+
+本机没有可用的 Linux 浏览器，也没有 Windows 版 Node。浏览器端测试改用便携版自带的 Electron 以 Node 方式运行（`ELECTRON_RUN_AS_NODE=1`），由 Playwright 驱动已安装的 Edge，页面取自 WSL 内的 Vite 开发服务器：
+
+```
+ChuniStudio.exe --experimental-transform-types --import file:///<仓库>/tests/windows-node-preload.mjs tests/<测试文件>
+```
+
+需要 `CHUNI_UI_URL=http://localhost:5173` 与 `CHUNI_BROWSER=<msedge.exe>`，工作目录为仓库根目录。桌面程序测试使用 0.1.10 便携版的临时副本，覆盖当前的 `dist`、`dist-electron` 和 `assets/game`；交付的 0.1.10 目录未改动。
+
+### 结果
+
+- `npm test`：242 项，237 通过、5 项需要浏览器或游戏目录的测试跳过、失败 0。`tsc --noEmit` 与 `npm run build` 通过。新增三项单元测试覆盖前后翻转、时间轴缩放和曲线 SLIDE。
+- Edge 中通过：`editor-ui.test.ts`、`editor-width-ui.test.ts`、新增的 `editor-margrete-ui.test.ts`（橡皮擦点击与框选、数字键与 AIR 下、翻转、时间缩放、镜像、左边缘改宽度、曲线、镜像粘贴、取消选择、插入 BPM、`Shift`+滚轮）、`chain-editor.e2e.mts`、`player-we.e2e.mts`、`player.e2e.mjs`、`rhythm.e2e.mjs`。
+- 桌面程序通过：`windows-desktop.mjs` 全流程（真实 preload、资源副本只读校验、曲库扫描与载入、编辑、XML、小节定位、节点编辑、OPT 导出等），renderer 错误 0，经 IPC 载入 102 项 HUD 裁剪；`windows-hud.mjs` 六个场景；`windows-native-notes.mjs`。实际程序中的播放页已显示补全后的 HUD。
+- 因轨道宽度改为标准宽度，`editor-ui.test.ts`、`chain-editor.e2e.mts`、`windows-desktop.mjs` 的点击坐标改为读取画布的 `data-lane-width`；`editor-width-ui.test.ts` 按 300% 上限和标准宽度更新。
+
+- 制谱页 HOLD / SLIDE 带体改用游戏贴图之后，重新运行了上述编辑器交互测试、`player.e2e.mjs`、`rhythm.e2e.mjs` 与 `npm test`，结果不变。`editor-margrete-ui.test.ts` 新增像素断言：带体中段在渐变模式下为不透明的黄色（HOLD）与青色（SLIDE），传入贴图后改为贴图颜色。在桌面程序的临时副本中载入曲库谱面，编辑画布报告 `data-body-textures="game"`，截图中带体为游戏贴图，renderer 错误 0。这次修改之后没有重跑 `windows-desktop.mjs` 全流程。
+
+### 未通过或未验证
+
+- `player-textures.e2e.mts` 在本方式下无法完成：约 90 MB 的资源数据经路由送入无头 Edge 时浏览器直接关闭。用未修改的初始提交（渲染代码与资源均为旧版）复测，同样在同一位置失败，因此不是本次改动引入；它检查的原模型绘制由 `windows-native-notes.mjs` 覆盖，清空与损坏资源后的回退行为本轮没有验证。
+- 没有启动原游戏，仍然没有与当前版本实机画面逐像素对照。
+- `windows-mesh-gpu.mjs`、`windows-stage-gpu.mjs`、`windows-ribbon.mjs`、`windows-performance.mjs` 本轮未运行；对应的渲染代码没有改动。
+- 新增的 `A` 属性键、`J` 结合、`K`、`W`、`Ctrl`+`Space`、`P`、`F4`、`F5` 只有代码路径，没有专门的交互断言。
+- Margrete 一侧只核对了说明书文字，没有运行 Margrete 对照实际行为；功能对照表见 `margrete-reference.md`。
+
