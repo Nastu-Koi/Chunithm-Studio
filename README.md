@@ -26,11 +26,11 @@ AIR HOLD 顶面使用原运行时透明度。AIR SLIDE 纹理跨控制节点连�
 
 编辑页按 Margrete 官方 UI 文档调整为紧凑双工具栏、黑色谱面、细灰网格与红色光标。左侧新增独立 AIR 高度窗，拖动 AIR SLIDE / AIR CRUSH 的高度节点会同步连接处两段高度；右侧属性面板继续支持精确数值、小节与任意分音。轨道宽度 100% 为标准宽度（每轨 30 px），支持 50%–300% 调整，超出画布时可横向移动视野，“标准”恢复 100%；设置自动保存，不改变谱面轨道坐标。
 
-0.1.10 之后（尚未打包）对照 Margrete 说明书补了编辑功能：橡皮擦工具、前后翻转、按比例缩放时间间隔、把直线 SLIDE 换成曲线、拖动左边缘改宽度、左右镜像粘贴，以及在谱面右侧显示 BPM、拍号和滚速数值；默认按键改为与 Margrete 一致。HOLD / SLIDE 的带体改用游戏贴图绘制（青 / 黄色、两端粉紫渐变，带中心线），不再是半透明色块。逐项对照与仍未实现的功能见 `docs/margrete-reference.md`。
+0.1.1 对照 Margrete 说明书补了编辑功能：橡皮擦工具、前后翻转、按比例缩放时间间隔、把直线 SLIDE 换成曲线、拖动左边缘改宽度、左右镜像粘贴，以及在谱面右侧显示 BPM、拍号和滚速数值；默认按键改为与 Margrete 一致。HOLD / SLIDE 的带体改用游戏贴图绘制（青 / 黄色、两端粉紫渐变），不再是半透明色块。逐项对照与仍未实现的功能见 `docs/margrete-reference.md`。
 
 播放页保持独立，使用固定 1920×1080 设计画幅等比缩放。顶部中央显示分数与 COMBO，右上显示当前封面、曲名、作者、难度和等级；曲目信息框、数字、TRACK 编号、WORLD’S END 星级和 COMBO 字样来自游戏资源副本。HUD 的位置与裁剪来自原 SRD 文件；轨道地面和判定线由世嘉官方游玩截图标定。
-
-0.1.10 之后（尚未打包）的 HUD 按原游戏布局补全：中央使用原判定条、默认 Frame（含 MAX COMBO / SCORE 字样）、gauge 与 stock 方块，分数带千位逗号；左上按原玩家信息布局绘制默认名牌、称号条、`Lv.` 与 RATING；右上的流速与镜像设置使用原数字和 `OFF` 贴图。新增贴图的裁剪与位置按 SRD 节点名解析。预览没有玩家档案和技能：等级与 RATING 显示原布局自带的隐藏值，gauge 按已判定比例填充，stock 方块保持空槽，游玩画面内不再显示编辑器自绘的 AUTO JC、SPEED 与 PAUSE 文字。详见 `docs/game-scene-assets.md`。
+ 
+0.1.11 的 HUD 按原游戏布局补全：中央使用原判定条、默认 Frame（含 MAX COMBO / SCORE 字样）、gauge 与 stock 方块，分数带千位逗号；左上按原玩家信息布局绘制默认名牌、称号条、`Lv.` 与 RATING；右上的流速与镜像设置使用原数字和 `OFF` 贴图。新增贴图的裁剪与位置按 SRD 节点名解析。预览没有玩家档案和技能：等级与 RATING 显示原布局自带的隐藏值，gauge 按已判定比例填充，stock 方块保持空槽，游玩画面内不再显示编辑器自绘的 AUTO JC、SPEED 与 PAUSE 文字。详见 `docs/game-scene-assets.md`。
 
 0.1.9 的播放背景为纯黑，停用经典舞台绘制与动作控制。轨道、侧边材质与判定线仍使用项目内的原始资源。舞台解析代码和研究记录保留，当前播放页不执行舞台动画。
 
@@ -117,9 +117,11 @@ XML 设置随工程保存并支持撤销。从“本地曲库”载入曲目时�
 
 ## 开发与验证
 
-源码入口：`src/core` 为谱面、时间与量化模型，`src/renderer` 为编辑和预览，`src/backend` 为桌面文件、游戏资源和导出，`native` 为音频助手。编辑器的纯谱面变换在 `src/renderer/editor-operations.ts`，工具栏与画布标记在 `src/renderer/editor-template.ts`，`editor.ts` 只保留交互与绘制。
+源码入口：`src/core` 为谱面、时间与量化模型，`src/renderer` 为编辑和预览，`src/backend` 为桌面文件、游戏资源和导出，`native` 为音频助手。编辑器的纯谱面变换在 `src/renderer/editor-operations.ts`，工具栏与画布标记在 `src/renderer/editor-template.ts`，`editor.ts` 只保留交互与绘制。应用壳 `src/renderer/main.ts` 只保留状态、同步与快捷键；页面模板在 `app-template.ts`，各对话框在 `src/renderer/dialogs/`，它们通过 `app-context.ts` 定义的上下文访问工程与播放器。音符的原生属性有明确类型 `NoteAttributes`（`src/core/model.ts`）。
 
-桌面程序通过自定义协议 `chuni-asset://game/…` 直接提供 `assets/game` 中的贴图，主进程只把清单和 URL 交给渲染进程，不再把 PNG 转成 base64 经 IPC 传递；该协议只响应资源目录内的 PNG / WAV / JSON，并带 CORS 头以供 WebGL 读取。`.github/workflows/ci.yml` 在推送时运行类型检查、单元测试和渲染端构建。
+本地曲库扫描按资源根目录下 music / cueFile 文件夹及其修改时间生成指纹，结果缓存在用户数据目录的 `library-cache.json`；目录未变化时直接使用缓存，曲库窗口的“强制重扫”忽略缓存。渲染进程只能读取主进程交出的路径（对话框选择、工程文件、曲库扫描结果、缓存与资源目录）。
+
+桌面程序通过自定义协议 `chuni-asset://game/…` 直接提供 `assets/game` 中的贴图，主进程只把清单和 URL 交给渲染进程，不再把 PNG 转成 base64 经 IPC 传递；该协议只响应资源目录内的 PNG / WAV / JSON，并带 CORS 头以供 WebGL 读取。`.github/workflows/ci.yml` 在推送时运行类型检查、单元测试和渲染端构建；`release.yml` 在打 `v*` 标签时于 Windows runner 上准备原生依赖、打包便携目录并附加到 GitHub Release。打包输出位于 `release/<版本号>/`。Node 版本以 `.nvmrc` 与 `engines` 钉在 22。
 
 ```sh
 npm ci

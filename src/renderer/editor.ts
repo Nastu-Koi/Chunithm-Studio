@@ -1,5 +1,5 @@
 import { MargreteNoteSprites } from './margrete-sprites';
-import { createChart, createNote, LANES, makeId, NOTE_TYPES, type Chart, type ChartEvent, type EventType, type Note, type NoteType, type Scalar } from '../core/model';
+import { createChart, createNote, LANES, makeId, NOTE_TYPES, type Chart, type ChartEvent, type EventType, type Note, type NoteAttributes, type NoteType, type Scalar } from '../core/model';
 import { getChartEndTick, getGrid, secondsToTick, tickToSeconds, getNoteScrollGroup, getNotePlaybackPoints } from '../core/timing';
 import { isBundledImageSource, type GameTexture } from '../core/game-assets';
 import { getSlideUvSpans, slideUvProgress } from './slide-timing';
@@ -25,8 +25,6 @@ const BODY_STOPS: Partial<Record<NoteType, [number, string][]>> = {
   SLIDE: [[0, '#8242be'], [.06, '#7357c7'], [.25, '#30b3ec'], [.5, '#0ee2ff'], [.75, '#49b9e8'], [.94, '#bf68bb'], [1, '#dd53af']],
   HOLD: [[0, '#8641ba'], [.06, '#9653a2'], [.25, '#dba036'], [.5, '#fec700'], [.75, '#f5a632'], [.94, '#e26496'], [1, '#dd53af']],
 };
-/** Margrete draws a blue line down a SLIDE and a red one down a HOLD. */
-const BODY_CENTER: Partial<Record<NoteType, string>> = { SLIDE: '#2c4dff', HOLD: '#ff3636' };
 function eventText(event: ChartEvent): string {
   switch (event.type) {
     case 'BPM': return formatTick(event.value);
@@ -409,7 +407,7 @@ export class ChartEditor {
       if (property === 'nodeKind') { this.commit(setEditorNodeKind(this.chart, note.id, value as EditorNodeKind), '修改段末节点类型'); return; }
       if (property === 'height' || property === 'endHeight') { this.commit(setEditorAirHeight(this.chart, note.id, property, Math.max(0, number)), '修改 AIR 高度'); return; }
       let next: Note = { ...copyNote(note) };
-      if (property.startsWith('attr.')) { next.attributes[property.slice(5)] = property === 'attr.interval' ? Math.max(0, number) : value; }
+      if (property.startsWith('attr.')) { (next.attributes as Record<string, Scalar>)[property.slice(5)] = property === 'attr.interval' ? Math.max(0, number) : value; }
       else if (property === 'type') {
         next.type = value as NoteType;
         if (LONG.has(next.type)) { next.duration ??= this.chart.resolution / 4; next.endLane ??= next.lane; next.endWidth ??= next.width; }
@@ -476,7 +474,7 @@ export class ChartEditor {
     try {
       const value: unknown = JSON.parse(input.value);
       if (!value || typeof value !== 'object' || Array.isArray(value) || Object.values(value).some(item => !['string', 'number', 'boolean'].includes(typeof item))) throw new Error('属性必须是由字符串、数字或布尔值组成的 JSON 对象');
-      this.commit({ ...this.chart, notes: this.chart.notes.map(item => item.id === note.id ? { ...item, attributes: value as Record<string, Scalar> } : item) }, '修改原生属性');
+      this.commit({ ...this.chart, notes: this.chart.notes.map(item => item.id === note.id ? { ...item, attributes: value as NoteAttributes } : item) }, '修改原生属性');
       this.setHint('原生属性已应用');
     } catch (error) { this.setHint(`属性格式有误：${error instanceof Error ? error.message : String(error)}`); }
   }
@@ -985,7 +983,6 @@ export class ChartEditor {
         }
       }
       if (airborne) { ctx.setLineDash([5, 5]); ctx.strokeStyle = `${color}b0`; ctx.beginPath(); ctx.moveTo(x + width / 2, y); ctx.lineTo(finishX + finishWidth / 2, finishY); ctx.stroke(); ctx.setLineDash([]); }
-      else { ctx.strokeStyle = BODY_CENTER[note.type] ?? color; ctx.lineWidth = 2; ctx.beginPath(); ctx.moveTo(x + width / 2, y); ctx.lineTo(finishX + finishWidth / 2, finishY); ctx.stroke(); }
       return;
     }
     if (long(note)) {

@@ -10,7 +10,7 @@ import { XMLParser } from 'fast-xml-parser';
 if (process.platform !== 'win32') throw new Error('Run this integration test with the Windows Node executable.');
 const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
 const option = name => process.argv.find(value => value.startsWith(`--${name}=`))?.slice(name.length + 3);
-const release = option('runtime') ?? path.join(root, 'release', 'Chuni Studio-win32-x64');
+const release = option('runtime') ?? path.join(root, 'release', JSON.parse(await readFile(path.join(root, 'package.json'), 'utf8')).version, 'Chuni Studio-win32-x64');
 const packagedApp = path.join(release, 'resources', 'app');
 const out = option('data') ?? path.join(root, 'out', 'windows-test');
 const reports = path.join(root, 'out', 'windows-test');
@@ -155,6 +155,10 @@ try {
 
   // Real IPC and Windows sharp exercise, using a game DDS only as read-only input.
   const dds = 'D:\\chunithm\\data\\A000\\music\\music2927\\CHU_UI_Jacket_2927.dds';
+  // The main process only serves paths it handed out: an unsolicited read is refused, a picked file is allowed.
+  await page.evaluate(async filename => { try { await window.studio.readCover(filename); } catch (error) { return String(error); } throw new Error('Unauthorized cover read was not refused'); }, dds);
+  await app.evaluate(({ dialog }, filename) => { dialog.showOpenDialog = async () => ({ canceled: false, filePaths: [filename] }); }, dds);
+  assert.equal(await page.evaluate(() => window.studio.pickCover()), dds);
   evidence.ddsPreview = await page.evaluate(async filename => { const result = await window.studio.readCover(filename); return { prefix: result.slice(0, 22), bytes: result.length }; }, dds);
   assert.ok(evidence.ddsPreview.prefix.startsWith('data:image/png;base64,'));
 
@@ -428,6 +432,9 @@ try {
   // The separate Margrete-style AIR pane edits one shared connection height.
   const airLeft = Number(await canvas.getAttribute('data-air-height-left')), airWidth = Number(await canvas.getAttribute('data-air-height-width'));
   const heightY = point(192, 0).y;
+  // The split above commits asynchronously to the inspector and canvas; drag only once the joint height is shown.
+  await page.waitForFunction(() => document.querySelector('[data-property="type"]')?.value === 'AIR_SLIDE' && document.querySelector('[data-property="endHeight"]')?.value === '1.5');
+  await page.evaluate(() => new Promise(resolve => requestAnimationFrame(() => requestAnimationFrame(resolve))));
   await page.mouse.move(box.x + airLeft + airWidth * 1.5 / 5, heightY);
   await page.mouse.down();
   await page.mouse.move(box.x + airLeft + airWidth * 2.5 / 5, heightY, { steps: 5 });

@@ -4,6 +4,7 @@ import { execFileSync } from 'node:child_process';
 import path from 'node:path';
 
 const root = process.cwd();
+const { version } = JSON.parse(await readFile(path.join(root, 'package.json'), 'utf8'));
 const electronChecksums = JSON.parse(await readFile(path.join(root, 'node_modules/electron/checksums.json'), 'utf8'));
 const sharpPackage = JSON.parse(await readFile(path.join(root, 'node_modules/sharp/package.json'), 'utf8'));
 const sharpVersion = sharpPackage.optionalDependencies['@img/sharp-win32-x64'];
@@ -14,7 +15,8 @@ const resourceHashes = JSON.parse(await readFile(path.join(root, 'assets/game/sh
 for (const file of Object.keys(resourceHashes)) await access(path.join(root, 'assets/game', file));
 
 const paths = await packager({
-  dir: root, out: path.join(root, 'release'), name: 'Chuni Studio', platform: 'win32', arch: 'x64',
+  // Each version packages into its own directory so builds never overwrite each other.
+  dir: root, out: path.join(root, 'release', version), name: 'Chuni Studio', platform: 'win32', arch: 'x64',
   download: { checksums: electronChecksums },
   overwrite: true, asar: false, prune: true,
   ignore: [/^\/tests/, /^\/docs/, /^\/examples(\/|$)/, /^\/src/, /^\/scripts/, /^\/\.cache/, /^\/out/, /^\/test-results/, /^\/native\/(VGAudio|bin|obj)(\/|$)/],

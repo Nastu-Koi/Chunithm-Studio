@@ -21,7 +21,8 @@ export interface StudioBridge {
   readAudio(path: string): Promise<Uint8Array>;
   readCover(path: string): Promise<string>;
   chooseGamePath(): Promise<string | null>;
-  scanLibrary(gamePath: string): Promise<LibraryEntry[]>;
+  /** `force` ignores the cached result of the previous scan. */
+  scanLibrary(gamePath: string, force?: boolean): Promise<LibraryEntry[]>;
   loadLibraryChart(entry: LibraryEntry): Promise<LoadedProject>;
   exportOpt(project: Project, gamePath: string, allowQuantization?: boolean): Promise<ExportResult | null>;
   autosave(project: Project | null, path: string | null): Promise<void>;
