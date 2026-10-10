@@ -6,6 +6,9 @@ on:
 jobs:
   package-win:
     runs-on: windows-latest
+    # The default token is read-only; creating the release and uploading its asset needs write access to contents.
+    permissions:
+      contents: write
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-node@v4
