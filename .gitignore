@@ -9,4 +9,3 @@ playwright-report/
 native/**/bin/
 native/**/obj/
 *.user
-tests

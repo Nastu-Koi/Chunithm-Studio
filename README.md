@@ -117,7 +117,9 @@ XML 设置随工程保存并支持撤销。从“本地曲库”载入曲目时�
 
 ## 开发与验证
 
-源码入口：`src/core` 为谱面、时间与量化模型，`src/renderer` 为编辑和预览，`src/backend` 为桌面文件、游戏资源和导出，`native` 为音频助手。
+源码入口：`src/core` 为谱面、时间与量化模型，`src/renderer` 为编辑和预览，`src/backend` 为桌面文件、游戏资源和导出，`native` 为音频助手。编辑器的纯谱面变换在 `src/renderer/editor-operations.ts`，工具栏与画布标记在 `src/renderer/editor-template.ts`，`editor.ts` 只保留交互与绘制。
+
+桌面程序通过自定义协议 `chuni-asset://game/…` 直接提供 `assets/game` 中的贴图，主进程只把清单和 URL 交给渲染进程，不再把 PNG 转成 base64 经 IPC 传递；该协议只响应资源目录内的 PNG / WAV / JSON，并带 CORS 头以供 WebGL 读取。`.github/workflows/ci.yml` 在推送时运行类型检查、单元测试和渲染端构建。
 
 ```sh
 npm ci

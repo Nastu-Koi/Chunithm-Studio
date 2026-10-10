@@ -1,0 +1,240 @@
+import { LANES, makeId, type Chart, type ChartEvent, type Note, type NoteType } from '../core/model';
+import { getNoteScrollGroup } from '../core/timing';
+import { noteNativeKind } from '../core/validation';
+import { getNativeNoteTag } from '../core/c2s';
+
+/** Pure chart transformations behind the editor. Every function returns a new Chart and never mutates its input. */
+export type Clipboard = { notes: Note[]; events: ChartEvent[]; firstTick: number };
+export const LONG = new Set<NoteType>(['HOLD', 'SLIDE', 'AIR_HOLD', 'AIR_SLIDE', 'AIR_CRUSH']);
+export const AIR = new Set<NoteType>(['AIR', 'AIR_HOLD', 'AIR_SLIDE', 'AIR_CRUSH']);
+export const CHAIN = new Set<NoteType>(['SLIDE', 'AIR_SLIDE', 'AIR_CRUSH']);
+export const clamp = (value: number, low: number, high: number) => Math.min(high, Math.max(low, value));
+export const endLane = (note: Note) => note.endLane ?? note.lane;
+export const endWidth = (note: Note) => note.endWidth ?? note.width;
+export const endTick = (note: Note) => note.tick + (note.duration ?? 0);
+export const sameTick = (a: number, b: number) => Math.abs(a - b) < 1e-6;
+export const formatTick = (value: number) => Number(value.toFixed(6)).toString();
+export const long = (note: Note) => LONG.has(note.type);
+export const copyNote = (note: Note): Note => ({ ...note, attributes: { ...note.attributes } });
+export type EditorNodeKind = 'normal' | 'control';
+export const hasNodeKind = (note: Note) => ['SLIDE', 'AIR_HOLD', 'AIR_SLIDE'].includes(note.type);
+const continuationParent = (note: Note): string => note.type === 'AIR_SLIDE' ? getNativeNoteTag(note) : ({ SLIDE: 'SLD', AIR_HOLD: 'AHD' } as Partial<Record<NoteType, string>>)[note.type] ?? String(note.attributes.parent ?? 'TAP');
+/** The joint belongs to this segment's end; AIR SLIDE children reference its exact tag. */
+export function setEditorNodeKind(chart: Chart, id: string, kind: EditorNodeKind): Chart {
+  const note = chart.notes.find(item => item.id === id);
+  if (!note || !hasNodeKind(note)) return chart;
+  const next = { ...note, attributes: { ...note.attributes, visible: kind === 'normal' } };
+  return { ...chart, notes: chart.notes.map(item => item.id === id ? next : note.type === 'AIR_SLIDE' && item.type === 'AIR_SLIDE' && item.attributes.parent === getNativeNoteTag(note) && sameTick(item.tick, endTick(note)) && item.lane === endLane(note) && item.width === endWidth(note) && String(item.attributes.color ?? 'DEF') === String(note.attributes.color ?? 'DEF') && (item.height ?? 1) === (note.endHeight ?? note.height ?? 1)
+    ? { ...item, attributes: { ...item.attributes, parent: getNativeNoteTag(next) } } : item) };
+}
+const laneLimits = (chart: Chart, width: number) => chart.allowOutOfLane ? { min: -64, max: 64 } : { min: 0, max: Math.max(0, LANES - width) };
+export const limitLane = (chart: Chart, lane: number, width: number) => { const limits = laneLimits(chart, width); return clamp(lane, limits.min, limits.max); };
+export const limitWidth = (chart: Chart, width: number, lane: number) => clamp(width, 1, chart.allowOutOfLane ? 128 : Math.max(1, LANES - lane));
+/** Native AIR parent tokens identify the ground family even for EX/control variants. */
+export function inferEditorParent(chart: Chart, tick: number, lane: number, width: number): string {
+  const parent = chart.notes.filter(note => sameTick(endTick(note), tick) && endLane(note) === lane && endWidth(note) === width && !AIR.has(note.type)).at(-1);
+  return parent?.type === 'HOLD' ? 'HLD' : parent?.type === 'SLIDE' ? 'SLD' : parent ? noteNativeKind(parent) : 'TAP';
+}
+/** Move an AIR-height joint and keep its directly connected segment aligned. */
+export function setEditorAirHeight(chart: Chart, id: string, endpoint: 'height' | 'endHeight', height: number): Chart {
+  const note = chart.notes.find(item => item.id === id);
+  if (!note || !['AIR_SLIDE', 'AIR_CRUSH'].includes(note.type) || !Number.isFinite(height) || height < 0) return chart;
+  const atEnd = endpoint === 'endHeight', tick = atEnd ? endTick(note) : note.tick;
+  const lane = atEnd ? endLane(note) : note.lane, width = atEnd ? endWidth(note) : note.width;
+  const oldHeight = atEnd ? note.endHeight ?? note.height ?? 1 : note.height ?? 1;
+  return { ...chart, notes: chart.notes.map(item => {
+    if (item.id === id) return { ...item, ...(atEnd ? {} : { endHeight: item.endHeight ?? item.height ?? 1 }), [endpoint]: height };
+    if (item.type !== note.type || String(item.attributes.color ?? 'DEF') !== String(note.attributes.color ?? 'DEF')) return item;
+    if (atEnd && sameTick(item.tick, tick) && item.lane === lane && item.width === width && (item.height ?? 1) === oldHeight && (item.type !== 'AIR_SLIDE' || item.attributes.parent === getNativeNoteTag(note))) return { ...item, height, endHeight: item.endHeight ?? item.height ?? 1 };
+    if (!atEnd && sameTick(endTick(item), tick) && endLane(item) === lane && endWidth(item) === width && (item.endHeight ?? item.height ?? 1) === oldHeight && (item.type !== 'AIR_SLIDE' || note.attributes.parent === getNativeNoteTag(item))) return { ...item, endHeight: height };
+    return item;
+  }) };
+}
+export function parseEditorFraction(value: string): number | undefined {
+  const fraction = value.trim().match(/^([+-]?(?:\d+(?:\.\d*)?|\.\d+))\s*\/\s*(\d+(?:\.\d*)?|\.\d+)$/);
+  const result = fraction ? Number(fraction[1]) / Number(fraction[2]) : value.trim() ? Number(value) : NaN;
+  return Number.isFinite(result) ? result : undefined;
+}
+export function selectionWithAssignments(chart: Chart, ids: Set<string>): Set<string> {
+  const selected = new Set(ids);
+  const notes = chart.notes.filter(note => ids.has(note.id));
+  for (const event of chart.events) if (event.type === 'SCROLL_ASSIGNMENT' && notes.some(note => sameTick(note.tick, event.tick) && note.lane === event.lane && note.width === event.width)) selected.add(event.id);
+  return selected;
+}
+export function alignAssignments(chart: Chart, previous: Note, next: Note): Chart['events'] {
+  return chart.events.map(event => event.type === 'SCROLL_ASSIGNMENT' && sameTick(event.tick, previous.tick) && event.lane === previous.lane && event.width === previous.width
+    ? { ...event, tick: next.tick, lane: next.lane, width: next.width, ...(event.duration === previous.duration ? { duration: next.duration ?? 0 } : {}) } : event);
+}
+
+/** Move a mixed selection as one block, retaining its relative spacing at the edges. */
+export function moveEditorSelection(chart: Chart, ids: Set<string>, ticks: number, lanes: number): Chart {
+  ids = selectionWithAssignments(chart, ids);
+  const notes = chart.notes.filter(note => ids.has(note.id));
+  const events = chart.events.filter(event => ids.has(event.id));
+  const minTick = Math.min(...notes.map(note => note.tick), ...events.map(event => event.tick));
+  let minDelta = -minTick, maxDelta = Infinity;
+  const connections: { neighbor: Note; selected: Note; side: 'before' | 'after' }[] = [];
+  for (const note of notes) if (CHAIN.has(note.type)) for (const neighbor of chart.notes) {
+    if (ids.has(neighbor.id) || neighbor.type !== note.type) continue;
+    if (sameTick(endTick(neighbor), note.tick) && endLane(neighbor) === note.lane && endWidth(neighbor) === note.width) {
+      connections.push({ neighbor, selected: note, side: 'before' }); minDelta = Math.max(minDelta, neighbor.tick - note.tick + 1e-7);
+    }
+    if (sameTick(neighbor.tick, endTick(note)) && neighbor.lane === endLane(note) && neighbor.width === endWidth(note)) {
+      connections.push({ neighbor, selected: note, side: 'after' }); maxDelta = Math.min(maxDelta, endTick(neighbor) - endTick(note) - 1e-7);
+    }
+  }
+  const dt = clamp(ticks, minDelta, maxDelta);
+  const assignments = events.filter(event => event.type === 'SCROLL_ASSIGNMENT');
+  const minLane = Math.min(...notes.flatMap(note => [note.lane, endLane(note)]), ...assignments.map(event => event.lane ?? 0));
+  const maxLane = Math.max(...notes.flatMap(note => [note.lane + note.width, endLane(note) + endWidth(note)]), ...assignments.map(event => (event.lane ?? 0) + (event.width ?? 1)));
+  const maxStartLane = Math.max(...notes.flatMap(note => [note.lane, endLane(note)]), ...assignments.map(event => event.lane ?? 0));
+  const lower = chart.allowOutOfLane ? -64 - minLane : -minLane;
+  const upper = chart.allowOutOfLane ? 64 - maxStartLane : LANES - maxLane;
+  const dl = lanes === 0 || lower > upper ? 0 : notes.length || assignments.length ? clamp(Math.round(lanes), lower, upper) : 0;
+  const nextNotes = chart.notes.map(note => {
+    if (ids.has(note.id)) return { ...note, tick: note.tick + dt, lane: note.lane + dl, ...(note.endLane !== undefined ? { endLane: note.endLane + dl } : {}) };
+    const connected = connections.filter(connection => connection.neighbor.id === note.id);
+    if (!connected.length) return note;
+    const next = { ...note };
+    let last = endTick(note);
+    for (const connection of connected) {
+      if (connection.side === 'before') { last = connection.selected.tick + dt; next.endLane = connection.selected.lane + dl; next.endWidth = connection.selected.width; }
+      else { next.tick = endTick(connection.selected) + dt; next.lane = endLane(connection.selected) + dl; next.width = endWidth(connection.selected); }
+    }
+    next.duration = Math.max(1e-7, last - next.tick); return next;
+  });
+  let nextEvents = chart.events.map(event => ids.has(event.id) ? { ...event, tick: event.tick + dt, ...(event.type === 'SCROLL_ASSIGNMENT' ? { lane: (event.lane ?? 0) + dl } : {}) } : event);
+  for (const connection of connections) { const next = nextNotes.find(note => note.id === connection.neighbor.id)!; nextEvents = alignAssignments({ ...chart, events: nextEvents }, connection.neighbor, next); }
+  return { ...chart, notes: nextNotes, events: nextEvents };
+}
+
+export function mirrorEditorSelection(chart: Chart, ids: Set<string>): Chart {
+  ids = selectionWithAssignments(chart, ids);
+  return { ...chart, events: chart.events.map(event => ids.has(event.id) && event.type === 'SCROLL_ASSIGNMENT' ? { ...event, lane: LANES - (event.lane ?? 0) - (event.width ?? 1) } : event), notes: chart.notes.map(note => {
+    if (!ids.has(note.id)) return note;
+    const direction = String(note.attributes.direction ?? '');
+    const mirrors: Record<string, string> = { UL: 'UR', UR: 'UL', DL: 'DR', DR: 'DL', LEFT: 'RIGHT', RIGHT: 'LEFT', L: 'R', R: 'L' };
+    const effects: Record<string, string> = { LS: 'RS', RS: 'LS', LC: 'RC', RC: 'LC' };
+    return { ...note, lane: LANES - note.lane - note.width,
+      ...(note.endLane !== undefined ? { endLane: LANES - note.endLane - endWidth(note) } : {}),
+      attributes: { ...note.attributes, ...(mirrors[direction] ? { direction: mirrors[direction] } : {}), ...(effects[String(note.attributes.effect)] ? { effect: effects[String(note.attributes.effect)] } : {}) },
+    };
+  }) };
+}
+
+/** Reverse the selected notes in time inside their own span; a long note swaps its two ends. */
+export function flipEditorSelection(chart: Chart, ids: Set<string>): Chart {
+  const notes = chart.notes.filter(note => ids.has(note.id));
+  if (!notes.length) return chart;
+  const first = Math.min(...notes.map(note => note.tick)), last = Math.max(...notes.map(endTick));
+  // A joint's node kind is stored on the segment ending there, so reversal hands it to the segment that followed.
+  const previous = (note: Note) => notes.find(item => item.id !== note.id && item.type === note.type && sameTick(endTick(item), note.tick) && endLane(item) === note.lane && endWidth(item) === note.width);
+  const flipped = new Map<string, Note>();
+  let events = chart.events;
+  for (const note of notes) {
+    const next: Note = { ...copyNote(note), tick: first + last - endTick(note) };
+    if (long(note)) {
+      next.lane = endLane(note); next.width = endWidth(note);
+      if (note.endLane !== undefined || note.endWidth !== undefined) { next.endLane = note.lane; next.endWidth = note.width; }
+      if (note.height !== undefined) { next.height = note.endHeight ?? note.height; next.endHeight = note.height; }
+      if (hasNodeKind(note)) { const kind = previous(note)?.attributes.visible; if (kind === undefined) delete next.attributes.visible; else next.attributes.visible = kind; }
+    }
+    flipped.set(note.id, next); events = alignAssignments({ ...chart, events }, note, next);
+  }
+  return { ...chart, events, notes: chart.notes.map(note => flipped.get(note.id) ?? note) };
+}
+
+/** Stretch or compress the selected notes and events in time about the earliest selected tick. */
+export function scaleEditorSelection(chart: Chart, ids: Set<string>, factor: number): Chart {
+  ids = selectionWithAssignments(chart, ids);
+  const notes = chart.notes.filter(note => ids.has(note.id)), events = chart.events.filter(event => ids.has(event.id));
+  if (!(factor > 0) || !Number.isFinite(factor) || !notes.length && !events.length) return chart;
+  const origin = Math.min(...notes.map(note => note.tick), ...events.map(event => event.tick));
+  const scale = <T extends { tick: number; duration?: number }>(item: T): T => ({ ...item, tick: origin + (item.tick - origin) * factor, ...(item.duration !== undefined ? { duration: item.duration * factor } : {}) });
+  return { ...chart, notes: chart.notes.map(note => ids.has(note.id) ? scale(note) : note), events: chart.events.map(event => ids.has(event.id) ? scale(event) : event) };
+}
+
+/** Replace one straight SLIDE / AIR SLIDE segment by control segments along an ease-in-out curve. */
+export function curveEditorSlide(chart: Chart, id: string, step: number): Chart {
+  const note = chart.notes.find(item => item.id === id);
+  if (!note || note.type !== 'SLIDE' && note.type !== 'AIR_SLIDE' || !(step > 0)) return chart;
+  const count = Math.min(64, Math.floor((note.duration ?? 0) / step + 1e-9));
+  if (count < 2 || endLane(note) === note.lane && endWidth(note) === note.width) return chart;
+  const at = (index: number) => {
+    const linear = index / count, eased = (1 - Math.cos(Math.PI * linear)) / 2;
+    return { tick: note.tick + note.duration! * linear, lane: Math.round(note.lane + (endLane(note) - note.lane) * eased), width: Math.round(note.width + (endWidth(note) - note.width) * eased),
+      height: note.height === undefined ? undefined : note.height + ((note.endHeight ?? note.height) - note.height) * linear };
+  };
+  const segments: Note[] = [];
+  for (let index = 0; index < count; index++) {
+    const from = at(index), to = at(index + 1);
+    // Only the original end keeps its node kind; every inserted joint is a control point.
+    const segment: Note = { ...copyNote(note), id: index ? makeId('note') : note.id, tick: from.tick, lane: from.lane, width: from.width, duration: to.tick - from.tick, endLane: to.lane, endWidth: to.width,
+      ...(from.height !== undefined ? { height: from.height, endHeight: to.height } : {}),
+      attributes: { ...note.attributes, ...(index < count - 1 ? { visible: false } : {}), ...(index ? { parent: continuationParent(segments[index - 1]) } : {}) } };
+    if (index) delete segment.native;
+    segments.push(segment);
+  }
+  return { ...chart, notes: chart.notes.flatMap(item => item.id === id ? segments : [item]) };
+}
+
+/** Insert a real editable/native segment boundary into a long note. */
+export function splitEditorNote(chart: Chart, id: string, tick: number, kind?: EditorNodeKind): Chart {
+  const note = chart.notes.find(item => item.id === id);
+  if (!note || !long(note) || tick <= note.tick || tick >= endTick(note)) return chart;
+  const fraction = (tick - note.tick) / note.duration!;
+  const width = clamp(Math.round(note.width + (endWidth(note) - note.width) * fraction), 1, chart.allowOutOfLane ? 128 : LANES);
+  const lane = limitLane(chart, Math.round(note.lane + (endLane(note) - note.lane) * fraction), width);
+  const height = (note.height ?? 1) + ((note.endHeight ?? note.height ?? 1) - (note.height ?? 1)) * fraction;
+  const first: Note = { ...copyNote(note), duration: tick - note.tick, endLane: lane, endWidth: width, ...(note.height !== undefined ? { endHeight: height } : {}), attributes: { ...note.attributes, ...(kind && hasNodeKind(note) ? { visible: kind === 'normal' } : {}) } };
+  const second: Note = { ...copyNote(note), id: makeId('note'), tick, lane, width, duration: endTick(note) - tick,
+    ...(note.height !== undefined ? { height } : {}), attributes: { ...note.attributes, parent: continuationParent(first) } };
+  delete second.native;
+  return { ...chart, notes: chart.notes.flatMap(item => item.id === id ? [first, second] : [item]) };
+}
+
+/** Follow the same exact head and segment connections as the native SLA assignment. */
+function assignmentCovers(chart: Chart, event: ChartEvent, target: Note): boolean {
+  if (event.type !== 'SCROLL_ASSIGNMENT') return false;
+  const end = event.tick + (event.duration ?? 1);
+  const heads = chart.notes.filter(note => sameTick(note.tick, event.tick) && note.lane === event.lane && note.width === event.width && endTick(note) <= end + 1e-8);
+  const pending = [...heads], seen = new Set<string>();
+  while (pending.length) {
+    const note = pending.pop()!;
+    if (seen.has(note.id)) continue; seen.add(note.id);
+    if (note.id === target.id) return true;
+    if (!note.duration || !['SLIDE', 'AIR_SLIDE', 'AIR_CRUSH', 'AIR_HOLD'].includes(note.type) || endTick(note) >= end - 1e-8) continue;
+    pending.push(...chart.notes.filter(next => next.type === note.type && sameTick(next.tick, endTick(note)) && next.lane === endLane(note) && next.width === endWidth(note) && endTick(next) <= end + 1e-8));
+  }
+  return false;
+}
+
+export function appendEditorNote(chart: Chart, id: string, tick: number, lane: number, width: number, kind?: EditorNodeKind): Chart {
+  const previous = chart.notes.find(note => note.id === id);
+  if (!previous || !long(previous) || tick <= endTick(previous)) return chart;
+  const fixed = previous.type === 'HOLD' || previous.type === 'AIR_HOLD';
+  const next: Note = { ...copyNote(previous), id: makeId('note'), tick: endTick(previous), lane: endLane(previous), width: endWidth(previous), duration: tick - endTick(previous),
+    endLane: fixed ? endLane(previous) : limitLane(chart, lane, width), endWidth: fixed ? endWidth(previous) : width,
+    ...(previous.height !== undefined ? { height: previous.endHeight ?? previous.height } : {}), attributes: { ...previous.attributes, parent: continuationParent(previous), ...(kind && hasNodeKind(previous) ? { visible: kind === 'normal' } : {}) } };
+  delete next.native;
+  const group = getNoteScrollGroup(chart, previous);
+  const events = chart.events.map(event => (event.group ?? event.value) === group && assignmentCovers(chart, event, previous) && event.tick + (event.duration ?? 1) < tick
+    ? { ...event, duration: tick - event.tick } : event);
+  const result = { ...chart, notes: [...chart.notes, next], events };
+  if (getNoteScrollGroup(result, next) !== group) result.events = [...events, { id: makeId('event'), type: 'SCROLL_ASSIGNMENT', tick: next.tick, lane: next.lane, width: next.width, duration: Math.max(1, next.duration ?? 1), group, value: group }];
+  return result;
+}
+
+/** Copy the requested notes, supplying only missing native group assignments for detached segments. */
+export function copyEditorSelection(chart: Chart, selected: Set<string>): Clipboard | undefined {
+  const ids = selectionWithAssignments(chart, selected);
+  const notes = chart.notes.filter(note => ids.has(note.id)).map(copyNote);
+  const events = chart.events.filter(event => ids.has(event.id)).map(event => ({ ...event }));
+  if (!notes.length && !events.length) return undefined;
+  for (const note of notes) {
+    const group = getNoteScrollGroup(chart, note);
+    if (getNoteScrollGroup({ ...chart, notes, events }, note) === group) continue;
+    events.push({ id: makeId('event'), type: 'SCROLL_ASSIGNMENT', tick: note.tick, lane: note.lane, width: note.width, duration: Math.max(1, note.duration ?? 1), group, value: group });
+  }
+  return { notes, events, firstTick: Math.min(...notes.map(note => note.tick), ...events.map(event => event.tick)) };
+}

@@ -1,6 +1,6 @@
 import { readFile } from 'node:fs/promises';
 import path from 'node:path';
-import type { GameTexture, GameTextures, GameSceneAssets, GameSceneSprite } from '../core/game-assets';
+import { BUNDLED_ASSET_HOST, BUNDLED_ASSET_SCHEME, type GameTexture, type GameTextures, type GameSceneAssets, type GameSceneSprite } from '../core/game-assets';
 import type { GameHitSounds } from '../core/game-sounds';
 
 export interface BundledGameResources { textures: GameTextures; sounds: GameHitSounds }
@@ -23,20 +23,38 @@ export interface GameResourceManifest {
   };
   sounds: GameHitSounds;
 }
+/** URL the renderer uses for a manifest-relative image when the desktop app serves the copies itself. */
+export function bundledAssetUrl(relativeFile: string): string {
+  return `${BUNDLED_ASSET_SCHEME}://${BUNDLED_ASSET_HOST}/${relativeFile.split('/').map(encodeURIComponent).join('/')}`;
+}
+const assetTypes: Record<string, string> = { '.png': 'image/png', '.wav': 'audio/wav', '.json': 'application/json' };
+/** Resolve a bundled-asset URL to a file inside `root`, or null for any other host, type or escaping path. */
+export function resolveBundledAsset(root: string, url: string): { file: string; type: string } | null {
+  let parsed: URL; try { parsed = new URL(url); } catch { return null; }
+  if (parsed.protocol !== `${BUNDLED_ASSET_SCHEME}:` || parsed.host !== BUNDLED_ASSET_HOST) return null;
+  const base = path.resolve(root), file = path.resolve(base, decodeURIComponent(parsed.pathname).replace(/^\/+/, ''));
+  const relative = path.relative(base, file), type = assetTypes[path.extname(file).toLowerCase()];
+  if (!relative || relative === '..' || relative.startsWith(`..${path.sep}`) || path.isAbsolute(relative) || !type) return null;
+  return { file, type };
+}
 function resourceFile(root: string, file: string): string {
   if (!file || path.isAbsolute(file) || file.includes('\\')) throw new Error('资源清单路径无效');
   const target = path.resolve(root, file), relative = path.relative(path.resolve(root), target);
   if (relative === '..' || relative.startsWith(`..${path.sep}`) || path.isAbsolute(relative)) throw new Error('资源清单路径超出资源目录');
   return target;
 }
+export interface BundledResourceOptions {
+  /** Map a manifest-relative image file to a URL the renderer can load directly. Without it images are inlined as base64 data URLs. */
+  imageUrl?: (relativeFile: string) => string;
+}
 /** Load only copies stored beside the app; no access to the original game installation. */
-export async function loadBundledGameResources(root: string): Promise<BundledGameResources> {
+export async function loadBundledGameResources(root: string, options: BundledResourceOptions = {}): Promise<BundledGameResources> {
   const manifest = JSON.parse(await readFile(path.join(root, 'manifest.json'), 'utf8')) as GameResourceManifest;
   if (manifest.version !== 1) throw new Error('游戏资源副本版本不受支持');
   const imageCache = new Map<string, Promise<string>>();
   const readTexture = async (entry: StoredGameTexture): Promise<GameTexture> => {
     const file = resourceFile(root, entry.file);
-    if (!imageCache.has(file)) imageCache.set(file, readFile(file).then(bytes => `data:image/png;base64,${bytes.toString('base64')}`));
+    if (!imageCache.has(file)) imageCache.set(file, options.imageUrl ? Promise.resolve(options.imageUrl(entry.file)) : readFile(file).then(bytes => `data:image/png;base64,${bytes.toString('base64')}`));
     return { dataUrl: await imageCache.get(file)!, width: entry.width, height: entry.height, sourcePath: file, sourceName: entry.sourceName, sourceOffset: entry.sourceOffset };
   };
   const textures: GameTextures = { gameRoot: root, models: {}, textures: {}, effects: {}, effectTables: manifest.textures.effectTables, effectPrograms: manifest.textures.effectPrograms, warnings: [...manifest.textures.warnings] };

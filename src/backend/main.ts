@@ -1,4 +1,4 @@
-import { app, BrowserWindow, dialog, ipcMain, shell, Menu } from 'electron';
+import { app, BrowserWindow, dialog, ipcMain, shell, Menu, protocol } from 'electron';
 import { readFile, writeFile, mkdir, rm, access } from 'node:fs/promises';
 import path from 'node:path';
 import { createHash } from 'node:crypto';
@@ -12,10 +12,22 @@ import { decodeDDS } from './dds-preview';
 import { configureAudioRuntime, prepareAudio, decodeGameAudio } from './audio';
 import ffmpegPath from 'ffmpeg-static';
 import { exportOpt } from './export';
-import { loadBundledGameResources } from './bundled-assets';
+import { loadBundledGameResources, bundledAssetUrl, resolveBundledAsset } from './bundled-assets';
+import { BUNDLED_ASSET_SCHEME } from '../core/game-assets';
 import type { LibraryEntry } from '../bridge';
 
 let win: BrowserWindow;
+const bundledAssetRoot = () => path.join(app.getAppPath(), 'assets', 'game');
+// Bundled textures are served over a dedicated scheme so the renderer loads PNG files directly instead of receiving ~20 MB of base64 over IPC.
+// corsEnabled lets the file:// page load these images with crossOrigin="anonymous", which WebGL requires for cross-origin textures.
+protocol.registerSchemesAsPrivileged([{ scheme: BUNDLED_ASSET_SCHEME, privileges: { standard: true, secure: true, corsEnabled: true } }]);
+async function serveBundledAsset(request: Request): Promise<Response> {
+  const asset = resolveBundledAsset(bundledAssetRoot(), request.url);
+  if (!asset) return new Response('not found', { status: 404 });
+  // The page runs on file:// (an opaque origin); WebGL only accepts images from another origin with CORS headers.
+  try { return new Response(await readFile(asset.file), { headers: { 'content-type': asset.type, 'cache-control': 'max-age=31536000, immutable', 'access-control-allow-origin': '*' } }); }
+  catch { return new Response('not found', { status: 404 }); }
+}
 if (process.env.CHUNI_USER_DATA_DIR) {
   app.setPath('userData', process.env.CHUNI_USER_DATA_DIR);
   app.setPath('sessionData', process.env.CHUNI_USER_DATA_DIR);
@@ -39,7 +51,7 @@ async function previewAudio(file: string): Promise<Buffer> {
   await prepareAudio(file, target); return readFile(target);
 }
 function attachHandlers() {
-  ipcMain.handle('resources:load', () => loadBundledGameResources(path.join(app.getAppPath(), 'assets', 'game')));
+  ipcMain.handle('resources:load', () => loadBundledGameResources(bundledAssetRoot(), { imageUrl: bundledAssetUrl }));
   ipcMain.handle('project:open', async () => { const file = await selectFile('打开工程', ['json']); return file ? { project: await readProject(file), path: file } : null; });
   ipcMain.handle('chart:import', async () => {
     const file = await selectFile('导入原生 C2S 谱面', ['c2s']); if (!file) return null;
@@ -105,6 +117,7 @@ function attachHandlers() {
 }
 app.whenReady().then(() => {
   configureAudioRuntime({ nativeDirectory: path.join(app.getAppPath(), 'native'), ...(process.platform !== 'win32' && ffmpegPath ? { ffmpegPath } : {}) });
+  protocol.handle(BUNDLED_ASSET_SCHEME, serveBundledAsset);
   Menu.setApplicationMenu(null); attachHandlers();
   win = new BrowserWindow({ width: 1480, height: 960, minWidth: 1050, minHeight: 700, backgroundColor: '#0a0f19', title: 'Chuni Studio', show: false,
     webPreferences: { preload: path.join(__dirname, 'preload.cjs'), contextIsolation: true, nodeIntegration: false, sandbox: true } });

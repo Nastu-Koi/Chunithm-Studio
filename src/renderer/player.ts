@@ -1,7 +1,7 @@
 import { getSlideUvSpans, slideUvProgress } from './slide-timing';
 import type { Chart, Note } from '../core/model';
 import { createChart } from '../core/model';
-import type { GameModelTexture, GameTexture, GameTextures } from '../core/game-assets';
+import { isBundledImageSource, type GameModelTexture, type GameTexture, type GameTextures } from '../core/game-assets';
 import { getScrollPosition, getGrid, tickToSeconds, secondsToTick, bpmAtTick, getNoteScrollGroup } from '../core/timing';
 import { getPlayerPlaybackPoints } from './playback-points';
 import { fitSceneViewport, projectTrackPoint, TRACK_REFERENCE, SCENE_WIDTH, SCENE_HEIGHT } from './player-scene';
@@ -204,8 +204,8 @@ export class ChartPlayer {
       if (!pending) {
         pending = new Promise(resolve => {
           // Renderer assets are self-contained. Never dereference a path back into the game installation.
-          if (!texture.dataUrl.startsWith('data:image/')) { resolve(undefined); return; }
-          const image = new Image(); image.onload = () => resolve(image); image.onerror = () => resolve(undefined); image.src = texture.dataUrl;
+          if (!isBundledImageSource(texture.dataUrl)) { resolve(undefined); return; }
+          const image = new Image(); image.crossOrigin = 'anonymous'; image.onload = () => resolve(image); image.onerror = () => resolve(undefined); image.src = texture.dataUrl;
         }); decoded.set(texture.dataUrl, pending);
       }
       return pending;
