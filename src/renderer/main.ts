@@ -3,6 +3,7 @@ import './editor.css';
 import { createProject, createNote, makeId, type Project, type Chart, type Difficulty } from '../core/model';
 import { chartDuration, secondsToTick, tickToSeconds, bpmAtTick, getMeasureStartTick, getMeasureNumberAtTick, MAX_MEASURE_NUMBER } from '../core/timing';
 import { validateProject } from '../core/validation';
+import { buildJudgementTimeline } from '../core/judgement';
 import { analyzeC2SQuantization } from '../core/quantization';
 import { ChartEditor } from './editor';
 import { ChartPlayer } from './player';
@@ -35,6 +36,9 @@ let history: Project[] = [], future: Project[] = [], autosaveTimer: ReturnType<t
 let library: LibraryEntry[] = [], audioGeneration = 0, peaks: Float32Array = new Float32Array(), coverUrl = '';
 const editor = new ChartEditor($('#editor-view'), { onChange: (chart, label) => commit({ ...project, chart }, label), onCursor: tick => { cursor = tick; transport.seek(tickToSeconds(project.chart, tick)); }, onUndo: undo, onRedo: redo });
 const player = new ChartPlayer($('#player-canvas-host'));
+/** The player's per-chart indexes (sorted notes, UV spans, effect events) are rebuilt only when the player view is shown. */
+let pendingPlayerChart: Chart | undefined;
+function syncPlayerChart(): void { if (pendingPlayerChart) { player.setChart(pendingPlayerChart); pendingPlayerChart = undefined; } }
 let resourceDescription = '正在读取随程序保存的资源副本。', resourceWarnings: string[] = [];
 async function loadGameResources(): Promise<void> {
   const status = $('#resource-status');
@@ -60,6 +64,7 @@ function showResources(): void {
 
 }
 function showJudgements(): void {
+  syncPlayerChart();
   const result = player.getJudgements();
   const labels = { TAP: 'TAP / EX / 长条起头', HLD: 'HOLD 持续', SLD: 'SLIDE', AIR: 'AIR 系列', FLK: 'FLICK', ALL: '总判定' };
   const checked = result.header.matches === true ? '与已有原谱统计一致' : result.header.matches === false ? '与原谱统计有差异' : result.header.available ? '工程已修改，旧统计仅供参考' : '该谱没有原生统计可对照';
@@ -78,9 +83,8 @@ function message(text: string, error = false): void { $('#status').textContent =
 async function run(action: () => Promise<void>): Promise<void> { if (busy) return; busy = true; document.body.classList.add('busy'); try { await action(); } catch (e) { message(e instanceof Error ? e.message : String(e), true); } finally { busy = false; document.body.classList.remove('busy'); } }
 function sync(): void {
   editor.setChart(project.chart); editor.setCursor(cursor); editor.setWaveform(peaks, transport.duration, project.audio.offset);
-  player.setChart(project.chart);
-  const judgements = player.getJudgements();
-  $('#judgement-status').textContent = `${judgements.total} 判定`;
+  pendingPlayerChart = project.chart; if (view === 'player') syncPlayerChart();
+  $('#judgement-status').textContent = `${buildJudgementTimeline(project.chart).total} 判定`;
   player.title = project.metadata.title; player.difficulty = project.metadata.difficulty;
   player.artist = project.metadata.artist; player.level = project.metadata.level;
   player.weTag = project.exportSettings.weTag; player.stars = project.exportSettings.stars;
@@ -131,7 +135,7 @@ async function loadCover(): Promise<void> {
     await player.setCover(url);
   } catch (e) { if (generation === coverGeneration) message(`封面读取失败：${e instanceof Error ? e.message : e}`, true); }
 }
-function switchView(next: 'edit' | 'player'): void { view = next; $('#editor-view').hidden = view !== 'edit'; $('#player-view').hidden = view !== 'player'; $('#edit-tab').setAttribute('aria-selected', String(view === 'edit')); $('#play-tab').setAttribute('aria-selected', String(view === 'player')); if (view === 'edit') { editor.resize(); editor.setCursor(cursor, true); } else player.resize(); }
+function switchView(next: 'edit' | 'player'): void { view = next; $('#editor-view').hidden = view !== 'edit'; $('#player-view').hidden = view !== 'player'; $('#edit-tab').setAttribute('aria-selected', String(view === 'edit')); $('#play-tab').setAttribute('aria-selected', String(view === 'player')); if (view === 'edit') { editor.resize(); editor.setCursor(cursor, true); } else { syncPlayerChart(); player.resize(); } }
 async function save(saveAs = false): Promise<void> { const result = await bridge.saveProject(project, projectPath, saveAs); if (!result) return; project = result.project; projectPath = result.path; dirty = false; clearTimeout(autosaveTimer); sync(); message('工程已保存'); }
 function settings(): void {
   const m = project.metadata, a = project.audio, e = project.exportSettings;
@@ -264,17 +268,20 @@ window.addEventListener('beforeunload', event => { if (dirty && bridge.platform 
 bridge.onProgress(text => { $('#status').textContent = text; const output = document.querySelector('#export-progress'); if (output) output.textContent = text; });
 $('#runtime-label').textContent = bridge.platform === 'browser' ? '浏览器开发预览' : '本地桌面 · 离线';
 const formatTime = (time: number): string => { const ms = Math.max(0, Math.floor(time * 1000)); return `${String(Math.floor(ms / 60000)).padStart(2, '0')}:${String(Math.floor(ms / 1000) % 60).padStart(2, '0')}.${String(ms % 1000).padStart(3, '0')}`; };
+const frameElements = { current: $('#time-current'), total: $('#time-total'), play: $('#play-button'), seek: $<HTMLInputElement>('#seek'), position: $('#position-label') };
+const setText = (element: HTMLElement, text: string) => { if (element.textContent !== text) element.textContent = text; };
 function frame(): void {
   const seconds = transport.seconds, duration = playbackDuration();
   if (transport.playing && seconds > duration && !transport.loop) transport.pause();
   cursor = secondsToTick(project.chart, seconds);
   if (view === 'edit') editor.setCursor(cursor, transport.playing); else player.render(seconds);
-  $('#time-current').textContent = formatTime(seconds); $('#time-total').textContent = `/ ${formatTime(duration)}`;
-  $('#play-button').textContent = transport.playing ? 'Ⅱ' : '▶';
-  const seek = $<HTMLInputElement>('#seek'); seek.max = String(duration); seek.value = String(seconds);
-  seek.style.setProperty('--progress', `${Math.min(100, seconds / duration * 100)}%`);
+  setText(frameElements.current, formatTime(seconds)); setText(frameElements.total, `/ ${formatTime(duration)}`);
+  setText(frameElements.play, transport.playing ? 'Ⅱ' : '▶');
+  const seek = frameElements.seek, max = String(duration), value = String(seconds);
+  if (seek.max !== max) seek.max = max;
+  if (seek.value !== value) { seek.value = value; seek.style.setProperty('--progress', `${Math.min(100, seconds / duration * 100)}%`); }
   const measure = getMeasureNumberAtTick(project.chart, cursor);
-  $('#position-label').textContent = `${measure === null ? '小节线隐藏' : `第 ${String(measure).padStart(3, '0')} 小节`} · BPM ${bpmAtTick(project.chart, cursor).toFixed(1)}`;
+  setText(frameElements.position, `${measure === null ? '小节线隐藏' : `第 ${String(measure).padStart(3, '0')} 小节`} · BPM ${bpmAtTick(project.chart, cursor).toFixed(1)}`);
   requestAnimationFrame(frame);
 }
 sync(); requestAnimationFrame(frame);

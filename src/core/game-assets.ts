@@ -1,8 +1,16 @@
 import type { StageAnimation } from './stage-animation';
 import type { StageProgram } from './stage-program';
 import type { NativeEffectProgram } from './game-effects';
+/** Scheme the desktop app serves bundled asset copies under; the renderer accepts only this and inline data URLs. */
+export const BUNDLED_ASSET_SCHEME = 'chuni-asset';
+export const BUNDLED_ASSET_HOST = 'game';
+/** Renderer assets are self-contained: an inline image or a bundled-copy URL, never a path into the game installation. */
+export function isBundledImageSource(source: string): boolean {
+  return source.startsWith('data:image/') || source.startsWith(`${BUNDLED_ASSET_SCHEME}://${BUNDLED_ASSET_HOST}/`);
+}
 /** Images decoded from game resources, available to the asset import pipeline. */
 export interface GameTexture {
+  /** Image source for the renderer: a data URL, or a `chuni-asset://game/...` URL when served by the desktop app. */
   dataUrl: string;
   width: number;
   height: number;

@@ -36,8 +36,11 @@ export function secondsToTick(chart: Chart, seconds: number): number {
   const segment = segments[floorIndex(segments, seconds, item => item.seconds)];
   return segment.tick + (seconds - segment.seconds) * chart.resolution * segment.bpm / 240;
 }
+const endTicks = new WeakMap<Chart, number>();
 export function getChartEndTick(chart: Chart): number {
-  return chart.events.reduce((end, event) => Math.max(end, event.tick), chart.notes.reduce((end, note) => Math.max(end, note.tick + Math.max(0, note.duration ?? 0)), chart.resolution));
+  const cached = endTicks.get(chart); if (cached !== undefined) return cached;
+  const end = chart.events.reduce((end, event) => Math.max(end, event.tick), chart.notes.reduce((end, note) => Math.max(end, note.tick + Math.max(0, note.duration ?? 0)), chart.resolution));
+  endTicks.set(chart, end); return end;
 }
 export function chartDuration(chart: Chart): number { return tickToSeconds(chart, getChartEndTick(chart)); }
 export const getChartDuration = chartDuration;

@@ -100,8 +100,9 @@ try {
   assert.ok(evidence.copiedResources.textures >= 64); assert.equal(evidence.copiedResources.sounds, 8);
   // Deny original-game reads during a fresh asset load and sample reads. The user
   // requested independent copies; never rename or alter the user's D: directory.
-  await app.evaluate(() => {
-    const fs = process.getBuiltinModule('fs/promises');
+  await app.evaluate(({ app }) => {
+    const fs = process.getBuiltinModule('fs/promises'), nodePath = process.getBuiltinModule('path');
+    globalThis.__assetReadGuardRoot = nodePath.join(app.getAppPath(), 'assets', 'game').toLowerCase() + nodePath.sep;
     globalThis.__assetReadGuard = { original: fs.readFile, reads: [], blocked: [] };
     fs.readFile = async (file, ...args) => {
       const value = String(file), guard = globalThis.__assetReadGuard; guard.reads.push(value);
@@ -119,23 +120,37 @@ try {
       if (!scene) throw new Error('Copied game scene resources are missing');
       for (const image of Object.values(scene.materials)) paths.add(image.sourcePath);
       for (const sprite of Object.values(scene.hud)) paths.add(sprite.image.sourcePath);
+      let soundFiles = 0;
       for (const sound of Object.values(assets.sounds.sounds)) for (const layer of sound.layers) {
-        const bytes = await window.studio.readAudio(layer.path);
+        soundFiles++; const bytes = await window.studio.readAudio(layer.path);
         if (String.fromCharCode(...bytes.slice(0, 4)) !== 'RIFF') throw new Error('Copied sound is not WAV');
         paths.add(layer.path);
       }
-      return { files: [...paths], scene: { stage: scene.stage, materials: Object.keys(scene.materials).length, hud: Object.keys(scene.hud).length, clips: scene.animation?.clips.length, bones: scene.animation?.rig.bones.length, vertexBones: scene.animation?.rig.vertexBones.length } };
+      // Images arrive as chuni-asset:// URLs and are only read by the main process when the renderer decodes them.
+      const urls = new Set([...Object.values(assets.textures.models).flatMap(model => model.images), ...Object.values(assets.textures.textures), ...Object.values(assets.textures.effects).flat(),
+        ...Object.values(scene.materials), ...Object.values(scene.hud).map(sprite => sprite.image), ...(assets.textures.font?.pages ?? [])].map(image => image.dataUrl));
+      let decodedImages = 0;
+      for (const url of urls) {
+        if (!url.startsWith('chuni-asset://game/')) throw new Error(`Unexpected image source ${url.slice(0, 40)}`);
+        const image = new Image();
+        await new Promise((resolve, reject) => { image.onload = resolve; image.onerror = () => reject(new Error(`Bundled image failed to load: ${url}`)); image.src = url; });
+        if (!(image.naturalWidth > 0)) throw new Error(`Bundled image decoded empty: ${url}`); decodedImages++;
+      }
+      return { files: [...paths], decodedImages, soundFiles, scene: { stage: scene.stage, materials: Object.keys(scene.materials).length, hud: Object.keys(scene.hud).length, clips: scene.animation?.clips.length, bones: scene.animation?.rig.bones.length, vertexBones: scene.animation?.rig.vertexBones.length } };
     });
     evidence.copiedResources.files = copied.files; evidence.copiedResources.scene = copied.scene;
     assert.ok(copied.scene.materials > 0 && copied.scene.hud > 0, 'The copied bundle must contain both scene materials and HUD assets.');
     assert.equal(copied.scene.clips, 10); assert.equal(copied.scene.bones, 40); assert.equal(copied.scene.vertexBones, 4008);
     const copyRoot = path.join(packagedApp, 'assets/game').toLowerCase() + path.sep;
     for (const file of evidence.copiedResources.files) assert.ok(file.toLowerCase().startsWith(copyRoot), file);
-    evidence.copiedResources.readGuard = await app.evaluate(() => ({ count: globalThis.__assetReadGuard.reads.length, blocked: globalThis.__assetReadGuard.blocked }));
-    assert.ok(evidence.copiedResources.readGuard.count >= copied.files.length + 1, 'The read guard must observe the manifest and every unique copied asset, including the scene.');
+    evidence.copiedResources.decodedImages = copied.decodedImages; assert.ok(copied.decodedImages >= 64, 'Bundled images must decode through the asset scheme.');
+    evidence.copiedResources.readGuard = await app.evaluate(() => ({ count: globalThis.__assetReadGuard.reads.length, blocked: globalThis.__assetReadGuard.blocked, outside: globalThis.__assetReadGuard.reads.filter(file => !file.toLowerCase().startsWith(globalThis.__assetReadGuardRoot)) }));
+    // Chromium caches immutable asset responses, so images decoded at start-up may not reach the handler again here.
+    assert.ok(evidence.copiedResources.readGuard.count >= copied.soundFiles + 1, 'The read guard must observe the manifest and every copied sound.');
+    assert.deepEqual(evidence.copiedResources.readGuard.outside, [], 'Every asset read during loading must come from the bundled copy.');
     assert.deepEqual(evidence.copiedResources.readGuard.blocked, []);
   } finally {
-    await app.evaluate(() => { process.getBuiltinModule('fs/promises').readFile = globalThis.__assetReadGuard.original; delete globalThis.__assetReadGuard; });
+    await app.evaluate(() => { process.getBuiltinModule('fs/promises').readFile = globalThis.__assetReadGuard.original; delete globalThis.__assetReadGuard; delete globalThis.__assetReadGuardRoot; });
   }
 
   // Real IPC and Windows sharp exercise, using a game DDS only as read-only input.
