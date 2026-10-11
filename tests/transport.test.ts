@@ -15,9 +15,19 @@ function fakeAudio() {
   const sources: { buffer: unknown; playbackRate: { value: number }; when?: number; offset?: number; stopped: boolean; disconnected: boolean }[] = [];
   const timers = new Map<number, { callback: () => void; delay: number }>();
   let nextTimer = 1;
+  const gains: { gain: { value: number }; ramps: number[] }[] = [];
+  const oscillators: unknown[] = [];
   const context = {
     currentTime: 0, destination: {},
-    createGain: () => ({ gain: { value: 1 }, connect() {} }),
+    createGain: () => {
+      const ramps: number[] = [];
+      const node = { gain: { value: 1, setValueAtTime() {}, linearRampToValueAtTime(value: number) { ramps.push(value); }, exponentialRampToValueAtTime() {} }, ramps, connect() {}, disconnect() {} };
+      gains.push(node); return node;
+    },
+    createOscillator: () => {
+      const node = { type: 'sine', frequency: { setValueAtTime() {}, exponentialRampToValueAtTime() {} }, connect() {}, disconnect() {}, start() {}, stop() {} };
+      oscillators.push(node); return node;
+    },
     decodeAudioData: () => { const call = deferred<{ duration: number; getChannelData(): Float32Array }>(); decoding.push(call); return call.promise; },
     resume: () => { const call = deferred<void>(); resumes.push(call); return call.promise; },
     close: async () => {},
@@ -30,7 +40,7 @@ function fakeAudio() {
   Object.defineProperty(globalThis, 'AudioContext', { configurable: true, value: function () { return context; } });
   Object.defineProperty(globalThis, 'setInterval', { configurable: true, value: (callback: () => void, delay: number) => { const id = nextTimer++; timers.set(id, { callback, delay }); return id; } });
   Object.defineProperty(globalThis, 'clearInterval', { configurable: true, value: (id: number) => { timers.delete(id); } });
-  return { context, decoding, resumes, sources, timers, restore() { for (const [name, descriptor] of previous) { if (descriptor) Object.defineProperty(globalThis, name, descriptor); else Reflect.deleteProperty(globalThis, name); } } };
+  return { context, decoding, resumes, sources, timers, gains, oscillators, restore() { for (const [name, descriptor] of previous) { if (descriptor) Object.defineProperty(globalThis, name, descriptor); else Reflect.deleteProperty(globalThis, name); } } };
 }
 const buffer = (duration: number) => ({ duration, getChannelData: () => new Float32Array(100).fill(0.5) });
 function near(actual: number | undefined, expected: number) {
@@ -75,6 +85,7 @@ test('original hit samples use the audio clock, preserve cue rate and stop on pa
     const playing = transport.play(); fake.resumes[0].resolve(); await playing;
     assert.equal(fake.sources.length, 1); assert.equal(fake.sources[0].buffer, sample);
     assert.equal(fake.sources[0].when, 0); assert.equal(fake.sources[0].playbackRate.value, 1.1);
+    near(fake.gains[2].gain.value, .4); near(fake.gains[1].gain.value, .23);
     transport.effects = false; assert.equal(fake.sources[0].stopped, true); assert.equal(transport.playing, true);
     transport.pause();
   } finally { transport.destroy(); fake.restore(); }
@@ -257,5 +268,93 @@ test('starting past a loop end redirects once without leaving an orphan schedule
     near(transport.seconds, 5); assert.equal(fake.timers.size, 1);
     assert.equal(fake.sources.filter(source => !source.stopped).length, 1);
     transport.pause(); assert.equal(fake.timers.size, 0);
+  } finally { transport.destroy(); fake.restore(); }
+});
+
+for (const [type, soundId] of [['HOLD', 'hold'], ['SLIDE', 'slide'], ['AIR_CRUSH', 'airCrush']] as const) {
+  test(`${type} simultaneous hits play one complete imported cue at its original gain`, async () => {
+    const fake = fakeAudio(), transport = new Transport();
+    try {
+      const loading = transport.setGameSounds({ source: 'fixture', warnings: [], sounds: {
+        [soundId]: { cueName: soundId, layers: [{ path: 'hit.wav', gain: 1, playbackRate: 1 }, { path: 'hit.wav', gain: .8, playbackRate: 1.1 }] },
+      } }, async () => new Uint8Array(1));
+      await Promise.resolve(); fake.decoding[0].resolve(buffer(.3)); await loading;
+      const chart = createProject().chart; chart.notes = Array.from({ length: 16 }, (_, lane) => createNote(type, 0, lane, 1)); transport.setChart(chart);
+      assert.equal(getChartHits(chart).filter(hit => hit.time === 0).length, 16, 'audio coalescing must preserve the chart hits');
+      const playing = transport.play(); fake.resumes[0].resolve(); await playing;
+      assert.equal(fake.sources.length, 2);
+      const [first, second] = fake.gains.slice(2).map(node => node.gain.value);
+      near(first, 1);
+      near(second / first, .8);
+      assert.equal(fake.sources[1].playbackRate.value, 1.1);
+    } finally { transport.destroy(); fake.restore(); }
+  });
+  test(`${type} simultaneous fallback hits play once at the original gain`, async () => {
+    const fake = fakeAudio(), transport = new Transport();
+    try {
+      const chart = createProject().chart; chart.notes = Array.from({ length: 16 }, (_, lane) => createNote(type, 0, lane, 1)); transport.setChart(chart);
+      assert.equal(getChartHits(chart).filter(hit => hit.time === 0).length, 16, 'audio coalescing must preserve the chart hits');
+      const playing = transport.play(); fake.resumes[0].resolve(); await playing;
+      assert.equal(fake.oscillators.length, 1);
+      const peak = fake.gains[2].ramps[0], original = type === 'AIR_CRUSH' ? .28 : .65;
+      near(peak, original);
+    } finally { transport.destroy(); fake.restore(); }
+  });
+}
+
+async function playNow(transport: Transport, fake: ReturnType<typeof fakeAudio>): Promise<void> {
+  const playing = transport.play(); fake.resumes.at(-1)!.resolve(); await playing;
+}
+
+test('same-time sound identities merge across AIR directions but distinct cues and nearby ticks remain audible', async () => {
+  const fake = fakeAudio(), transport = new Transport();
+  try {
+    const chart = createProject().chart;
+    const air = (direction: string) => { const note = createNote('AIR', 0); note.attributes.direction = direction; return note; };
+    chart.notes = [createNote('TAP', 0), air('IR'), createNote('TAP', 0), air('UL'), air('DW'), air('DR'),
+      createNote('FLICK', 0), createNote('TAP', 1), createNote('TAP', 1)];
+    transport.setChart(chart);
+    await playNow(transport, fake);
+    assert.equal(fake.oscillators.length, 5, 'tap, air-up, air-down, flick at tick zero, then a separate tap at tick one');
+    for (const timer of fake.timers.values()) timer.callback();
+    assert.equal(fake.oscillators.length, 5, 'the next scheduling pass cannot repeat a group');
+    transport.pause(); transport.seek(0); await playNow(transport, fake);
+    assert.equal(fake.oscillators.length, 10, 'seeking back restores all sound groups');
+  } finally { transport.destroy(); fake.restore(); }
+});
+
+for (const variant of ['same', 'gain', 'rate', 'path'] as const) test(`simultaneous HOLD/SLIDE samples merge only with identical layers: ${variant}`, async () => {
+  const fake = fakeAudio(), transport = new Transport();
+  try {
+    const layers = [{ path: 'a.wav', gain: 1, playbackRate: 1 }, { path: 'b.wav', gain: .8, playbackRate: 1 }];
+    const other = layers.map(layer => ({ ...layer })).reverse();
+    if (variant === 'gain') other[0].gain = .4;
+    if (variant === 'rate') other[0].playbackRate = 1.2;
+    if (variant === 'path') other[0].path = 'c.wav';
+    const loading = transport.setGameSounds({ source: 'fixture', warnings: [], sounds: {
+      hold: { cueName: 'hold', layers }, slide: { cueName: 'slide', layers: other },
+    } }, async () => new Uint8Array(1));
+    await Promise.resolve(); for (const decoding of fake.decoding) decoding.resolve(buffer(.3)); await loading;
+    const chart = createProject().chart;
+    chart.notes = [createNote('HOLD', 0, 0, 1), createNote('SLIDE', 0, 2, 1), createNote('HOLD', 0, 4, 1), createNote('SLIDE', 1, 6, 1)];
+    transport.setChart(chart); await playNow(transport, fake);
+    assert.equal(fake.sources.length, variant === 'same' ? 4 : 6);
+    assert.equal(fake.sources.filter(source => source.when === 0).length, variant === 'same' ? 2 : 4);
+    assert.equal(fake.sources.filter(source => source.when === tickToSeconds(chart, 1)).length, 2);
+  } finally { transport.destroy(); fake.restore(); }
+});
+
+test('sound groups play again across a loop and rate change', async () => {
+  const fake = fakeAudio(), transport = new Transport();
+  try {
+    const chart = createProject().chart; chart.notes = [createNote('TAP', 0), createNote('TAP', 0)];
+    transport.setChart(chart); transport.loop = { start: 0, end: .25 };
+    await playNow(transport, fake); assert.equal(fake.oscillators.length, 1);
+    fake.context.currentTime = .25;
+    for (const timer of fake.timers.values()) timer.callback();
+    fake.resumes.at(-1)!.resolve(); await Promise.resolve();
+    assert.equal(fake.oscillators.length, 2);
+    transport.setRate(.5); fake.resumes.at(-1)!.resolve(); await Promise.resolve();
+    assert.equal(fake.oscillators.length, 3);
   } finally { transport.destroy(); fake.restore(); }
 });

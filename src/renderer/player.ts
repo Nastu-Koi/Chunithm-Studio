@@ -392,7 +392,7 @@ export class ChartPlayer {
         color: String(note.attributes.color ?? 'DEF'), rootCenterLane: uvSpan?.rootCenterLane ?? note.lane + note.width / 2,
         vStart: uvSpan ? nativeAirSlideVAtTick(this.chart, uvSpan, segment.startTick) : 1,
         vEnd: uvSpan ? nativeAirSlideVAtTick(this.chart, uvSpan, segment.endTick) : 0,
-        status: currentTick >= note.tick ? 1 : 0, headRiser: headRiser && Math.abs(segment.startTick - Math.max(currentTick, note.tick)) < 1e-7,
+        status: currentTick >= note.tick ? 1 : 0, headRiser: headRiser && currentTick <= note.tick && Math.abs(segment.startTick - note.tick) < 1e-7,
         lineOrientation: note.attributes.effect === 'AxisY' ? 1 : note.attributes.effect === 'AxisZ' ? 2 : note.attributes.effect === 'Trace' ? 3 : 0,
         traceHeadCap: this.crushRoots.has(note.id) && segment.startTick === note.tick && currentTick <= note.tick,
       });
@@ -498,7 +498,9 @@ export class ChartPlayer {
       const airborne = note.type.startsWith('AIR'), height = airborne ? note.height ?? (note.type === 'AIR' ? 0.48 : 0.8) : 0;
       const color = noteColor(note);
       const headColor = note.attributes.ex ? colors.EXTAP : color;
-      if (note.type === 'AIR_HOLD' && ribbon.length && (headPoint || note.tick <= tick)) {
+      // A clipped active ribbon is already airborne; its new near edge is not a lift.
+      const headRiser = !!headPoint && tick <= note.tick && ribbon.length > 0 && Math.abs(ribbon[0].startTick - note.tick) < 1e-7;
+      if (note.type === 'AIR_HOLD' && headRiser) {
         const distance = ribbon[0].startDistance;
         primitives.push({ depth: distance, layer: 1, draw: () => {
           this.nativeModel(`NotesAirHold_Line${note.attributes.color === 'PNK' ? '_P' : ''}`, note.lane + note.width / 2,
@@ -522,7 +524,7 @@ export class ChartPlayer {
           primitives.push({ depth: (segment.startDistance + segment.endDistance) / 2, layer: airborne ? 0 : -1, draw: () => this.ribbon(note, segment, [
             at(segment.startTick, segment.startDistance, false), at(segment.startTick, segment.startDistance, true),
             at(segment.endTick, segment.endDistance, true), at(segment.endTick, segment.endDistance, false),
-          ], color, airExtent, tick, !!headPoint || note.tick <= tick) });
+          ], color, airExtent, tick, headRiser) });
         }
       }
       if (note.type === 'AIR_CRUSH' && crushMarkerBudget > 0) {
