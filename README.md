@@ -6,6 +6,8 @@ Windows 64 位 CHUNITHM 制谱器与自动播放预览。俯视编辑和透视�
 
 0.1.10 修复 SLC 控制段重复贴图导致的紫色分隔：控制点连续通过，SLD 仍显示普通节点横条。俯视编辑器与音符工具按钮使用复制的 Margrete 1.8.0 `note_icons.png`，长条带体和编辑辅助标记仍由本程序绘制。
 
+0.1.13 合并同一时刻的相同打击音效，保留原始增益；AIR HOLD／SLIDE 播放到中间及接续节点时不再重新出现抬升段。
+
 ## 启动
 
 解压 Windows 便携包，双击 `ChuniStudio.exe`。保留同目录的 `resources`、DLL 等文件。无需另外安装 Node.js、.NET 或 FFmpeg。

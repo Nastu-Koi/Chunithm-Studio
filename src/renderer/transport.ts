@@ -3,6 +3,7 @@ import { tickToSeconds } from '../core/timing';
 import { getPlayerPlaybackPoints } from './playback-points';
 import type { GameHitSoundId, GameHitSounds } from '../core/game-sounds';
 import { buildJudgementTimeline } from '../core/judgement';
+type SoundLayers = { buffer: AudioBuffer; gain: number; playbackRate: number }[];
 export interface Hit { time: number; type: NoteType; lane: number; width: number; key: string; direction?: string }
 export function soundForHit(hit: Pick<Hit, 'type' | 'direction'>): GameHitSoundId | undefined {
   switch (hit.type) {
@@ -53,7 +54,7 @@ export class Transport {
   private playGeneration = 0;
   private playRequested = false;
   private effectsGeneration = 0;
-  private samples = new Map<GameHitSoundId, { buffer: AudioBuffer; gain: number; playbackRate: number }[]>();
+  private samples = new Map<GameHitSoundId, SoundLayers>();
   playing = false;
   rate = 1;
   offset = 0;
@@ -94,6 +95,7 @@ export class Transport {
   async setGameSounds(sounds: GameHitSounds, read: (path: string) => Promise<Uint8Array>): Promise<{ loaded: number; failed: string[] }> {
     const generation = ++this.effectsGeneration, context = this.audioContext();
     const decoded = new Map<string, Promise<AudioBuffer>>(), next: typeof this.samples = new Map(), failed: string[] = [];
+    const sharedLayers = new Map<string, SoundLayers>();
     await Promise.all(Object.entries(sounds.sounds).map(async ([id, sound]) => {
       try {
         const layers = await Promise.all(sound.layers.map(async layer => {
@@ -101,7 +103,13 @@ export class Transport {
           if (!decoded.has(layer.path)) decoded.set(layer.path, read(layer.path).then(bytes => context.decodeAudioData(new Uint8Array(bytes).buffer)));
           return { buffer: await decoded.get(layer.path)!, gain: layer.gain, playbackRate: layer.playbackRate };
         }));
-        if (layers.length) next.set(id as GameHitSoundId, layers);
+        if (layers.length) {
+          // Some cues (including bundled HOLD/SLIDE) are the same complete sound.
+          // Keep every layer within a cue, but share identity for equal cue mixes.
+          const key = JSON.stringify(sound.layers.map(layer => JSON.stringify([layer.path, layer.gain, layer.playbackRate])).sort());
+          if (!sharedLayers.has(key)) sharedLayers.set(key, layers);
+          next.set(id as GameHitSoundId, sharedLayers.get(key)!);
+        }
       } catch (error) { failed.push(`${sound.cueName}: ${error instanceof Error ? error.message : error}`); }
     }));
     if (generation !== this.effectsGeneration) return { loaded: 0, failed: [] };
@@ -155,8 +163,17 @@ export class Transport {
     const now = this.seconds;
     if (this.loop && this.loop.end > this.loop.start && now >= this.loop.end) { this.seek(this.loop.start); this.onLoop?.(); return; }
     const horizon = now + 0.10 * this.rate;
+    const played = new Set<GameHitSoundId | SoundLayers>();
+    let groupTime: number | undefined;
     while (this.scheduledIndex < this.hits.length && this.hits[this.scheduledIndex].time < horizon) {
       const hit = this.hits[this.scheduledIndex++];
+      // A scheduling pass consumes each entire timestamp group. Use chart time,
+      // not the clamped audio start time, so nearby/late hits remain distinct.
+      if (hit.time !== groupTime) { groupTime = hit.time; played.clear(); }
+      const soundId = soundForHit(hit); if (!soundId) continue;
+      const sound = this.samples.get(soundId) ?? soundId;
+      if (played.has(sound)) continue;
+      played.add(sound);
       if (this.effects && hit.time >= now - 0.03 && (!this.loop || hit.time < this.loop.end)) this.scheduleEffect(hit, this.anchorClock + (hit.time - this.anchorSeconds) / this.rate);
     }
   }
