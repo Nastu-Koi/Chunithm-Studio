@@ -146,6 +146,8 @@ export function getPlayerRibbonSegments(chart: Chart, note: Note, currentTick: n
   }
   return result;
 }
+/** Scroll distance on the near side of the judgement line at which a line at AIR height has left the screen. */
+const AIR_HOLD_NEAR = -3;
 function noteColor(note: Note): string { return nativeColors[String(note.attributes.color)] ?? colors[note.type]; }
 /** Perspective is visual only. Hit timestamps always come from the shared audio timeline. */
 export class ChartPlayer {
@@ -491,6 +493,12 @@ export class ChartPlayer {
       const head = getScrollPosition(this.chart, note.tick, tick, note);
       const tail = getScrollPosition(this.chart, note.tick + (note.duration ?? 0), tick, note);
       const ribbon = getPlayerRibbonSegments(this.chart, note, tick, far);
+      // A held AIR HOLD does not end in mid-air above the judgement line: its line runs straight on, out of the bottom of the screen.
+      if (note.type === 'AIR_HOLD' && tick > note.tick && ribbon.length && Math.abs(ribbon[0].startTick - tick) < 1e-7) {
+        const from = ribbon[0].startDistance, pieces = Math.ceil((from - AIR_HOLD_NEAR) / .75);
+        for (let piece = 0; piece < pieces; piece++) ribbon.unshift({ startTick: tick, endTick: tick,
+          startDistance: from + (AIR_HOLD_NEAR - from) * (piece + 1) / pieces, endDistance: from + (AIR_HOLD_NEAR - from) * piece / pieces });
+      }
       const airExtent: [number, number] | undefined = note.type === 'AIR_HOLD' && ribbon.length
         ? [Math.min(...ribbon.flatMap(s => [s.startDistance, s.endDistance])), Math.max(...ribbon.flatMap(s => [s.startDistance, s.endDistance]))] : undefined;
       const headVisible = head >= -.18 && head <= far, tailVisible = tail >= -.18 && tail <= far;
