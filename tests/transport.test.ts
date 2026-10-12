@@ -17,6 +17,7 @@ function fakeAudio() {
   let nextTimer = 1;
   const gains: { gain: { value: number }; ramps: number[]; events: [string, number, number][] }[] = [];
   const oscillators: unknown[] = [];
+  const filters: { type: string; frequency: { value: number }; Q: { value: number } }[] = [];
   const context = {
     currentTime: 0, destination: {},
     createGain: () => {
@@ -33,6 +34,8 @@ function fakeAudio() {
     decodeAudioData: () => { const call = deferred<{ duration: number; getChannelData(): Float32Array }>(); decoding.push(call); return call.promise; },
     resume: () => { const call = deferred<void>(); resumes.push(call); return call.promise; },
     close: async () => {},
+    sampleRate: 48000,
+    createBiquadFilter: () => { const node = { type: '', frequency: { value: 0 }, Q: { value: 1 }, connect() {}, disconnect() {} }; filters.push(node); return node; },
     createBufferSource: () => {
       const source = { buffer: null as unknown, playbackRate: { value: 1 }, when: undefined as number | undefined, offset: undefined as number | undefined, stopped: false, disconnected: false, connect() {}, disconnect() { this.disconnected = true; }, start(when: number, offset?: number) { this.when = when; this.offset = offset; }, stop() { this.stopped = true; } };
       sources.push(source); return source;
@@ -42,7 +45,7 @@ function fakeAudio() {
   Object.defineProperty(globalThis, 'AudioContext', { configurable: true, value: function () { return context; } });
   Object.defineProperty(globalThis, 'setInterval', { configurable: true, value: (callback: () => void, delay: number) => { const id = nextTimer++; timers.set(id, { callback, delay }); return id; } });
   Object.defineProperty(globalThis, 'clearInterval', { configurable: true, value: (id: number) => { timers.delete(id); } });
-  return { context, decoding, resumes, sources, timers, gains, oscillators, restore() { for (const [name, descriptor] of previous) { if (descriptor) Object.defineProperty(globalThis, name, descriptor); else Reflect.deleteProperty(globalThis, name); } } };
+  return { context, decoding, resumes, sources, timers, gains, oscillators, filters, restore() { for (const [name, descriptor] of previous) { if (descriptor) Object.defineProperty(globalThis, name, descriptor); else Reflect.deleteProperty(globalThis, name); } } };
 }
 const buffer = (duration: number) => ({ duration, getChannelData: () => new Float32Array(100).fill(0.5) });
 function near(actual: number | undefined, expected: number) {
@@ -486,4 +489,28 @@ test('a sustained start loops until its note ends, and playback started inside t
     assert.deepEqual(fake.gains.at(-1)!.events.at(-1), ['ramp', 0, (second - first) / 2 + .5], 'the resumed loop still ends with its note');
     transport.pause();
   } finally { transport.destroy(); fake.restore(); }
+});
+
+test('loops started together are set apart, filtered and swelled in the way their cue says', async () => {
+  const fake = fakeAudio(), transport = new Transport(), random = Math.random;
+  try {
+    Math.random = () => .5;
+    const loading = transport.setGameSounds({ source: 'fixture', warnings: [], sounds: { holdStart: { cueName: 'start', layers: [
+      { path: 'loop.wav', gain: .3, playbackRate: 1, loop: { start: 2, end: 2.9 }, group: 1, lowpass: 8000, swell: [{ time: 0, level: .1 }, { time: .1, level: 1 }] }],
+      combos: [{ key: 'cue:loop', window: .03, loopback: 0, steps: [{ delay: 0, spread: 0 }, { delay: .01, spread: .001 }, { delay: .02, spread: .001 }], group: 1 }] } } }, async () => new Uint8Array(1));
+    await Promise.resolve(); for (const call of fake.decoding) call.resolve(buffer(3)); await loading;
+    const chart = createProject().chart;
+    // Four HOLDs at one instant and a fifth well after the combo time.
+    chart.notes = [...[0, 2, 4, 6].map(lane => ({ ...createNote('HOLD', 0, lane, 2), duration: 1920 })), { ...createNote('HOLD', 480, 8, 2), duration: 1920 }];
+    transport.setChart(chart); await playNow(transport, fake);
+    fake.context.currentTime = tickToSeconds(chart, 480) - .05; for (const timer of fake.timers.values()) timer.callback();
+    const later = tickToSeconds(chart, 480);
+    // Steps 0, 1, 2, then back to the loop-back step; the late start begins again at the first.
+    assert.deepEqual(fake.sources.map(source => Math.round(source.when! * 1e6) / 1e6), [0, .01, .02, 0, Math.round(later * 1e6) / 1e6]);
+    assert.deepEqual(fake.filters.map(filter => [filter.type, filter.frequency.value]), Array(5).fill(['lowpass', 8000]));
+    // Each loop has a gain of its own for the swell, which starts with the delayed layer.
+    const swells = fake.gains.filter(node => node.events[0]?.[1] === .1);
+    assert.deepEqual(swells.slice(0, 2).map(node => node.events), [[['set', .1, 0], ['ramp', 1, .1]], [['set', .1, .01], ['ramp', 1, .11]]]);
+    transport.pause();
+  } finally { Math.random = random; transport.destroy(); fake.restore(); }
 });

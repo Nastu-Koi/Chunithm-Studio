@@ -150,5 +150,25 @@ test('real cues carry their pitch, envelope and the cues their action tracks sta
   assert.deepEqual(tap.layers.map(layer => Number(layer.gain.toFixed(4))), [.57, .1125]);
   assert.deepEqual(tap.limits.map(limit => limit.group), [undefined, 1, 1, 2]);
   assert.deepEqual(tap.limits.map(limit => limit.key), ['cue:se_touch_tap_jcritical', 'cue:se_touch_tap_jcritical_action', 'category:Limit_Tap', 'cue:se_touch_tap_loop_action']);
-  assert.deepEqual(tap.notes, ['aisac:se_touch_tap_jcritical_action', 'aisac:se_touch_tap_loop_action', 'curve:se_touch_tap_loop_action']);
+  assert.deepEqual(tap.notes, ['curve:se_touch_tap_loop_action', 'filter:se_touch_tap_loop_action']);
+});
+
+test('real loops carry their filter, their swell and the staggered starts of a combo sequence', { skip: !configured }, async () => {
+  const acb = await readFile(source), acf = await readFile(config);
+  // Band-pass with the low cutoff open and the high one at 0.84 of the 24 Hz to 24 kHz scale.
+  const start = extractCue(acb, 'se_touch_hold_jcritical_loop', acf), [loop, sample] = start.layers;
+  assert.equal(loop.lowpass, Math.round(24 * 1000 ** .84)); assert.equal(loop.highpass, undefined);
+  // The volume graph of the sequence's own AISAC, over the milliseconds it has played.
+  assert.deepEqual(loop.swell, [{ time: 0, level: .13 }, { time: .033, level: .14 }, { time: .057, level: .28 }, { time: .083, level: .51 }, { time: .101, level: 1 }]);
+  assert.deepEqual([sample.lowpass, sample.swell, sample.delay], [undefined, undefined, undefined]);
+  // Four equal tracks 10 ms apart: a start within 30 ms of the last takes the next one.
+  const steps = [{ delay: 0, spread: 0 }, { delay: .01, spread: .001 }, { delay: .02, spread: .001 }, { delay: .03, spread: .001 }];
+  assert.deepEqual(start.combos, [{ key: 'cue:se_touch_hold_loop', window: .03, loopback: 0, steps, group: 1 }]);
+  assert.deepEqual(extractCue(acb, 'se_air_hold_loop', acf).combos, [{ key: 'cue:se_air_hold_loop', window: .03, loopback: 0, steps }]);
+  assert.deepEqual(extractCue(acb, 'se_air_hold_loop', acf).notes, []);
+  assert.deepEqual(start.notes, ['filter:se_touch_hold_loop']);
+  assert.deepEqual(start.unsupported, [82]);
+  // The ExTAP effect's AISAC moves it between the two speaker buses and leaves the headphone send alone.
+  assert.deepEqual(extractCue(acb, 'se_touch_chara_laser', acf).notes, []);
+  assert.deepEqual(extractCue(acb, 'se_air_cut_break', acf).layers.map(layer => layer.highpass), [135, undefined]);
 });

@@ -3,7 +3,7 @@ import { access, mkdir, mkdtemp, readFile, realpath, rename, rm, writeFile } fro
 import path from 'node:path';
 import { parseAfs2, parseCommands, parseUtf, type UtfTable, type UtfValue } from './cri';
 import { decodeAdx, prepareAudio } from './audio';
-import type { GameHitSoundEnvelope, GameHitSoundId, GameHitSoundLimit, GameHitSounds } from '../core/game-sounds';
+import type { GameHitSoundCombo, GameHitSoundEnvelope, GameHitSoundId, GameHitSoundLimit, GameHitSounds } from '../core/game-sounds';
 export type { GameHitSoundId, GameHitSounds } from '../core/game-sounds';
 
 /** Names are taken from the user's chu.h and the bank's CueNameTable, never row numbers. */
@@ -34,21 +34,36 @@ export interface ExtractedCueLayer {
   stopAfter?: number;
   loop?: { start: number; end: number };
   group?: number;
+  delay?: number;
+  /** The delay is drawn anew for every start from this many seconds either side of `delay`. */
+  delaySpread?: number;
+  lowpass?: number;
+  highpass?: number;
+  swell?: { time: number; level: number }[];
 }
 export interface ExtractedCue {
   layers: ExtractedCueLayer[];
   limits: GameHitSoundLimit[];
+  combos: GameHitSoundCombo[];
   /** Command codes found on the cue's path whose meaning is not established; their effect is not reproduced. */
   unsupported: number[];
-  /** Parts handled approximately, as `kind:cueName`: `curve` (a non-linear envelope curve, played linear) and `aisac` (a time-driven AISAC, not reproduced). */
+  /**
+   * Parts handled approximately, as `kind:cueName`: `curve` (a non-linear curve, played linear), `aisac` (an AISAC that is
+   * not reproduced), `variant` (a sequence whose tracks differ in more than their delay; the first stands for all) and
+   * `filter` (a band-pass filter, played with second-order slopes).
+   */
   notes: string[];
 }
 type Row = Record<string, UtfValue>;
-type CueContext = { limit?: number; categories: number[]; unsupported: Set<number>; notes: Set<string> };
-/** Times in milliseconds as the bank stores them; sustain is a level from 0 to 1. */
-type LayerState = { gain: number; cents: number; attack: number; hold: number; decay: number; sustain: number; release: number };
-type CueParts = { layers: ExtractedCueLayer[]; limits: GameHitSoundLimit[]; unsupported: Set<number>; notes: Set<string> };
-const START: LayerState = { gain: 1, cents: 0, attack: 0, hold: 0, decay: 0, sustain: 1, release: 0 };
+type CueContext = { limit?: number; combo?: { window: number; loopback: number }; categories: number[]; unsupported: Set<number>; notes: Set<string> };
+/**
+ * Times in milliseconds as the bank stores them; sustain is a level from 0 to 1. `low` and `high` are the band-pass
+ * cutoffs on the runtime's normalized scale, where 0 to 1 spans 24 Hz to 24 kHz logarithmically.
+ */
+type LayerState = { gain: number; cents: number; attack: number; hold: number; decay: number; sustain: number; release: number; delay: number; spread: number; low: number; high: number; swell?: { time: number; level: number }[]; graphRelease?: number };
+type CueParts = { layers: ExtractedCueLayer[]; limits: GameHitSoundLimit[]; combos: GameHitSoundCombo[]; unsupported: Set<number>; notes: Set<string> };
+const START: LayerState = { gain: 1, cents: 0, attack: 0, hold: 0, decay: 0, sustain: 1, release: 0, delay: 0, spread: 0, low: 0, high: 1 };
+const cutoff = (normalized: number) => Math.round(24 * 1000 ** normalized);
 const table = (root: Row, name: string): Row[] => { const data = root[name]; return Buffer.isBuffer(data) && data.length ? parseUtf(data).rows : []; };
 
 /**
@@ -59,6 +74,7 @@ const table = (root: Row, name: string): Row[] => { const data = root[name]; ret
 export class HitSoundMix {
   private categories = new Map<number, { name: string; volume: number; limit?: number }>();
   private busVolume = 1;
+  private graphBuses: string[] = [];
   constructor(acf: Buffer) {
     const header = parseUtf(acf);
     if (header.rows.length !== 1) throw new Error('音效 ACF 必须有一个 Header 行。');
@@ -76,7 +92,10 @@ export class HitSoundMix {
     const setting = table(root, 'DspSettingTable')[0], busNames = table(root, 'BusNameTable'), buses = table(root, 'BusTable');
     if (setting) for (const bus of buses.slice(Number(setting.StartIndex), Number(setting.StartIndex) + Number(setting.NumBuses)))
       if (Object.values(busNames[Number(bus.BusNameIndex)] ?? {}).includes('Phone_1pass')) this.busVolume = Number(bus.Volume);
+    this.graphBuses = table(root, 'BusNameIndexListForAisacGraphType').map(row => String(Object.values(busNames[Number(row.Id)] ?? {})[0] ?? ''));
   }
+  /** The bus an AISAC graph of one of the eight bus-send types acts on. */
+  graphBus(slot: number): string | undefined { return this.graphBuses[slot] || undefined; }
   /** Category volumes and the Phone_1pass bus volume, as one factor. */
   gain(categories: readonly number[]): number { return categories.reduce((gain, id) => gain * (this.categories.get(id)?.volume ?? 1), this.busVolume); }
   limits(categories: readonly number[]): GameHitSoundLimit[] {
@@ -87,8 +106,8 @@ export class HitSoundMix {
 /**
  * Independent reader for the installed bank's ADX one-shot cues. The traversal of
  * sequence -> track event -> synth -> waveform follows the actual UTF references.
- * It chooses the named Default instrument and the Phone_1pass route. It does not
- * attempt to emulate CRI's dynamic AISAC, DSP, envelope or randomization engine.
+ * It chooses the named Default instrument and the Phone_1pass route. Of CRI's dynamic
+ * behaviour it reads only what docs/native-hit-sounds.md lists as verified.
  * Reference facts: https://github.com/vgmstream/vgmstream/blob/master/src/meta/acb.c
  */
 class HitSoundBank {
@@ -127,6 +146,8 @@ class HitSoundBank {
    * reader writes 87 to the parameter criAtomExPlayer_SetVolume uses, 5 to the one criAtomExPlayer_SetPitch uses (cents),
    * and 36 to 40 to the five parameters behind criAtomExPlayer_SetEnvelope{Attack,Hold,Decay}Time, ...SustainLevel
    * and ...ReleaseTime. 121 repeats the summed pitch as the voice's maximum pitch and changes nothing audible.
+   * 71 adds to the parameter behind criAtomExPlayer_SetPreDelayTime (milliseconds, and a range to draw from), 32 sets the
+   * two normalized cutoffs of the band-pass filter, and 94 holds the combo time and loop-back track of a type 6 sequence.
    * See docs/native-hit-sounds.md.
    */
   private parameters(table: string, index: UtfValue | undefined, inherited: LayerState, context: CueContext): LayerState | null {
@@ -158,14 +179,46 @@ class HitSoundBank {
       else if (type === 39 && data.length === 2) state.sustain = Math.min(1, word(0) / 10000);
       // Cue limit: the first value is the number of simultaneous playbacks of this cue.
       else if (type === 79 && data.length >= 2) context.limit = word(0);
+      // Pre-delay in milliseconds, then the range either side of it that each start draws from.
+      else if (type === 71 && data.length === 4) { state.delay += word(0); state.spread += Math.abs(data.readInt16BE(2)); }
+      // Band-pass filter: low and high cutoff in ten-thousandths. Levels combine the way the runtime merges them.
+      else if (type === 32 && data.length === 4) { if (data.readInt16BE(0) >= 0) { state.low = 1 - (1 - state.low) * (1 - word(0) / 10000); state.high *= word(2) / 10000; } }
+      // Combo sequence: milliseconds within which a restart moves on to the next track, and the track to return to.
+      else if (type === 94 && data.length === 14) context.combo = { window: data.readUInt32BE(0) / 1000, loopback: word(4) === 65535 ? 0 : word(4) };
       // Category indexes into the ACF's CategoryTable.
       else if (type === 65 && data.length % 4 === 0) for (let offset = 0; offset < data.length; offset += 4) context.categories.push(data.readUInt32BE(offset));
       else context.unsupported.add(type);
     }
     return state;
   }
-  /** Time-driven AISACs (filter sweeps and the like) are attached per sequence, track or synth; none is reproduced. */
-  private aisacs(row: Row, context: CueContext): void { if (Buffer.isBuffer(row.LocalAisacs) && row.LocalAisacs.length) context.notes.add('aisac'); }
+  /**
+   * AISACs attached to a sequence, track or synth. The runtime drives these itself: every update of the part they belong
+   * to, it sets control 2000 + AISAC index to the milliseconds that part has played, so their graphs are curves over time.
+   * Of those the volume graph is reproduced; bus-send graphs matter only if they act on the headphone bus, and a release
+   * time only if it differs from the envelope's. Anything else is noted.
+   */
+  private aisacs(row: Row, state: LayerState, context: CueContext, mix: HitSoundMix | undefined): LayerState {
+    const list = row.LocalAisacs;
+    if (!Buffer.isBuffer(list)) return state;
+    let next = state;
+    for (let offset = 0; offset + 1 < list.length; offset += 2) {
+      const index = list.readUInt16BE(offset), aisac = this.row('AisacTable', index), graphs = aisac.GraphIndexes;
+      if (Number(aisac.Type) !== 1 || Number(aisac.ControlId) !== 2000 + index || !Buffer.isBuffer(graphs)) { context.notes.add('aisac'); continue; }
+      for (let item = 0; item + 1 < graphs.length; item += 2) {
+        const graph = this.row('GraphTable', graphs.readUInt16BE(item)), type = Number(graph.Type), controls = graph.Controls, levels = graph.Destinations, curves = graph.Curve;
+        if (!Buffer.isBuffer(controls) || !Buffer.isBuffer(levels) || controls.length !== levels.length * 2) { context.notes.add('aisac'); continue; }
+        // Types 7 to 14 are the sends to eight buses, which the config file names.
+        if (type >= 7 && type <= 14) { const bus = mix?.graphBus(type - 7); if (!bus || bus === 'Phone_1pass') context.notes.add('aisac'); continue; }
+        // A release time: checked against the envelope's once that is known.
+        if (type === 42 && levels.length === 2 && next.graphRelease === undefined) { next = { ...next, graphRelease: levels.readUInt16BE(0) }; continue; }
+        const points = Array.from({ length: levels.length / 2 }, (_, point) => ({ time: controls.readFloatBE(point * 4) / 1000, level: levels.readUInt16BE(point * 2) / 10000 }));
+        if (type !== 1 || next.swell || !points.length || points.some((point, at) => !(point.time >= (points[at - 1]?.time ?? 0)))) { context.notes.add('aisac'); continue; }
+        if (Buffer.isBuffer(curves) && curves.some((value, at) => at % 2 === 0 && value !== 0)) context.notes.add('curve');
+        next = { ...next, swell: points };
+      }
+    }
+    return next;
+  }
   /** One cue's own waveforms, plus those of the cues its action tracks start. */
   private parts(cueName: string, mix: HitSoundMix | undefined, stopAfter: number | undefined, level: number): CueParts {
     if (level > 4) throw new Error('音效动作引用过深。');
@@ -173,6 +226,7 @@ class HitSoundBank {
     if (!name) throw new Error(`本地音效库没有 ${cueName}。`);
     const cue = this.row('CueTable', Number(name.CueIndex));
     const layers: ExtractedCueLayer[] = [], started: CueParts[] = [], active = new Set<string>();
+    let combo: Omit<GameHitSoundCombo, 'key'> | undefined;
     const context: CueContext = { categories: [], unsupported: new Set(), notes: new Set() };
     const visit = (type: number, index: number, state: LayerState, depth = 0): void => {
       if (state.gain === 0) return;
@@ -196,27 +250,31 @@ class HitSoundBank {
           const extension = Number(wave.LoopFlag) === 2 && Number(wave.ExtensionData) !== 65535 ? this.row('WaveformExtensionDataTable', Number(wave.ExtensionData)) : undefined;
           const loop = extension && Number(extension.LoopEnd) > Number(extension.LoopStart) ? { start: Number(extension.LoopStart) / sampleRate, end: Number(extension.LoopEnd) / sampleRate } : undefined;
           const shaped = state.attack > 0 || state.hold > 0 || state.decay > 0 || state.sustain < 1 || state.release > 0;
+          if (state.low > 0 || state.high < 1) context.notes.add('filter');
+          if (state.graphRelease !== undefined && state.graphRelease !== state.release) context.notes.add('aisac');
           layers.push({ waveformId: id, bytes: entry.bytes, sampleRate, sampleCount, gain: state.gain, playbackRate: 2 ** (state.cents / 1200),
             ...(shaped ? { envelope: { attack: state.attack / 1000, hold: state.hold / 1000, decay: state.decay / 1000, sustain: state.sustain, release: state.release / 1000 } } : {}),
-            ...(stopAfter === undefined ? {} : { stopAfter }), ...(loop ? { loop } : {}) });
+            ...(stopAfter === undefined ? {} : { stopAfter }), ...(loop ? { loop } : {}),
+            ...(state.delay > 0 ? { delay: state.delay / 1000 } : {}), ...(state.spread > 0 ? { delaySpread: state.spread / 1000 } : {}),
+            ...(state.high < 1 ? { lowpass: cutoff(state.high) } : {}), ...(state.low > 0 ? { highpass: cutoff(state.low) } : {}), ...(state.swell ? { swell: state.swell } : {}) });
         } else if (type === 2) {
           const synth = this.row('SynthTable', index);
           if (Number(synth.Type) !== 0 || Number(synth.NumActionTracks) > 0) throw new Error('此音效使用了未支持的 synth 触发方式。');
-          this.aisacs(synth, context);
-          const next = this.parameters('SynthCommandTable', synth.CommandIndex, state, context);
-          if (next === null || next.gain === 0) return;
+          const own = this.parameters('SynthCommandTable', synth.CommandIndex, state, context);
+          if (own === null || own.gain === 0) return;
+          const next = this.aisacs(synth, own, context, mix);
           const items = synth.ReferenceItems;
           if (!Buffer.isBuffer(items) || items.length % 4 !== 0) throw new Error('音效 synth 引用列表损坏。');
           for (let i = 0; i < items.length; i += 4) visit(items.readUInt16BE(i), items.readUInt16BE(i + 2), next, depth + 1);
         } else if (type === 3) {
           const sequence = this.row('SequenceTable', index);
-          // Type 6 (the sustained loops) plays one of its tracks per start; they share a waveform, so the first stands for all.
+          // Type 6 is a combo sequence (the sustained loops): each start plays one track, moving on to the next when it
+          // follows the previous start within the combo time and back to the first otherwise.
           const single = Number(sequence.Type) === 6;
           if (Number(sequence.Type) !== 0 && !single) throw new Error('此音效使用了未支持的 sequence 触发方式。');
-          if (single) context.notes.add('variant');
-          this.aisacs(sequence, context);
-          const next = this.parameters('SeqCommandTable', sequence.CommandIndex, state, context);
-          if (next === null) return;
+          const own = this.parameters('SeqCommandTable', sequence.CommandIndex, state, context);
+          if (own === null) return;
+          const next = this.aisacs(sequence, own, context, mix);
           // Action tracks start (and may later stop) other cues of this bank: TAP judgements are built this way.
           for (let i = 0; i < Number(sequence.NumActionTracks ?? 0); i++) {
             const action = this.row('ActionTrackTable', Number(sequence.ActionTrackStartIndex) + i);
@@ -240,24 +298,41 @@ class HitSoundBank {
           if (next.gain === 0) return;
           const indexes = sequence.TrackIndex;
           if (!Buffer.isBuffer(indexes) || indexes.length !== Number(sequence.NumTracks) * 2) throw new Error('音效 track 引用列表损坏。');
-          for (let i = 0; i < (single ? Math.min(2, indexes.length) : indexes.length); i += 2) {
-            const track = this.row('TrackTable', indexes.readUInt16BE(i));
-            this.aisacs(track, context);
-            const trackState = this.parameters('TrackCommandTable', track.CommandIndex, next, context);
-            if (trackState === null || trackState.gain === 0) continue;
-            for (const command of this.commands('TrackEventTable', track.EventIndex)) {
-              if (command.type === 0) continue;
-              if (![2000, 2003].includes(command.type) || command.data.length < 4) throw new Error('此音效包含未支持的时间或触发命令。');
-              visit(command.data.readUInt16BE(0), command.data.readUInt16BE(2), trackState, depth + 1);
+          const first = layers.length, tracks: ExtractedCueLayer[][] = [];
+          for (let i = 0; i < indexes.length; i += 2) {
+            const track = this.row('TrackTable', indexes.readUInt16BE(i)), from = layers.length;
+            const own = this.parameters('TrackCommandTable', track.CommandIndex, next, context);
+            if (own !== null && own.gain !== 0) {
+              const trackState = this.aisacs(track, own, context, mix);
+              for (const command of this.commands('TrackEventTable', track.EventIndex)) {
+                if (command.type === 0) continue;
+                if (![2000, 2003].includes(command.type) || command.data.length < 4) throw new Error('此音效包含未支持的时间或触发命令。');
+                visit(command.data.readUInt16BE(0), command.data.readUInt16BE(2), trackState, depth + 1);
+              }
             }
+            tracks.push(layers.slice(from));
+          }
+          if (single) {
+            // The tracks of the game's loops differ only in their delay: keep one and note the delay of each step.
+            const plain = (track: ExtractedCueLayer[]) => JSON.stringify(track.map(({ bytes: _bytes, delay: _delay, delaySpread: _spread, ...rest }) => rest));
+            const steps = tracks.map(track => ({ delay: track[0]?.delay ?? 0, spread: track[0]?.delaySpread ?? 0 }));
+            const uniform = tracks.every((track, at) => plain(track) === plain(tracks[0]) && track.every(layer => (layer.delay ?? 0) === steps[at].delay && (layer.delaySpread ?? 0) === steps[at].spread));
+            layers.length = first;
+            if (uniform && context.combo && !combo) {
+              combo = { ...context.combo, steps };
+              layers.push(...tracks[0].map(({ delay: _delay, delaySpread: _spread, ...layer }) => layer));
+            } else { context.notes.add('variant'); layers.push(...(tracks[0] ?? [])); }
           }
         } else throw new Error(`音效引用类型 ${type} 暂不支持。`);
       } finally { active.delete(`${type}:${index}`); }
     };
     visit(Number(cue.ReferenceType), Number(cue.ReferenceIndex), START);
     const scale = mix?.gain(context.categories) ?? 1;
-    const parts: CueParts = { layers: layers.map(layer => ({ ...layer, gain: layer.gain * scale })),
+    // A delay drawn anew for every start is reproduced only as part of a combo step.
+    if (layers.some(layer => layer.delaySpread)) context.unsupported.add(71);
+    const parts: CueParts = { layers: layers.map(({ delaySpread: _spread, ...layer }) => ({ ...layer, gain: layer.gain * scale })),
       limits: [...(context.limit ? [{ key: `cue:${cueName}`, max: context.limit }] : []), ...(mix?.limits(context.categories) ?? [])],
+      combos: combo ? [{ key: `cue:${cueName}`, ...combo }] : [],
       unsupported: context.unsupported, notes: new Set([...context.notes].map(note => `${note}:${cueName}`)) };
     // Each started cue is a group of its own: its limits stop its layers and leave the rest of the sound playing.
     let group = 0;
@@ -265,6 +340,7 @@ class HitSoundBank {
       group++;
       parts.layers.push(...other.layers.map(layer => ({ ...layer, group })));
       for (const limit of other.limits) parts.limits.push({ ...limit, group });
+      for (const item of other.combos) parts.combos.push({ ...item, group });
       for (const code of other.unsupported) parts.unsupported.add(code);
       for (const note of other.notes) parts.notes.add(note);
     }
@@ -273,7 +349,7 @@ class HitSoundBank {
   extract(cueName: string, mix?: HitSoundMix): ExtractedCue {
     const parts = this.parts(cueName, mix, undefined, 0);
     if (!parts.layers.length) throw new Error(`音效 ${cueName} 在默认音色与耳机路由下没有波形。`);
-    return { layers: parts.layers, limits: parts.limits, unsupported: [...parts.unsupported].sort((a, b) => a - b), notes: [...parts.notes].sort() };
+    return { layers: parts.layers, limits: parts.limits, combos: parts.combos, unsupported: [...parts.unsupported].sort((a, b) => a - b), notes: [...parts.notes].sort() };
   }
 }
 
@@ -300,7 +376,7 @@ export async function loadGameHitSounds(gamePath: string, cacheDirectory: string
   if (!await exists(source)) throw new Error('游戏目录中没有 data/sound/chu.acb，无法读取原版打击音。');
   const bank = new HitSoundBank(await readFile(source));
   const result: GameHitSounds = { source, sounds: {}, warnings: [
-    '使用原版 ADX 波形、默认 TAP 音色及 Phone_1pass 路由，并按音效库还原各级音量、音高、包络、动作轨（TAP 判定音在 50 毫秒后转入释音）以及 Cue 与分类的同时发声数限制；尚未重现游戏内各项音量选项（AISAC）。',
+    '使用原版 ADX 波形、默认 TAP 音色及 Phone_1pass 路由，并按音效库还原各级音量、音高、包络、带通滤波、随时间变化的音量、动作轨（TAP 判定音在 50 毫秒后转入释音）、循环音的连发错开以及 Cue 与分类的同时发声数限制；尚未重现游戏内各项音量选项（AISAC）。',
   ] };
   const config = path.join(gameRoot, 'data', 'sound', 'chu.acf');
   const mix = await exists(config) ? new HitSoundMix(await readFile(config)) : undefined;
@@ -308,7 +384,7 @@ export async function loadGameHitSounds(gamePath: string, cacheDirectory: string
   const unsupported = new Map<number, string[]>(), notes = new Map<string, string[]>();
   await mkdir(output, { recursive: true });
   for (const [id, cueName] of Object.entries(CUES)) {
-    const { layers, limits, unsupported: codes, notes: approximations } = bank.extract(cueName, mix);
+    const { layers, limits, combos, unsupported: codes, notes: approximations } = bank.extract(cueName, mix);
     for (const code of codes) unsupported.set(code, [...(unsupported.get(code) ?? []), cueName]);
     for (const note of approximations) { const [kind, cue] = note.split(':'); notes.set(kind, [...new Set([...(notes.get(kind) ?? []), cue])]); }
     const imported = [];
@@ -328,14 +404,16 @@ export async function loadGameHitSounds(gamePath: string, cacheDirectory: string
         } finally { await rm(temp, { recursive: true, force: true }); }
       }
       imported.push({ path: wavPath, gain: layer.gain, playbackRate: layer.playbackRate, ...(layer.envelope ? { envelope: layer.envelope } : {}), ...(layer.stopAfter === undefined ? {} : { stopAfter: layer.stopAfter }),
-        ...(layer.loop ? { loop: layer.loop } : {}), ...(layer.group === undefined ? {} : { group: layer.group }) });
+        ...(layer.loop ? { loop: layer.loop } : {}), ...(layer.group === undefined ? {} : { group: layer.group }), ...(layer.delay ? { delay: layer.delay } : {}),
+        ...(layer.lowpass ? { lowpass: layer.lowpass } : {}), ...(layer.highpass ? { highpass: layer.highpass } : {}), ...(layer.swell ? { swell: layer.swell } : {}) });
     }
-    result.sounds[id as GameHitSoundId] = { cueName, layers: imported, ...(limits.length ? { limits } : {}) };
+    result.sounds[id as GameHitSoundId] = { cueName, layers: imported, ...(limits.length ? { limits } : {}), ...(combos.length ? { combos } : {}) };
   }
   const short = (cues: string[]) => cues.map(cue => cue.replace(/^se_/, '')).join('、');
   if (unsupported.size) result.warnings.push(`以下命令的含义尚无依据，未套用其效果：${[...unsupported].sort((a, b) => a[0] - b[0]).map(([code, cues]) => `${code}（${short(cues)}）`).join('；')}。`);
-  if (notes.has('aisac')) result.warnings.push(`以下音效带随时间变化的 AISAC（滤波或音量扫动），未重现：${short(notes.get('aisac')!)}。`);
-  if (notes.has('variant')) result.warnings.push(`以下循环音每次从四条音轨里取一条，这里固定取第一条：${short(notes.get('variant')!)}。`);
-  if (notes.has('curve')) result.warnings.push(`以下音效的包络使用非线性曲线，按线性处理：${short(notes.get('curve')!)}。`);
+  if (notes.has('aisac')) result.warnings.push(`以下音效带有未重现的 AISAC：${short(notes.get('aisac')!)}。`);
+  if (notes.has('variant')) result.warnings.push(`以下音效每次从几条内容不同的音轨里取一条，这里固定取第一条：${short(notes.get('variant')!)}。`);
+  if (notes.has('curve')) result.warnings.push(`以下音效的包络或音量曲线是非线性的，按线性处理：${short(notes.get('curve')!)}。`);
+  if (notes.has('filter')) result.warnings.push(`以下音效的带通滤波按二阶处理，游戏里的滤波阶数没有核对：${short(notes.get('filter')!)}。`);
   return result;
 }

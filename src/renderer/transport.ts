@@ -1,9 +1,9 @@
 import type { Chart, NoteType } from '../core/model';
 import { tickToSeconds, secondsToTick, getBeatLines } from '../core/timing';
 import { getPlayerPlaybackPoints } from './playback-points';
-import type { GameHitSoundEnvelope, GameHitSoundId, GameHitSoundLimit, GameHitSounds } from '../core/game-sounds';
+import type { GameHitSoundCombo, GameHitSoundId, GameHitSoundLayer, GameHitSoundLimit, GameHitSounds } from '../core/game-sounds';
 import { buildJudgementTimeline } from '../core/judgement';
-type SoundLayers = { buffer: AudioBuffer; gain: number; playbackRate: number; envelope?: GameHitSoundEnvelope; stopAfter?: number; loop?: { start: number; end: number }; group?: number }[];
+type SoundLayers = (Omit<GameHitSoundLayer, 'path'> & { buffer: AudioBuffer })[];
 type Voice = { stop(at: number): void };
 /** A stopped voice without a release time of its own fades this long instead of clicking off. */
 const LIMIT_FADE = 0.02;
@@ -35,7 +35,7 @@ export function soundsForHit(hit: Pick<Hit, 'type' | 'direction' | 'sustainHead'
   }
 }
 /** Envelope level (0 to 1) of a sounding voice `elapsed` seconds after its start, before any release. */
-export function envelopeLevel(envelope: GameHitSoundEnvelope | undefined, elapsed: number): number {
+export function envelopeLevel(envelope: GameHitSoundLayer['envelope'], elapsed: number): number {
   if (!envelope) return 1;
   const { attack, hold, decay, sustain } = envelope;
   if (elapsed < attack) return Math.max(0, elapsed) / attack;
@@ -107,6 +107,9 @@ export class Transport {
   private effectsGeneration = 0;
   private samples = new Map<GameHitSoundId, SoundLayers>();
   private limits = new Map<GameHitSoundId, GameHitSoundLimit[]>();
+  private combos = new Map<GameHitSoundId, GameHitSoundCombo[]>();
+  /** Step and start time of the latest start of each combo cue. */
+  private comboSteps = new Map<string, { step: number; time: number }>();
   /** Sounding voices per limit key, oldest first. */
   private voices = new Map<string, Voice[]>();
   private output: AudioNode | null = null;
@@ -162,31 +165,34 @@ export class Transport {
     return { peaks, duration: this.buffer.duration };
   }
   clearAudio(): void { this.pause(); this.loadGeneration++; this.buffer = null; }
-  clearGameSounds(): void { this.effectsGeneration++; this.samples.clear(); this.limits.clear(); }
+  clearGameSounds(): void { this.effectsGeneration++; this.samples.clear(); this.limits.clear(); this.combos.clear(); }
   async setGameSounds(sounds: GameHitSounds, read: (path: string) => Promise<Uint8Array>): Promise<{ loaded: number; failed: string[] }> {
     const generation = ++this.effectsGeneration, context = this.audioContext();
     const decoded = new Map<string, Promise<AudioBuffer>>(), next: typeof this.samples = new Map(), failed: string[] = [];
-    const sharedLayers = new Map<string, SoundLayers>(), limits: typeof this.limits = new Map();
+    const sharedLayers = new Map<string, SoundLayers>(), limits: typeof this.limits = new Map(), combos: typeof this.combos = new Map();
     await Promise.all(Object.entries(sounds.sounds).map(async ([id, sound]) => {
       try {
         const layers = await Promise.all(sound.layers.map(async layer => {
           if (!Number.isFinite(layer.gain) || layer.gain < 0 || !Number.isFinite(layer.playbackRate) || layer.playbackRate <= 0) throw new Error('音效参数无效');
-          if ([...Object.values(layer.envelope ?? {}), layer.stopAfter ?? 0].some(value => !Number.isFinite(value) || value < 0)) throw new Error('音效参数无效');
+          if ([...Object.values(layer.envelope ?? {}), layer.stopAfter ?? 0, layer.delay ?? 0, ...(layer.swell ?? []).flatMap(point => [point.time, point.level])].some(value => !Number.isFinite(value) || value < 0)) throw new Error('音效参数无效');
+          if ([layer.lowpass ?? 1, layer.highpass ?? 1].some(value => !Number.isFinite(value) || value <= 0)) throw new Error('音效参数无效');
           if (!decoded.has(layer.path)) decoded.set(layer.path, read(layer.path).then(bytes => context.decodeAudioData(new Uint8Array(bytes).buffer)));
-          return { buffer: await decoded.get(layer.path)!, gain: layer.gain, playbackRate: layer.playbackRate, envelope: layer.envelope, stopAfter: layer.stopAfter, loop: layer.loop, group: layer.group };
+          const { path: _path, ...rest } = layer;
+          return { ...rest, buffer: await decoded.get(layer.path)! };
         }));
         if (layers.length) {
           // Some cues (including bundled HOLD/SLIDE) are the same complete sound.
           // Keep every layer within a cue, but share identity for equal cue mixes.
-          const key = JSON.stringify(sound.layers.map(layer => JSON.stringify([layer.path, layer.gain, layer.playbackRate, layer.envelope, layer.stopAfter, layer.loop, layer.group])).sort());
+          const key = JSON.stringify(sound.layers.map(layer => JSON.stringify([layer.path, layer.gain, layer.playbackRate, layer.envelope, layer.stopAfter, layer.loop, layer.group, layer.delay, layer.lowpass, layer.highpass, layer.swell])).sort());
           if (!sharedLayers.has(key)) sharedLayers.set(key, layers);
           next.set(id as GameHitSoundId, sharedLayers.get(key)!);
           limits.set(id as GameHitSoundId, (sound.limits ?? []).filter(limit => limit.max >= 1));
+          combos.set(id as GameHitSoundId, (sound.combos ?? []).filter(combo => combo.steps.length > 0 && combo.steps.every(step => step.delay >= 0 && step.spread >= 0)));
         }
       } catch (error) { failed.push(`${sound.cueName}: ${error instanceof Error ? error.message : error}`); }
     }));
     if (generation !== this.effectsGeneration) return { loaded: 0, failed: [] };
-    this.samples = next; this.limits = limits; return { loaded: next.size, failed };
+    this.samples = next; this.limits = limits; this.combos = combos; return { loaded: next.size, failed };
   }
   setChart(chart: Chart): void { this.chart = chart; this.hits = getChartHits(chart); this.resetScheduler(); }
   private resetScheduler(): void {
@@ -230,7 +236,7 @@ export class Transport {
   }
   private stopEffects(): void {
     for (const effect of this.activeEffects) { try { effect.stop(); } catch { /* Already ended. */ } effect.disconnect(); }
-    this.activeEffects.clear(); this.voices.clear(); this.resumeSustains = true;
+    this.activeEffects.clear(); this.voices.clear(); this.comboSteps.clear(); this.resumeSustains = true;
   }
   private schedule(): void {
     if (!this.playing || !this.context) return;
@@ -282,30 +288,54 @@ export class Transport {
     if (!known?.length) return false;
     // A loop needs something to end it: the cue that started it, or the end of its note.
     const layers = known.filter(layer => layer.loop ? layer.stopAfter !== undefined || until !== undefined : !sustainOnly);
+    // Loops of one cue started together (two HOLDs at once) would sound as a single louder loop; the game sets each
+    // start that follows the previous one within the combo time a little later than the one before.
+    const shifts = new Map<number | undefined, number>();
+    for (const combo of this.combos.get(soundId) ?? []) {
+      if (!layers.some(layer => layer.group === combo.group)) continue;
+      const last = this.comboSteps.get(combo.key);
+      let step = last && when >= last.time && when - last.time <= combo.window ? last.step + 1 : 0;
+      if (step >= combo.steps.length) step = Math.min(combo.loopback, combo.steps.length - 1);
+      this.comboSteps.set(combo.key, { step, time: when });
+      shifts.set(combo.group, Math.max(0, combo.steps[step].delay + (Math.random() * 2 - 1) * combo.steps[step].spread));
+    }
     const nodes = layers.map(layer => {
-      const source = context.createBufferSource(), gain = context.createGain(), envelope = layer.envelope;
+      const source = context.createBufferSource(), gain = context.createGain(), envelope = layer.envelope, chain: AudioNode[] = [source];
+      const start = when + (layer.delay ?? 0) + (shifts.get(layer.group) ?? 0);
       source.buffer = layer.buffer; source.playbackRate.value = layer.playbackRate;
       if (layer.loop) { source.loop = true; source.loopStart = layer.loop.start; source.loopEnd = layer.loop.end; }
+      // The cue's band-pass filter: a low-pass and a high-pass without resonance.
+      for (const [type, frequency] of [['lowpass', layer.lowpass], ['highpass', layer.highpass]] as const) if (frequency) {
+        const filter = context.createBiquadFilter(); filter.type = type; filter.frequency.value = Math.min(frequency, context.sampleRate / 2); filter.Q.value = -3.0103; chain.push(filter);
+      }
+      // Volume over the time since the start, apart from the envelope: the sustained loops swell in over 0.1 s.
+      if (layer.swell?.length) {
+        const swell = context.createGain(); swell.gain.value = layer.swell[0].level; swell.gain.setValueAtTime(layer.swell[0].level, start);
+        for (const point of layer.swell.slice(1)) swell.gain.linearRampToValueAtTime(point.level, start + point.time);
+        chain.push(swell);
+      }
       // Envelope times run in real time, whatever the pitch of the layer.
-      if (envelope && envelope.attack > 0) { gain.gain.value = 0; gain.gain.setValueAtTime(0, when); gain.gain.linearRampToValueAtTime(layer.gain, when + envelope.attack); }
+      if (envelope && envelope.attack > 0) { gain.gain.value = 0; gain.gain.setValueAtTime(0, start); gain.gain.linearRampToValueAtTime(layer.gain, start + envelope.attack); }
       else gain.gain.value = layer.gain;
-      if (envelope && envelope.sustain < 1) { const start = when + envelope.attack + envelope.hold; gain.gain.setValueAtTime(layer.gain, start); gain.gain.linearRampToValueAtTime(layer.gain * envelope.sustain, start + envelope.decay); }
-      source.connect(gain); gain.connect(destination); this.activeEffects.add(source);
-      source.start(when);
-      return { source, gain, level: layer.gain, envelope, group: layer.group, stopAt: undefined as number | undefined, ended: false };
+      if (envelope && envelope.sustain < 1) { const decay = start + envelope.attack + envelope.hold; gain.gain.setValueAtTime(layer.gain, decay); gain.gain.linearRampToValueAtTime(layer.gain * envelope.sustain, decay + envelope.decay); }
+      chain.push(gain);
+      for (let index = 1; index < chain.length; index++) chain[index - 1].connect(chain[index]);
+      gain.connect(destination); this.activeEffects.add(source);
+      source.start(start);
+      return { source, gain, chain, start, level: layer.gain, envelope, group: layer.group, stopAt: undefined as number | undefined, ended: false };
     });
     // A stop enters the release from wherever the envelope is; an earlier stop replaces a later one.
     const stop = (node: typeof nodes[number], at: number): void => {
       if (node.stopAt !== undefined && node.stopAt <= at) return;
       node.stopAt = at;
       const release = node.envelope?.release || LIMIT_FADE, param = node.gain.gain;
-      param.cancelScheduledValues?.(at); param.setValueAtTime(node.level * envelopeLevel(node.envelope, at - when), at); param.linearRampToValueAtTime(0, at + release);
+      param.cancelScheduledValues?.(at); param.setValueAtTime(node.level * envelopeLevel(node.envelope, at - node.start), at); param.linearRampToValueAtTime(0, at + release);
       try { node.source.stop(at + release); } catch { /* Already ended. */ }
     };
     for (const [index, layer] of layers.entries()) {
       // The cue that started a layer may stop it again shortly after: a TAP judgement sounds 50 ms and then releases.
-      if (layer.stopAfter !== undefined) stop(nodes[index], when + layer.stopAfter);
-      if (layer.loop && until !== undefined) stop(nodes[index], Math.max(when, until));
+      if (layer.stopAfter !== undefined) stop(nodes[index], Math.max(nodes[index].start, when + layer.stopAfter));
+      if (layer.loop && until !== undefined) stop(nodes[index], Math.max(nodes[index].start, until));
     }
     // The game limits how many playbacks of one cue, or of one category such as HOLD / SLIDE, sound together:
     // a new hit takes the place of the oldest instead of piling another full-length tail on top.
@@ -320,7 +350,7 @@ export class Transport {
       list.push(voice); this.voices.set(limit.key, list); held.push({ key: limit.key, voice, members });
     }
     for (const node of nodes) node.source.onended = () => {
-      node.ended = true; this.activeEffects.delete(node.source); node.source.disconnect(); node.gain.disconnect();
+      node.ended = true; this.activeEffects.delete(node.source); for (const part of node.chain) part.disconnect();
       for (const { key, voice, members } of held) if (members.every(member => member.ended)) { const list = this.voices.get(key), index = list?.indexOf(voice) ?? -1; if (index >= 0) list!.splice(index, 1); }
     };
     return nodes.length > 0;
