@@ -4,7 +4,7 @@ import { access, mkdtemp, readFile, rm, stat, writeFile } from 'node:fs/promises
 import os from 'node:os';
 import path from 'node:path';
 import { createHash } from 'node:crypto';
-import { extractCueLayers, loadGameHitSounds } from '../src/backend/game-audio';
+import { extractCue, extractCueLayers, loadGameHitSounds } from '../src/backend/game-audio';
 import { decodeAdx } from '../src/backend/audio';
 import { writeAfs2, writeUtf, type UtfValue } from '../src/backend/cri';
 
@@ -103,4 +103,21 @@ test('decrypts real ADX9 cues into transient PCM without clipped noise, and reus
     await assert.rejects(loadGameHitSounds(game, path.join(game, 'data/sound/exported')), /不能位于原游戏目录/);
     assert.equal(createHash('sha256').update(await readFile(source)).digest('hex'), before);
   } finally { await rm(temp, { recursive: true, force: true }); }
+});
+
+const config = path.join(game, 'data/sound/chu.acf');
+let configured = available; try { await access(config); } catch { configured = false; }
+test('real cues carry their volumes, cue limits and the category limits of the config file', { skip: !configured }, async () => {
+  const acb = await readFile(source), acf = await readFile(config);
+  const cue = (name: string) => { const result = extractCue(acb, name, acf); return { gains: result.layers.map(layer => Number(layer.gain.toFixed(4))), limits: result.limits, unsupported: result.unsupported }; };
+  // Phone_1pass send x cue volume x SE_Game 0.75 x Phone_1pass bus 0.5.
+  assert.deepEqual(cue('se_touch_flick_jcritical'), { gains: [.3], limits: [{ key: 'cue:se_touch_flick_jcritical', max: 1 }], unsupported: [5, 121] });
+  assert.deepEqual(cue('se_touch_chara_fire'), { gains: [.27], limits: [{ key: 'cue:se_touch_chara_fire', max: 1 }], unsupported: [] });
+  // HOLD and SLIDE have no cue limit of their own: they share one voice through their category.
+  for (const name of ['se_touch_hold_jcritical', 'se_touch_slide_jcritical'])
+    assert.deepEqual(cue(name), { gains: [.3, .3], limits: [{ key: 'category:Limit_HoldSlideCritical', max: 1 }], unsupported: [37, 38, 39, 40] });
+  assert.deepEqual(cue('se_touch_tap_jcritical_action').limits, [{ key: 'cue:se_touch_tap_jcritical_action', max: 1 }, { key: 'category:Limit_Tap', max: 1 }]);
+  assert.deepEqual(cue('se_touch_tap_jcritical_action').gains, [.57]);
+  // Without the config file only the bank's own parameters apply.
+  assert.deepEqual(extractCue(acb, 'se_touch_flick_jcritical').layers.map(layer => layer.gain), [.8]);
 });

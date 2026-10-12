@@ -161,6 +161,9 @@ $<HTMLInputElement>('#seek').oninput = event => { transport.seek(Number((event.t
 $<HTMLSelectElement>('#playback-rate').onchange = event => transport.setRate(Number((event.target as HTMLSelectElement).value));
 $<HTMLInputElement>('#volume').oninput = event => transport.setVolume(Number((event.target as HTMLInputElement).value));
 $<HTMLInputElement>('#sfx').onchange = event => { transport.effects = (event.target as HTMLInputElement).checked; };
+const effectsVolume = $<HTMLInputElement>('#sfx-volume'), storedEffectsVolume = Number(localStorage.getItem('chuni-sfx-volume') ?? 0.6);
+effectsVolume.value = String(transport.effectsVolume = Number.isFinite(storedEffectsVolume) ? storedEffectsVolume : 0.6);
+effectsVolume.oninput = () => { transport.effectsVolume = Number(effectsVolume.value); localStorage.setItem('chuni-sfx-volume', effectsVolume.value); };
 // The metronome is a personal monitoring preference, so it lives with this machine's settings, not in the project.
 const metronomeToggle = $<HTMLInputElement>('#metronome'), metronomeVolume = $<HTMLInputElement>('#metronome-volume'), storedMetronomeVolume = Number(localStorage.getItem('chuni-metronome-volume') ?? 0.5);
 metronomeToggle.checked = transport.metronome = localStorage.getItem('chuni-metronome') === '1';

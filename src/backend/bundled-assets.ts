@@ -72,7 +72,7 @@ export async function loadBundledGameResources(root: string, options: BundledRes
   }
   const sounds: GameHitSounds = { source: root, sounds: {}, warnings: [...manifest.sounds.warnings] };
   for (const [id, sound] of Object.entries(manifest.sounds.sounds)) {
-    sounds.sounds[id as keyof GameHitSounds['sounds']] = { cueName: sound.cueName, layers: sound.layers.map(layer => ({ ...layer, path: resourceFile(root, layer.path) })) };
+    sounds.sounds[id as keyof GameHitSounds['sounds']] = { ...sound, layers: sound.layers.map(layer => ({ ...layer, path: resourceFile(root, layer.path) })) };
   }
   return { textures, sounds };
 }

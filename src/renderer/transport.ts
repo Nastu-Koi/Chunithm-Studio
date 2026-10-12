@@ -1,9 +1,12 @@
 import type { Chart, NoteType } from '../core/model';
 import { tickToSeconds, secondsToTick, getBeatLines } from '../core/timing';
 import { getPlayerPlaybackPoints } from './playback-points';
-import type { GameHitSoundId, GameHitSounds } from '../core/game-sounds';
+import type { GameHitSoundId, GameHitSoundLimit, GameHitSounds } from '../core/game-sounds';
 import { buildJudgementTimeline } from '../core/judgement';
 type SoundLayers = { buffer: AudioBuffer; gain: number; playbackRate: number }[];
+type Voice = { stop(at: number): void };
+/** A voice pushed out by a cue or category limit fades this long instead of clicking off. */
+const LIMIT_FADE = 0.02;
 export interface Hit { time: number; type: NoteType; lane: number; width: number; key: string; direction?: string }
 export function soundForHit(hit: Pick<Hit, 'type' | 'direction'>): GameHitSoundId | undefined {
   switch (hit.type) {
@@ -60,6 +63,11 @@ export class Transport {
   private playRequested = false;
   private effectsGeneration = 0;
   private samples = new Map<GameHitSoundId, SoundLayers>();
+  private limits = new Map<GameHitSoundId, GameHitSoundLimit[]>();
+  /** Sounding voices per limit key, oldest first. */
+  private voices = new Map<string, Voice[]>();
+  private output: AudioNode | null = null;
+  private effectsLevel = 0.6;
   playing = false;
   rate = 1;
   offset = 0;
@@ -68,12 +76,15 @@ export class Transport {
   get effects(): boolean { return this.effectsEnabled; }
   set effects(enabled: boolean) {
     this.effectsEnabled = enabled;
-    if (this.effectsGain) this.effectsGain.gain.value = enabled ? 0.23 : 0;
+    if (this.effectsGain) this.effectsGain.gain.value = enabled ? this.effectsLevel : 0;
     if (!enabled) this.stopEffects();
   }
   /** Editing aid only: clicks on the chart's beats, never part of an export. */
   get metronome(): boolean { return this.metronomeEnabled; }
   set metronome(enabled: boolean) { this.metronomeEnabled = enabled; this.resetScheduler(); }
+  /** Master level of every hit sound, 0 to 1; the relative mix between sounds comes from the game's own data. */
+  get effectsVolume(): number { return this.effectsLevel; }
+  set effectsVolume(value: number) { this.effectsLevel = Math.max(0, Math.min(1, value)); if (this.effectsGain && this.effectsEnabled) this.effectsGain.gain.value = this.effectsLevel; }
   get metronomeVolume(): number { return this.metronomeLevel; }
   set metronomeVolume(value: number) { this.metronomeLevel = value; if (this.metronomeGain) this.metronomeGain.gain.value = value; }
   /** First channel of the loaded music, for drawing a waveform finer than the overview peaks. */
@@ -86,8 +97,13 @@ export class Transport {
   private audioContext(): AudioContext {
     if (!this.context) {
       this.context = new AudioContext({ latencyHint: 'interactive' });
-      this.musicGain = this.context.createGain(); this.musicGain.gain.value = this.volume; this.musicGain.connect(this.context.destination);
-      this.effectsGain = this.context.createGain(); this.effectsGain.gain.value = this.effectsEnabled ? 0.23 : 0; this.effectsGain.connect(this.context.destination);
+      // Safety limiter on the whole mix: it acts only within 1 dB of full scale, where the sum would otherwise clip.
+      // Music and hit sounds share it, so its look-ahead delays both equally.
+      const limiter = this.context.createDynamicsCompressor?.();
+      if (limiter) { limiter.threshold.value = -1; limiter.knee.value = 0; limiter.ratio.value = 20; limiter.attack.value = 0.001; limiter.release.value = 0.05; limiter.connect(this.context.destination); }
+      this.output = limiter ?? this.context.destination;
+      this.musicGain = this.context.createGain(); this.musicGain.gain.value = this.volume; this.musicGain.connect(this.output);
+      this.effectsGain = this.context.createGain(); this.effectsGain.gain.value = this.effectsEnabled ? this.effectsLevel : 0; this.effectsGain.connect(this.output);
     }
     return this.context;
   }
@@ -103,11 +119,11 @@ export class Transport {
     return { peaks, duration: this.buffer.duration };
   }
   clearAudio(): void { this.pause(); this.loadGeneration++; this.buffer = null; }
-  clearGameSounds(): void { this.effectsGeneration++; this.samples.clear(); }
+  clearGameSounds(): void { this.effectsGeneration++; this.samples.clear(); this.limits.clear(); }
   async setGameSounds(sounds: GameHitSounds, read: (path: string) => Promise<Uint8Array>): Promise<{ loaded: number; failed: string[] }> {
     const generation = ++this.effectsGeneration, context = this.audioContext();
     const decoded = new Map<string, Promise<AudioBuffer>>(), next: typeof this.samples = new Map(), failed: string[] = [];
-    const sharedLayers = new Map<string, SoundLayers>();
+    const sharedLayers = new Map<string, SoundLayers>(), limits: typeof this.limits = new Map();
     await Promise.all(Object.entries(sounds.sounds).map(async ([id, sound]) => {
       try {
         const layers = await Promise.all(sound.layers.map(async layer => {
@@ -121,11 +137,12 @@ export class Transport {
           const key = JSON.stringify(sound.layers.map(layer => JSON.stringify([layer.path, layer.gain, layer.playbackRate])).sort());
           if (!sharedLayers.has(key)) sharedLayers.set(key, layers);
           next.set(id as GameHitSoundId, sharedLayers.get(key)!);
+          limits.set(id as GameHitSoundId, (sound.limits ?? []).filter(limit => limit.max >= 1));
         }
       } catch (error) { failed.push(`${sound.cueName}: ${error instanceof Error ? error.message : error}`); }
     }));
     if (generation !== this.effectsGeneration) return { loaded: 0, failed: [] };
-    this.samples = next; return { loaded: next.size, failed };
+    this.samples = next; this.limits = limits; return { loaded: next.size, failed };
   }
   setChart(chart: Chart): void { this.chart = chart; this.hits = getChartHits(chart); this.resetScheduler(); }
   private resetScheduler(): void {
@@ -169,7 +186,7 @@ export class Transport {
   }
   private stopEffects(): void {
     for (const effect of this.activeEffects) { try { effect.stop(); } catch { /* Already ended. */ } effect.disconnect(); }
-    this.activeEffects.clear();
+    this.activeEffects.clear(); this.voices.clear();
   }
   private schedule(): void {
     if (!this.playing || !this.context) return;
@@ -195,7 +212,7 @@ export class Transport {
     if (!this.chart || !this.context) return;
     const until = secondsToTick(this.chart, horizon);
     if (!(until > this.metronomeTick)) return;
-    if (this.metronomeEnabled && !this.metronomeGain) { this.metronomeGain = this.context.createGain(); this.metronomeGain.gain.value = this.metronomeLevel; this.metronomeGain.connect(this.context.destination); }
+    if (this.metronomeEnabled && !this.metronomeGain) { this.metronomeGain = this.context.createGain(); this.metronomeGain.gain.value = this.metronomeLevel; this.metronomeGain.connect(this.output ?? this.context.destination); }
     if (this.metronomeEnabled && this.metronomeGain) for (const beat of getBeatLines(this.chart, this.metronomeTick, until)) {
       const when = Math.max(this.context.currentTime, this.anchorClock + (tickToSeconds(this.chart, beat.tick) - this.anchorSeconds) / this.rate);
       const oscillator = this.context.createOscillator(), gain = this.context.createGain();
@@ -211,13 +228,32 @@ export class Transport {
     when = Math.max(when, context.currentTime);
     const soundId = soundForHit(hit), layers = soundId ? this.samples.get(soundId) : undefined;
     if (layers?.length) {
-      for (const layer of layers) {
+      const nodes = layers.map(layer => {
         const source = context.createBufferSource(), gain = context.createGain();
         source.buffer = layer.buffer; source.playbackRate.value = layer.playbackRate; gain.gain.value = layer.gain;
         source.connect(gain); gain.connect(destination); this.activeEffects.add(source);
-        source.onended = () => { this.activeEffects.delete(source); source.disconnect(); gain.disconnect(); };
         source.start(when);
-      }
+        return { source, gain, level: layer.gain };
+      });
+      let stopped = false;
+      const voice: Voice = { stop: at => {
+        if (stopped) return; stopped = true;
+        for (const { source, gain, level } of nodes) { gain.gain.setValueAtTime(level, at); gain.gain.linearRampToValueAtTime(0, at + LIMIT_FADE); try { source.stop(at + LIMIT_FADE); } catch { /* Already ended. */ } }
+      } };
+      // The game limits how many playbacks of one cue, or of one category such as HOLD / SLIDE, sound together:
+      // a new hit takes the place of the oldest instead of piling another full-length tail on top.
+      const keys = (soundId && this.limits.get(soundId) || []).map(limit => {
+        const list = this.voices.get(limit.key) ?? [];
+        while (list.length >= limit.max) list.shift()!.stop(when);
+        list.push(voice); this.voices.set(limit.key, list);
+        return limit.key;
+      });
+      let remaining = nodes.length;
+      for (const { source, gain } of nodes) source.onended = () => {
+        this.activeEffects.delete(source); source.disconnect(); gain.disconnect();
+        if (--remaining) return;
+        for (const key of keys) { const list = this.voices.get(key), index = list?.indexOf(voice) ?? -1; if (index >= 0) list!.splice(index, 1); }
+      };
       return;
     }
     const air = hit.type.startsWith('AIR'), ex = hit.type === 'EXTAP';

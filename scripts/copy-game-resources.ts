@@ -59,7 +59,7 @@ try {
   for (const [id, sound] of Object.entries(sounds.sounds)) {
     const layers = [];
     for (const layer of sound.layers) layers.push({ ...layer, path: await store(await readFile(layer.path), 'sounds', 'wav') });
-    manifest.sounds.sounds[id as keyof typeof sounds.sounds] = { cueName: sound.cueName, layers };
+    manifest.sounds.sounds[id as keyof typeof sounds.sounds] = { ...sound, layers };
   }
   await writeFile(path.join(staging, 'manifest.json'), JSON.stringify(manifest, null, 2));
   await writeFile(path.join(staging, 'sha256.json'), JSON.stringify(digests, null, 2));

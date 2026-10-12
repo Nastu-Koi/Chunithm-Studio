@@ -85,8 +85,34 @@ test('original hit samples use the audio clock, preserve cue rate and stop on pa
     const playing = transport.play(); fake.resumes[0].resolve(); await playing;
     assert.equal(fake.sources.length, 1); assert.equal(fake.sources[0].buffer, sample);
     assert.equal(fake.sources[0].when, 0); assert.equal(fake.sources[0].playbackRate.value, 1.1);
-    near(fake.gains[2].gain.value, .4); near(fake.gains[1].gain.value, .23);
+    near(fake.gains[2].gain.value, .4); near(fake.gains[1].gain.value, .6);
+    transport.effectsVolume = .3; near(fake.gains[1].gain.value, .3); transport.effectsVolume = 7; near(fake.gains[1].gain.value, 1);
     transport.effects = false; assert.equal(fake.sources[0].stopped, true); assert.equal(transport.playing, true);
+    transport.pause();
+  } finally { transport.destroy(); fake.restore(); }
+});
+
+test('cue and category limits replace the oldest voice instead of stacking full-length tails', async () => {
+  const fake = fakeAudio(), transport = new Transport();
+  try {
+    const layer = (path: string) => [{ path, gain: 1, playbackRate: 1 }];
+    const loading = transport.setGameSounds({ source: 'copied', warnings: [], sounds: {
+      flick: { cueName: 'flick', layers: layer('flick.wav'), limits: [{ key: 'cue:flick', max: 1 }] },
+      hold: { cueName: 'hold', layers: layer('hold.wav'), limits: [{ key: 'category:Limit_HoldSlideCritical', max: 1 }] },
+      slide: { cueName: 'slide', layers: layer('slide.wav'), limits: [{ key: 'category:Limit_HoldSlideCritical', max: 1 }] },
+      tap: { cueName: 'tap', layers: layer('tap.wav') },
+    } }, async () => new Uint8Array(1));
+    await Promise.resolve(); for (const call of fake.decoding) call.resolve(buffer(3)); await loading;
+    const chart = createProject().chart, at = (type: Parameters<typeof createNote>[0], tick: number, lane: number) => ({ ...createNote(type, tick, lane, 2), ...(type === 'HOLD' || type === 'SLIDE' ? { duration: 3840 } : {}) });
+    // Three FLICKs a few milliseconds apart, a HOLD then a SLIDE head, and two unlimited TAPs.
+    chart.notes = [at('FLICK', 0, 0), at('FLICK', 8, 0), at('FLICK', 16, 0), at('HOLD', 4, 4), at('SLIDE', 12, 8), at('TAP', 2, 12), at('TAP', 10, 12)];
+    transport.setChart(chart);
+    const playing = transport.play(); fake.resumes[0].resolve(); await playing;
+    assert.equal(fake.sources.length, 7);
+    const order = ['FLICK', 'TAP', 'HOLD', 'FLICK', 'TAP', 'SLIDE', 'FLICK'];
+    assert.deepEqual(fake.sources.map((source, index) => [order[index], source.stopped]), [['FLICK', true], ['TAP', false], ['HOLD', true], ['FLICK', true], ['TAP', false], ['SLIDE', false], ['FLICK', false]]);
+    // A replaced voice fades to silence rather than cutting off.
+    assert.equal(fake.gains.filter(node => node.ramps.includes(0)).length, 3);
     transport.pause();
   } finally { transport.destroy(); fake.restore(); }
 });
