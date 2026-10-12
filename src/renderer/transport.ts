@@ -49,7 +49,8 @@ export function soundsForHit(hit: Pick<Hit, 'type' | 'direction' | 'sustainHead'
     case 'AIR': return hit.sustainHead ? ['airHoldIn', 'airHoldLoop'] : [['DOWN', 'DW', 'DL', 'DR', 'ADW', 'ADL', 'ADR'].includes(hit.direction ?? '') ? 'airDown' : 'airUp'];
     case 'AIR_HOLD': case 'AIR_SLIDE': return ['airHold'];
     case 'AIR_CRUSH': return ['airCrush'];
-    case 'DAMAGE': return [];
+    // A DAMAGE note that is avoided counts as a top judgement of the TAP kind and sounds like one; one that hits is silent.
+    case 'DAMAGE': return ['tap'];
   }
 }
 /** Envelope level (0 to 1) of a sounding voice `elapsed` seconds after its start, before any release. */
@@ -88,9 +89,9 @@ export function getChartHits(chart: Chart): Hit[] {
   };
   const sustain = new Set(['HOLD', 'SLIDE', 'AIR_HOLD', 'AIR_SLIDE']);
   for (const n of chart.notes) {
-    if (n.type === 'DAMAGE' || n.type === 'AIR_CRUSH') continue;
+    if (n.type === 'AIR_CRUSH') continue;
     // The HOLD judgement sounds where the HOLD ends.
-    for (const point of getPlayerPlaybackPoints(chart, n)) if (point.sound || (n.type === 'HOLD' && point.position === 'end')) {
+    for (const point of getPlayerPlaybackPoints(chart, n)) if (point.sound || n.type === 'DAMAGE' || (n.type === 'HOLD' && point.position === 'end')) {
       const head = point.position === 'head' && sustain.has(n.type);
       hits.push({ time: tickToSeconds(chart, point.tick), type: point.type, lane: point.lane, width: point.width, key: `${n.id}:${point.position}`, direction: point.direction,
         ...(head && n.type !== 'HOLD' && n.type !== 'SLIDE' ? { sustainHead: true } : {}), ...(head ? { until: tickToSeconds(chart, chainEnd(n)) } : {}) });

@@ -133,10 +133,12 @@ test('clearing sound resources invalidates an unfinished decoder', async () => {
   } finally { transport.destroy(); fake.restore(); }
 });
 
-test('AIR down directions choose the down cue and DAMAGE emits no hit sound', () => {
+test('AIR down directions choose the down cue and an avoided DAMAGE sounds like a TAP', () => {
   for (const direction of ['DW', 'DL', 'DR', 'ADW', 'ADL', 'ADR', 'DOWN']) assert.deepEqual(soundsForHit({ type: 'AIR', direction }), ['airDown']);
   assert.deepEqual(soundsForHit({ type: 'AIR', direction: 'IR' }), ['airUp']);
-  assert.deepEqual(soundsForHit({ type: 'DAMAGE' }), []);
+  assert.deepEqual(soundsForHit({ type: 'DAMAGE' }), ['tap']);
+  const mined = createProject().chart; mined.notes = [createNote('DAMAGE', 96, 0, 2)];
+  assert.deepEqual(getChartHits(mined).map(hit => [hit.type, hit.time === tickToSeconds(mined, 96)]), [['DAMAGE', true]]);
 });
 
 test('note types start the cues the game starts for them', () => {
