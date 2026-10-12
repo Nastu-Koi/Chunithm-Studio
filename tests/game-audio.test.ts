@@ -117,7 +117,7 @@ test('real cues carry their volumes, cue limits and the category limits of the c
   const cue = (name: string) => { const result = extractCue(acb, name, acf); return { gains: result.layers.map(layer => Number(layer.gain.toFixed(4))), limits: result.limits, unsupported: result.unsupported }; };
   // Phone_1pass send x cue volume x SE_Game 0.75 x Phone_1pass bus 0.5.
   assert.deepEqual(cue('se_touch_flick_jcritical'), { gains: [.3], limits: [{ key: 'cue:se_touch_flick_jcritical', max: 1 }], unsupported: [] });
-  assert.deepEqual(cue('se_touch_chara_laser'), { gains: [.366], limits: [{ key: 'cue:se_touch_chara_laser', max: 1 }], unsupported: [11] });
+  assert.deepEqual(cue('se_touch_chara_laser'), { gains: [.366], limits: [{ key: 'cue:se_touch_chara_laser', max: 1 }], unsupported: [] });
   // HOLD and SLIDE have no cue limit of their own: they share one voice through their category.
   for (const name of ['se_touch_hold_jcritical', 'se_touch_slide_jcritical'])
     assert.deepEqual(cue(name), { gains: [.3, .3], limits: [{ key: 'category:Limit_HoldSlideCritical', max: 1 }], unsupported: [] });
@@ -167,7 +167,7 @@ test('real loops carry their filter, their swell and the staggered starts of a c
   assert.deepEqual(extractCue(acb, 'se_air_hold_loop', acf).combos, [{ key: 'cue:se_air_hold_loop', window: .03, loopback: 0, steps }]);
   assert.deepEqual(extractCue(acb, 'se_air_hold_loop', acf).notes, []);
   assert.deepEqual(start.notes, []);
-  assert.deepEqual(start.unsupported, [82]);
+  assert.deepEqual(start.unsupported, []);
   // The ExTAP effect's AISAC moves it between the two speaker buses and leaves the headphone send alone.
   assert.deepEqual(extractCue(acb, 'se_touch_chara_laser', acf).notes, []);
 });

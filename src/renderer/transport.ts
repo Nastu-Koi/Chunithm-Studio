@@ -5,8 +5,8 @@ import { curveShape, type GameHitSoundCombo, type GameHitSoundCurve, type GameHi
 import { buildJudgementTimeline } from '../core/judgement';
 type SoundLayers = (Omit<GameHitSoundLayer, 'path'> & { buffer: AudioBuffer })[];
 type Voice = { stop(at: number): void };
-/** A stopped voice without a release time of its own fades this long instead of clicking off. */
-const LIMIT_FADE = 0.02;
+/** The shortest release the game's runtime gives a stopped voice, whatever its envelope says (0x13978c7). */
+const MIN_RELEASE = 0.005;
 /** A HOLD or SLIDE no longer than this sounds a plain TAP at its start and no sustained loop (6 frames in the game). */
 const SUSTAIN_MINIMUM = 0.1;
 /** A curved stage is scheduled as this many straight pieces. */
@@ -352,7 +352,7 @@ export class Transport {
     const stop = (node: typeof nodes[number], at: number): void => {
       if (node.stopAt !== undefined && node.stopAt <= at) return;
       node.stopAt = at;
-      const release = node.envelope?.release || LIMIT_FADE, param = node.gain.gain;
+      const release = Math.max(node.envelope?.release ?? 0, MIN_RELEASE), param = node.gain.gain;
       param.cancelScheduledValues?.(at); shapedRamp(param, node.level * envelopeLevel(node.envelope, at - node.start), 0, at, release, node.envelope?.releaseCurve);
       try { node.source.stop(at + release); } catch { /* Already ended. */ }
     };

@@ -149,7 +149,8 @@ class HitSoundBank {
    * and ...ReleaseTime. 121 repeats the summed pitch as the voice's maximum pitch and changes nothing audible.
    * 71 adds to the parameter behind criAtomExPlayer_SetPreDelayTime (milliseconds, and a range to draw from), 32 sets the
    * two normalized cutoffs of the band-pass filter, 31 the type, normalized frequency, Q and gain of the biquad filter,
-   * and 94 holds the combo time and loop-back track of a type 6 sequence.
+   * and 94 holds the combo time and loop-back track of a type 6 sequence. 11 is the pan angle, 82 the silent mode and 99
+   * names the selector of a sequence; none of them changes what is heard here.
    * See docs/native-hit-sounds.md.
    */
   private parameters(table: string, index: UtfValue | undefined, inherited: LayerState, context: CueContext): LayerState | null {
@@ -181,8 +182,9 @@ class HitSoundBank {
       }
       else if (type === 37 && data.length === 4) state.hold = word(2);
       else if (type === 39 && data.length === 2) state.sustain = Math.min(1, word(0) / 10000);
-      // Cue limit: the first value is the number of simultaneous playbacks of this cue.
-      else if (type === 79 && data.length >= 2) context.limit = word(0);
+      // Cue limit: the number of simultaneous playbacks of this cue, a work area, and what happens beyond it. Only
+      // mode 0 is handled: the oldest playback is stopped and releases.
+      else if (type === 79 && data.length >= 2 && (data.length < 5 || data[4] === 0)) context.limit = word(0);
       // Pre-delay in milliseconds, then the range either side of it that each start draws from.
       else if (type === 71 && data.length === 4) { state.delay += word(0); state.spread += Math.abs(data.readInt16BE(2)); }
       // Band-pass filter: low and high cutoff in ten-thousandths. Levels combine the way the runtime merges them.
@@ -196,6 +198,12 @@ class HitSoundBank {
       else if (type === 94 && data.length === 14) context.combo = { window: data.readUInt32BE(0) / 1000, loopback: word(4) === 65535 ? 0 : word(4) };
       // Category indexes into the ACF's CategoryTable.
       else if (type === 65 && data.length % 4 === 0) for (let offset = 0; offset < data.length; offset += 4) context.categories.push(data.readUInt32BE(offset));
+      // Pan angle in tenths of a degree. Within a degree of the centre it is inaudible; a real pan is not reproduced.
+      else if (type === 11 && data.length === 2 && Math.abs(data.readInt16BE(0)) <= 10) { /* Centre. */ }
+      // Silent mode: 1 stops a voice whose volume is zero. Nothing to do for a voice that can be heard.
+      else if (type === 82 && data.length === 1 && data[0] <= 1) { /* Normal or stop. */ }
+      // The ACF selector whose labels (command 100) choose among this sequence's tracks.
+      else if (type === 99 && data.length === 2 && this.row('StringValueTable', word(0)).StringValue === 'Options_Tap_Inst') { /* The one selector handled. */ }
       else context.unsupported.add(type);
     }
     return state;

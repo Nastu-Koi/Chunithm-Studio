@@ -191,6 +191,24 @@ test('an envelope holds, decays to its sustain level, and a stop releases from w
   } finally { transport.destroy(); fake.restore(); }
 });
 
+test('a displaced voice without a release time fades over the runtime\'s 5 ms minimum', async () => {
+  const fake = fakeAudio(), transport = new Transport();
+  try {
+    const loading = transport.setGameSounds({ source: 'copied', warnings: [], sounds: {
+      flick: { cueName: 'flick', layers: [{ path: 'flick.wav', gain: 1, playbackRate: 1 }], limits: [{ key: 'cue:flick', max: 1 }] },
+    } }, async () => new Uint8Array(1));
+    await Promise.resolve(); for (const call of fake.decoding) call.resolve(buffer(3)); await loading;
+    const chart = createProject().chart;
+    chart.notes = [createNote('FLICK', 0, 0, 2), createNote('FLICK', 8, 8, 2)];
+    transport.setChart(chart);
+    const playing = transport.play(); fake.resumes[0].resolve(); await playing;
+    const [first, second] = fake.gains.slice(-2), later = tickToSeconds(chart, 8), micro = (value: number) => Math.round(value * 1e6) / 1e6;
+    assert.deepEqual(first.events, [['set', 1, micro(later)], ['ramp', 0, micro(later + .005)]]);
+    assert.deepEqual(second.events, []);
+    transport.pause();
+  } finally { transport.destroy(); fake.restore(); }
+});
+
 test('AIR-CRUSH sounds preserve the shared phase across non-interval shape splits and use the owning shape', () => {
   const chart = createProject().chart;
   const a = createNote('AIR_CRUSH', 0, 0, 2), b = createNote('AIR_CRUSH', 2, 2, 4), c = createNote('AIR_CRUSH', 5, 4, 6);
