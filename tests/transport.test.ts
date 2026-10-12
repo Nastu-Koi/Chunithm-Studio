@@ -100,8 +100,8 @@ test('cue and category limits replace the oldest voice instead of stacking full-
     const layer = (path: string) => [{ path, gain: 1, playbackRate: 1 }];
     const loading = transport.setGameSounds({ source: 'copied', warnings: [], sounds: {
       flick: { cueName: 'flick', layers: layer('flick.wav'), limits: [{ key: 'cue:flick', max: 1 }] },
-      hold: { cueName: 'hold', layers: layer('hold.wav'), limits: [{ key: 'category:Limit_HoldSlideCritical', max: 1 }] },
-      slide: { cueName: 'slide', layers: layer('slide.wav'), limits: [{ key: 'category:Limit_HoldSlideCritical', max: 1 }] },
+      holdStart: { cueName: 'hold', layers: layer('hold.wav'), limits: [{ key: 'category:Limit_HoldSlideCritical', max: 1 }] },
+      slideStart: { cueName: 'slide', layers: layer('slide.wav'), limits: [{ key: 'category:Limit_HoldSlideCritical', max: 1 }] },
       tap: { cueName: 'tap', layers: layer('tap.wav') },
     } }, async () => new Uint8Array(1));
     await Promise.resolve(); for (const call of fake.decoding) call.resolve(buffer(3)); await loading;
@@ -137,13 +137,25 @@ test('AIR down directions choose the down cue and DAMAGE emits no hit sound', ()
 test('note types start the cues the game starts for them', () => {
   // ExTAP: the TAP judgement and the ExTAP effect together.
   assert.deepEqual(soundsForHit({ type: 'EXTAP' }), ['tap', 'ex']);
-  assert.deepEqual(soundsForHit({ type: 'AIR', direction: 'IR', sustainHead: true }), ['airHoldIn']);
+  assert.deepEqual(soundsForHit({ type: 'AIR', direction: 'IR', sustainHead: true }), ['airHoldIn', 'airHoldLoop']);
+  // HOLD and SLIDE: a TAP sample with a loop at the start (a plain TAP when shorter than 0.1 s), the judgement afterwards.
+  for (const [type, start, later] of [['HOLD', 'holdStart', 'hold'], ['SLIDE', 'slideStart', 'slide']] as const) {
+    assert.deepEqual(soundsForHit({ type, time: 2, until: 2.5 }), [start]);
+    assert.deepEqual(soundsForHit({ type, time: 2, until: 2.0625 }), ['tap']);
+    assert.deepEqual(soundsForHit({ type }), [later]);
+  }
   assert.deepEqual(soundsForHit({ type: 'AIR_SLIDE' }), ['airHold']);
   assert.deepEqual(soundsForHit({ type: 'AIR_CRUSH' }), ['airCrush']);
   const chart = createProject().chart;
   chart.notes = [createNote('TAP', 0, 0, 4), { ...createNote('AIR_HOLD', 0, 0, 4), duration: 480, attributes: { parent: 'TAP' } }, { ...createNote('AIR', 960, 8, 4), attributes: { direction: 'IR', parent: 'TAP' } }];
   const air = getChartHits(chart).filter(hit => hit.type === 'AIR');
-  assert.deepEqual(air.map(hit => [hit.time > 0, soundsForHit(hit)]), [[false, ['airHoldIn']], [true, ['airUp']]]);
+  assert.deepEqual(air.map(hit => [hit.time > 0, soundsForHit(hit)]), [[false, ['airHoldIn', 'airHoldLoop']], [true, ['airUp']]]);
+  // The HOLD judgement sounds at its end; a SLIDE chain keeps one loop from its head to the end of its last segment.
+  const sustained = createProject().chart;
+  sustained.notes = [{ ...createNote('HOLD', 0, 0, 4), duration: 960 }, { ...createNote('SLIDE', 0, 8, 4), duration: 480, endLane: 9, endWidth: 4 }, { ...createNote('SLIDE', 480, 9, 4), duration: 480, endLane: 8, endWidth: 4 }];
+  const end = tickToSeconds(sustained, 960);
+  assert.deepEqual(getChartHits(sustained).map(hit => [hit.type, hit.time === 0 ? 0 : hit.time === end ? 'end' : 'middle', hit.until === undefined ? undefined : hit.until === end, soundsForHit(hit)]), [
+    ['HOLD', 0, true, ['holdStart']], ['SLIDE', 0, true, ['slideStart']], ['SLIDE', 'middle', undefined, ['slide']], ['HOLD', 'end', undefined, ['hold']], ['SLIDE', 'end', undefined, ['slide']]]);
 });
 
 test('an envelope holds, decays to its sustain level, and a stop releases from wherever it is', async () => {
@@ -156,14 +168,14 @@ test('an envelope holds, decays to its sustain level, and a stop releases from w
     const loading = transport.setGameSounds({ source: 'copied', warnings: [], sounds: {
       // A TAP judgement: started, stopped again 50 ms later, then a 500 ms release.
       tap: { cueName: 'tap', layers: [{ path: 'tap.wav', gain: .5, playbackRate: 1, envelope: { attack: 0, hold: 0, decay: 0, sustain: 1, release: .5 }, stopAfter: .05 }] },
-      hold: { cueName: 'hold', layers: [{ path: 'hold.wav', gain: 1, playbackRate: 1, envelope }], limits: [{ key: 'category:Limit_HoldSlideCritical', max: 1 }] },
+      holdStart: { cueName: 'hold', layers: [{ path: 'hold.wav', gain: 1, playbackRate: 1, envelope }], limits: [{ key: 'category:Limit_HoldSlideCritical', max: 1 }] },
     } }, async () => new Uint8Array(1));
     await Promise.resolve(); for (const call of fake.decoding) call.resolve(buffer(3)); await loading;
     const chart = createProject().chart;
     chart.notes = [createNote('TAP', 0, 0, 2), { ...createNote('HOLD', 0, 4, 2), duration: 3840 }, { ...createNote('HOLD', 8, 8, 2), duration: 3840 }];
     transport.setChart(chart);
     const playing = transport.play(); fake.resumes[0].resolve(); await playing;
-    const [tap, first, second] = fake.gains.slice(-3), later = getChartHits(chart).at(-1)!.time;
+    const [tap, first, second] = fake.gains.slice(-3), later = tickToSeconds(chart, 8);
     assert.deepEqual(tap.events, [['set', .5, .05], ['ramp', 0, .55]]);
     // The second HOLD replaces the first part-way through its decay: the release starts from that level.
     const level = Math.round(envelopeLevel(envelope, later) * 1e6) / 1e6, at = Math.round(later * 1e6) / 1e6;
@@ -339,7 +351,9 @@ test('starting past a loop end redirects once without leaving an orphan schedule
   } finally { transport.destroy(); fake.restore(); }
 });
 
-for (const [type, soundId] of [['HOLD', 'hold'], ['SLIDE', 'slide'], ['AIR_CRUSH', 'airCrush']] as const) {
+// HOLD and SLIDE starts long enough to be sustained; their own judgement sounds come later.
+const long = (type: Parameters<typeof createNote>[0], tick: number, lane: number, width = 1) => ({ ...createNote(type, tick, lane, width), ...(type === 'HOLD' || type === 'SLIDE' ? { duration: 3840 } : {}) });
+for (const [type, soundId] of [['HOLD', 'holdStart'], ['SLIDE', 'slideStart'], ['AIR_CRUSH', 'airCrush']] as const) {
   test(`${type} simultaneous hits play one complete imported cue at its original gain`, async () => {
     const fake = fakeAudio(), transport = new Transport();
     try {
@@ -347,7 +361,7 @@ for (const [type, soundId] of [['HOLD', 'hold'], ['SLIDE', 'slide'], ['AIR_CRUSH
         [soundId]: { cueName: soundId, layers: [{ path: 'hit.wav', gain: 1, playbackRate: 1 }, { path: 'hit.wav', gain: .8, playbackRate: 1.1 }] },
       } }, async () => new Uint8Array(1));
       await Promise.resolve(); fake.decoding[0].resolve(buffer(.3)); await loading;
-      const chart = createProject().chart; chart.notes = Array.from({ length: 16 }, (_, lane) => createNote(type, 0, lane, 1)); transport.setChart(chart);
+      const chart = createProject().chart; chart.notes = Array.from({ length: 16 }, (_, lane) => long(type, 0, lane)); transport.setChart(chart);
       assert.equal(getChartHits(chart).filter(hit => hit.time === 0).length, 16, 'audio coalescing must preserve the chart hits');
       const playing = transport.play(); fake.resumes[0].resolve(); await playing;
       assert.equal(fake.sources.length, 2);
@@ -360,7 +374,7 @@ for (const [type, soundId] of [['HOLD', 'hold'], ['SLIDE', 'slide'], ['AIR_CRUSH
   test(`${type} simultaneous fallback hits play once at the original gain`, async () => {
     const fake = fakeAudio(), transport = new Transport();
     try {
-      const chart = createProject().chart; chart.notes = Array.from({ length: 16 }, (_, lane) => createNote(type, 0, lane, 1)); transport.setChart(chart);
+      const chart = createProject().chart; chart.notes = Array.from({ length: 16 }, (_, lane) => long(type, 0, lane)); transport.setChart(chart);
       assert.equal(getChartHits(chart).filter(hit => hit.time === 0).length, 16, 'audio coalescing must preserve the chart hits');
       const playing = transport.play(); fake.resumes[0].resolve(); await playing;
       assert.equal(fake.oscillators.length, 1);
@@ -400,11 +414,11 @@ for (const variant of ['same', 'gain', 'rate', 'path'] as const) test(`simultane
     if (variant === 'rate') other[0].playbackRate = 1.2;
     if (variant === 'path') other[0].path = 'c.wav';
     const loading = transport.setGameSounds({ source: 'fixture', warnings: [], sounds: {
-      hold: { cueName: 'hold', layers }, slide: { cueName: 'slide', layers: other },
+      holdStart: { cueName: 'hold', layers }, slideStart: { cueName: 'slide', layers: other },
     } }, async () => new Uint8Array(1));
     await Promise.resolve(); for (const decoding of fake.decoding) decoding.resolve(buffer(.3)); await loading;
     const chart = createProject().chart;
-    chart.notes = [createNote('HOLD', 0, 0, 1), createNote('SLIDE', 0, 2, 1), createNote('HOLD', 0, 4, 1), createNote('SLIDE', 1, 6, 1)];
+    chart.notes = [long('HOLD', 0, 0), long('SLIDE', 0, 2), long('HOLD', 0, 4), long('SLIDE', 1, 6)];
     transport.setChart(chart); await playNow(transport, fake);
     assert.equal(fake.sources.length, variant === 'same' ? 4 : 6);
     assert.equal(fake.sources.filter(source => source.when === 0).length, variant === 'same' ? 2 : 4);
@@ -441,5 +455,35 @@ test('metronome clicks once per beat from the play position and stays silent whe
     fake.context.currentTime = 0.2; tick(); assert.equal(fake.oscillators.length, 1);
     fake.context.currentTime = 0.45; tick(); tick(); assert.equal(fake.oscillators.length, 2);
     transport.seek(0.75); await Promise.resolve();
+  } finally { transport.destroy(); fake.restore(); }
+});
+
+test('a sustained start loops until its note ends, and playback started inside the note picks the loop up', async () => {
+  const fake = fakeAudio(), transport = new Transport();
+  try {
+    const release = { attack: 0, hold: 0, decay: 0, sustain: 1, release: .5 };
+    const loading = transport.setGameSounds({ source: 'fixture', warnings: [], sounds: { holdStart: { cueName: 'start', layers: [
+      { path: 'loop.wav', gain: .3, playbackRate: 1, envelope: release, loop: { start: 2, end: 2.9 }, group: 1 },
+      { path: 'tap.wav', gain: .5, playbackRate: 1, group: 2 }],
+      limits: [{ key: 'cue:loop', max: 4, group: 1 }, { key: 'cue:tap', max: 1, group: 2 }] } } }, async () => new Uint8Array(1));
+    await Promise.resolve(); for (const call of fake.decoding) call.resolve(buffer(3)); await loading;
+    const chart = createProject().chart;
+    chart.notes = [{ ...createNote('HOLD', 0, 0, 2), duration: 960 }, { ...createNote('HOLD', 0, 4, 2), duration: 1920 }];
+    transport.setChart(chart); await playNow(transport, fake);
+    const [first, second] = [960, 1920].map(tick => Math.round(tickToSeconds(chart, tick) * 1e6) / 1e6);
+    // Two starts at one instant share the TAP sample; each keeps a loop that releases at its own end.
+    const sources = fake.sources as unknown as { loop?: boolean; loopStart?: number; loopEnd?: number }[];
+    assert.deepEqual(sources.map(source => [source.loop === true, source.loopStart, source.loopEnd]), [[true, 2, 2.9], [false, undefined, undefined], [true, 2, 2.9]]);
+    const [loop, , other] = fake.gains.slice(-3);
+    assert.deepEqual(loop.events, [['set', .3, first], ['ramp', 0, first + .5]]);
+    assert.deepEqual(other.events, [['set', .3, second], ['ramp', 0, second + .5]]);
+    // The TAP sample's limit of one voice stops neither loop.
+    assert.deepEqual(fake.sources.map(source => source.stopped), [true, false, true]);
+    transport.pause(); transport.seek((first + second) / 2);
+    const before = fake.sources.length;
+    await playNow(transport, fake);
+    assert.deepEqual(sources.slice(before).map(source => source.loop === true), [true], 'only the loop of the note still held resumes');
+    assert.deepEqual(fake.gains.at(-1)!.events.at(-1), ['ramp', 0, (second - first) / 2 + .5], 'the resumed loop still ends with its note');
+    transport.pause();
   } finally { transport.destroy(); fake.restore(); }
 });

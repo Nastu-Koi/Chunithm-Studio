@@ -3,24 +3,32 @@ import { tickToSeconds, secondsToTick, getBeatLines } from '../core/timing';
 import { getPlayerPlaybackPoints } from './playback-points';
 import type { GameHitSoundEnvelope, GameHitSoundId, GameHitSoundLimit, GameHitSounds } from '../core/game-sounds';
 import { buildJudgementTimeline } from '../core/judgement';
-type SoundLayers = { buffer: AudioBuffer; gain: number; playbackRate: number; envelope?: GameHitSoundEnvelope; stopAfter?: number }[];
+type SoundLayers = { buffer: AudioBuffer; gain: number; playbackRate: number; envelope?: GameHitSoundEnvelope; stopAfter?: number; loop?: { start: number; end: number }; group?: number }[];
 type Voice = { stop(at: number): void };
 /** A stopped voice without a release time of its own fades this long instead of clicking off. */
 const LIMIT_FADE = 0.02;
-/** `sustainHead`: the start of an AIR HOLD / AIR SLIDE chain, drawn as an AIR arrow but sounded by the sustain note itself. */
-export interface Hit { time: number; type: NoteType; lane: number; width: number; key: string; direction?: string; sustainHead?: boolean }
+/** A HOLD or SLIDE no longer than this sounds a plain TAP at its start and no sustained loop (6 frames in the game). */
+const SUSTAIN_MINIMUM = 0.1;
 /**
- * The cues the game's note classes start, read from chusanApp.exe (docs/native-hit-sounds.md): an ExTAP sounds the TAP
- * judgement and the ExTAP effect together; an AIR HOLD / AIR SLIDE starts with its own cue and marks each action with another.
+ * `sustainHead`: the start of an AIR HOLD / AIR SLIDE chain, drawn as an AIR arrow but sounded by the sustain note itself.
+ * `until`: on the start of a HOLD, SLIDE or AIR sustain chain, the time its end is reached and its loop stops.
  */
-export function soundsForHit(hit: Pick<Hit, 'type' | 'direction' | 'sustainHead'>): GameHitSoundId[] {
+export interface Hit { time: number; type: NoteType; lane: number; width: number; key: string; direction?: string; sustainHead?: boolean; until?: number }
+/**
+ * The cues the game's note classes start, read from chusanApp.exe (docs/native-hit-sounds.md). An ExTAP sounds the TAP
+ * judgement and the ExTAP effect together. A HOLD or SLIDE starts with a TAP sample and a loop that lasts until its end;
+ * the HOLD judgement itself sounds at the end, the SLIDE judgement at each later node. An AIR HOLD / AIR SLIDE starts
+ * with its own cue and loop and marks each action with another.
+ */
+export function soundsForHit(hit: Pick<Hit, 'type' | 'direction' | 'sustainHead' | 'until'> & { time?: number }): GameHitSoundId[] {
+  const start = hit.until !== undefined, sustained = start && hit.until! - (hit.time ?? 0) > SUSTAIN_MINIMUM;
   switch (hit.type) {
     case 'TAP': return ['tap'];
     case 'EXTAP': return ['tap', 'ex'];
     case 'FLICK': return ['flick'];
-    case 'HOLD': return ['hold'];
-    case 'SLIDE': return ['slide'];
-    case 'AIR': return [hit.sustainHead ? 'airHoldIn' : ['DOWN', 'DW', 'DL', 'DR', 'ADW', 'ADL', 'ADR'].includes(hit.direction ?? '') ? 'airDown' : 'airUp'];
+    case 'HOLD': return start ? [sustained ? 'holdStart' : 'tap'] : ['hold'];
+    case 'SLIDE': return start ? [sustained ? 'slideStart' : 'tap'] : ['slide'];
+    case 'AIR': return hit.sustainHead ? ['airHoldIn', 'airHoldLoop'] : [['DOWN', 'DW', 'DL', 'DR', 'ADW', 'ADL', 'ADR'].includes(hit.direction ?? '') ? 'airDown' : 'airUp'];
     case 'AIR_HOLD': case 'AIR_SLIDE': return ['airHold'];
     case 'AIR_CRUSH': return ['airCrush'];
     case 'DAMAGE': return [];
@@ -47,10 +55,28 @@ export function getChartHits(chart: Chart): Hit[] {
       width: note.width + ((note.endWidth ?? note.width) - note.width) * progress,
       key: `${note.id}:crush:${point.tick}` });
   }
+  // A chain of SLIDE or AIR sustain segments keeps one loop from its head to the end of its last segment.
+  const node = (type: string, tick: number, lane: number, width: number) => `${type}:${tick.toFixed(7)}:${lane}:${width}`;
+  const starts = new Map<string, typeof chart.notes>();
+  for (const n of chart.notes) if (n.type === 'SLIDE' || n.type === 'AIR_HOLD' || n.type === 'AIR_SLIDE') { const key = node(n.type, n.tick, n.lane, n.width); starts.set(key, [...(starts.get(key) ?? []), n]); }
+  const chainEnd = (head: typeof chart.notes[number]): number => {
+    const seen = new Set([head.id]);
+    for (let current = head;;) {
+      const end = current.tick + (current.duration ?? 0);
+      const next = current.type === 'HOLD' ? undefined : starts.get(node(current.type, end, current.endLane ?? current.lane, current.endWidth ?? current.width))?.find(other => !seen.has(other.id));
+      if (!next) return end;
+      seen.add(next.id); current = next;
+    }
+  };
+  const sustain = new Set(['HOLD', 'SLIDE', 'AIR_HOLD', 'AIR_SLIDE']);
   for (const n of chart.notes) {
     if (n.type === 'DAMAGE' || n.type === 'AIR_CRUSH') continue;
-    for (const point of getPlayerPlaybackPoints(chart, n)) if (point.sound) hits.push({ time: tickToSeconds(chart, point.tick), type: point.type, lane: point.lane, width: point.width, key: `${n.id}:${point.position}`, direction: point.direction,
-      ...(point.position === 'head' && (n.type === 'AIR_HOLD' || n.type === 'AIR_SLIDE') ? { sustainHead: true } : {}) });
+    // The HOLD judgement sounds where the HOLD ends.
+    for (const point of getPlayerPlaybackPoints(chart, n)) if (point.sound || (n.type === 'HOLD' && point.position === 'end')) {
+      const head = point.position === 'head' && sustain.has(n.type);
+      hits.push({ time: tickToSeconds(chart, point.tick), type: point.type, lane: point.lane, width: point.width, key: `${n.id}:${point.position}`, direction: point.direction,
+        ...(head && n.type !== 'HOLD' && n.type !== 'SLIDE' ? { sustainHead: true } : {}), ...(head ? { until: tickToSeconds(chart, chainEnd(n)) } : {}) });
+    }
   }
   hits.sort((a, b) => a.time - b.time);
   return hits;
@@ -71,6 +97,8 @@ export class Transport {
   private anchorSeconds = 0;
   private anchorClock = 0;
   private scheduledIndex = 0;
+  /** Set whenever sounding effects were cut: the next scheduling pass restarts the loops of notes still being held. */
+  private resumeSustains = true;
   private timer: ReturnType<typeof setInterval> | null = null;
   private hits: Hit[] = [];
   private loadGeneration = 0;
@@ -145,12 +173,12 @@ export class Transport {
           if (!Number.isFinite(layer.gain) || layer.gain < 0 || !Number.isFinite(layer.playbackRate) || layer.playbackRate <= 0) throw new Error('音效参数无效');
           if ([...Object.values(layer.envelope ?? {}), layer.stopAfter ?? 0].some(value => !Number.isFinite(value) || value < 0)) throw new Error('音效参数无效');
           if (!decoded.has(layer.path)) decoded.set(layer.path, read(layer.path).then(bytes => context.decodeAudioData(new Uint8Array(bytes).buffer)));
-          return { buffer: await decoded.get(layer.path)!, gain: layer.gain, playbackRate: layer.playbackRate, envelope: layer.envelope, stopAfter: layer.stopAfter };
+          return { buffer: await decoded.get(layer.path)!, gain: layer.gain, playbackRate: layer.playbackRate, envelope: layer.envelope, stopAfter: layer.stopAfter, loop: layer.loop, group: layer.group };
         }));
         if (layers.length) {
           // Some cues (including bundled HOLD/SLIDE) are the same complete sound.
           // Keep every layer within a cue, but share identity for equal cue mixes.
-          const key = JSON.stringify(sound.layers.map(layer => JSON.stringify([layer.path, layer.gain, layer.playbackRate, layer.envelope, layer.stopAfter])).sort());
+          const key = JSON.stringify(sound.layers.map(layer => JSON.stringify([layer.path, layer.gain, layer.playbackRate, layer.envelope, layer.stopAfter, layer.loop, layer.group])).sort());
           if (!sharedLayers.has(key)) sharedLayers.set(key, layers);
           next.set(id as GameHitSoundId, sharedLayers.get(key)!);
           limits.set(id as GameHitSoundId, (sound.limits ?? []).filter(limit => limit.max >= 1));
@@ -202,7 +230,7 @@ export class Transport {
   }
   private stopEffects(): void {
     for (const effect of this.activeEffects) { try { effect.stop(); } catch { /* Already ended. */ } effect.disconnect(); }
-    this.activeEffects.clear(); this.voices.clear();
+    this.activeEffects.clear(); this.voices.clear(); this.resumeSustains = true;
   }
   private schedule(): void {
     if (!this.playing || !this.context) return;
@@ -210,6 +238,13 @@ export class Transport {
     if (this.loop && this.loop.end > this.loop.start && now >= this.loop.end) { this.seek(this.loop.start); this.onLoop?.(); return; }
     const horizon = now + 0.10 * this.rate;
     this.scheduleMetronome(Math.min(horizon, this.loop && this.loop.end > this.loop.start ? this.loop.end : Infinity));
+    // Playback that starts inside a HOLD or SLIDE picks up its loop without replaying the start.
+    if (this.resumeSustains) {
+      this.resumeSustains = false;
+      const end = this.loop && this.loop.end > this.loop.start ? this.loop.end : Infinity;
+      if (this.effects) for (const hit of this.hits.slice(0, this.scheduledIndex)) if (hit.until !== undefined && hit.until > now && hit.time < now - 0.03)
+        for (const soundId of soundsForHit(hit)) this.playSound(soundId, this.context.currentTime, this.anchorClock + (Math.min(hit.until, end) - this.anchorSeconds) / this.rate, true);
+    }
     const played = new Set<GameHitSoundId | SoundLayers>();
     let groupTime: number | undefined;
     while (this.scheduledIndex < this.hits.length && this.hits[this.scheduledIndex].time < horizon) {
@@ -217,9 +252,13 @@ export class Transport {
       // A scheduling pass consumes each entire timestamp group. Use chart time,
       // not the clamped audio start time, so nearby/late hits remain distinct.
       if (hit.time !== groupTime) { groupTime = hit.time; played.clear(); }
-      const fresh = soundsForHit(hit).filter(soundId => { const sound = this.samples.get(soundId) ?? soundId; return !played.has(sound) && !!played.add(sound); });
-      if (!fresh.length) continue;
-      if (this.effects && hit.time >= now - 0.03 && (!this.loop || hit.time < this.loop.end)) this.scheduleEffect(hit, fresh, this.anchorClock + (hit.time - this.anchorSeconds) / this.rate);
+      // Equal sounds at one instant merge into one. Of a merged sustained start only the loop still plays: each note ends its own.
+      const sounds = soundsForHit(hit), fresh = sounds.filter(soundId => { const sound = this.samples.get(soundId) ?? soundId; return !played.has(sound) && !!played.add(sound); });
+      if (!this.effects || hit.time < now - 0.03 || (this.loop && hit.time >= this.loop.end)) continue;
+      const clock = (seconds: number) => this.anchorClock + (seconds - this.anchorSeconds) / this.rate;
+      const until = hit.until === undefined ? undefined : clock(Math.min(hit.until, this.loop?.end ?? Infinity));
+      if (fresh.length) this.scheduleEffect(hit, fresh, clock(hit.time), until);
+      if (until !== undefined) for (const soundId of sounds) if (!fresh.includes(soundId)) this.playSound(soundId, Math.max(clock(hit.time), this.context.currentTime), until, true);
     }
   }
   private scheduleMetronome(horizon: number): void {
@@ -237,19 +276,23 @@ export class Transport {
     }
     this.metronomeTick = until;
   }
-  private playSound(soundId: GameHitSoundId, when: number): boolean {
-    const context = this.context!, destination = this.effectsGain!, layers = this.samples.get(soundId);
-    if (!layers?.length) return false;
+  /** `until`: when the note that starts a looping layer ends. `sustainOnly` leaves out everything but those loops. */
+  private playSound(soundId: GameHitSoundId, when: number, until?: number, sustainOnly = false): boolean {
+    const context = this.context!, destination = this.effectsGain!, known = this.samples.get(soundId);
+    if (!known?.length) return false;
+    // A loop needs something to end it: the cue that started it, or the end of its note.
+    const layers = known.filter(layer => layer.loop ? layer.stopAfter !== undefined || until !== undefined : !sustainOnly);
     const nodes = layers.map(layer => {
       const source = context.createBufferSource(), gain = context.createGain(), envelope = layer.envelope;
       source.buffer = layer.buffer; source.playbackRate.value = layer.playbackRate;
+      if (layer.loop) { source.loop = true; source.loopStart = layer.loop.start; source.loopEnd = layer.loop.end; }
       // Envelope times run in real time, whatever the pitch of the layer.
       if (envelope && envelope.attack > 0) { gain.gain.value = 0; gain.gain.setValueAtTime(0, when); gain.gain.linearRampToValueAtTime(layer.gain, when + envelope.attack); }
       else gain.gain.value = layer.gain;
       if (envelope && envelope.sustain < 1) { const start = when + envelope.attack + envelope.hold; gain.gain.setValueAtTime(layer.gain, start); gain.gain.linearRampToValueAtTime(layer.gain * envelope.sustain, start + envelope.decay); }
       source.connect(gain); gain.connect(destination); this.activeEffects.add(source);
       source.start(when);
-      return { source, gain, level: layer.gain, envelope, stopAt: undefined as number | undefined };
+      return { source, gain, level: layer.gain, envelope, group: layer.group, stopAt: undefined as number | undefined, ended: false };
     });
     // A stop enters the release from wherever the envelope is; an earlier stop replaces a later one.
     const stop = (node: typeof nodes[number], at: number): void => {
@@ -259,30 +302,34 @@ export class Transport {
       param.cancelScheduledValues?.(at); param.setValueAtTime(node.level * envelopeLevel(node.envelope, at - when), at); param.linearRampToValueAtTime(0, at + release);
       try { node.source.stop(at + release); } catch { /* Already ended. */ }
     };
-    // The cue that started a layer may stop it again shortly after: a TAP judgement sounds 50 ms and then releases.
-    for (const [index, layer] of layers.entries()) if (layer.stopAfter !== undefined) stop(nodes[index], when + layer.stopAfter);
-    const voice: Voice = { stop: at => { for (const node of nodes) stop(node, at); } };
+    for (const [index, layer] of layers.entries()) {
+      // The cue that started a layer may stop it again shortly after: a TAP judgement sounds 50 ms and then releases.
+      if (layer.stopAfter !== undefined) stop(nodes[index], when + layer.stopAfter);
+      if (layer.loop && until !== undefined) stop(nodes[index], Math.max(when, until));
+    }
     // The game limits how many playbacks of one cue, or of one category such as HOLD / SLIDE, sound together:
     // a new hit takes the place of the oldest instead of piling another full-length tail on top.
-    const keys = (this.limits.get(soundId) ?? []).map(limit => {
+    const held: { key: string; voice: Voice; members: typeof nodes }[] = [], voices = new Map<number | undefined, Voice>();
+    for (const limit of this.limits.get(soundId) ?? []) {
+      const members = limit.group === undefined ? nodes : nodes.filter(node => node.group === limit.group);
+      if (!members.length) continue;
+      const voice = voices.get(limit.group) ?? { stop: (at: number) => { for (const node of members) stop(node, at); } };
+      voices.set(limit.group, voice);
       const list = this.voices.get(limit.key) ?? [];
       while (list.length >= limit.max) list.shift()!.stop(when);
-      list.push(voice); this.voices.set(limit.key, list);
-      return limit.key;
-    });
-    let remaining = nodes.length;
-    for (const { source, gain } of nodes) source.onended = () => {
-      this.activeEffects.delete(source); source.disconnect(); gain.disconnect();
-      if (--remaining) return;
-      for (const key of keys) { const list = this.voices.get(key), index = list?.indexOf(voice) ?? -1; if (index >= 0) list!.splice(index, 1); }
+      list.push(voice); this.voices.set(limit.key, list); held.push({ key: limit.key, voice, members });
+    }
+    for (const node of nodes) node.source.onended = () => {
+      node.ended = true; this.activeEffects.delete(node.source); node.source.disconnect(); node.gain.disconnect();
+      for (const { key, voice, members } of held) if (members.every(member => member.ended)) { const list = this.voices.get(key), index = list?.indexOf(voice) ?? -1; if (index >= 0) list!.splice(index, 1); }
     };
-    return true;
+    return nodes.length > 0;
   }
-  private scheduleEffect(hit: Hit, sounds: GameHitSoundId[], when: number): void {
+  private scheduleEffect(hit: Hit, sounds: GameHitSoundId[], when: number, until?: number): void {
     const context = this.context!, destination = this.effectsGain!;
     when = Math.max(when, context.currentTime);
     let sampled = false;
-    for (const soundId of sounds) sampled = this.playSound(soundId, when) || sampled;
+    for (const soundId of sounds) sampled = this.playSound(soundId, when, until) || sampled;
     if (sampled) return;
     const air = hit.type.startsWith('AIR'), ex = hit.type === 'EXTAP';
     const oscillator = context.createOscillator(), gain = context.createGain();

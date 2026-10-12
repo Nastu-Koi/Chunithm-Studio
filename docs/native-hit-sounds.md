@@ -25,12 +25,13 @@
 | TAP `se_touch_tap_jcritical` → `…_action` + `se_touch_tap_loop_action` | 0.57 + 0.11 | 三个 Cue 各 1；分类 `Limit_Tap` 1 |
 | ExTAP `se_touch_chara_laser`（与 TAP 同时） | 0.37 | Cue 1 |
 | FLICK `se_touch_flick_jcritical` | 0.30 | Cue 1 |
-| HOLD / SLIDE `se_touch_hold_jcritical` / `…slide…` | 0.30 × 2 层 | 分类 `Limit_HoldSlideCritical` 1，两者共用 |
+| HOLD / SLIDE 起点 `…_loop` → 循环音 + `se_touch_tap_jcritical_action` | 0.34 + 0.57 | 循环音 Cue 4；TAP 采样同上 |
+| HOLD 终点 / SLIDE 节点 `se_touch_hold_jcritical` / `…slide…` | 0.30 × 2 层 | 分类 `Limit_HoldSlideCritical` 1，两者共用 |
 | AIR 上 / 下 `se_air_cut_up` / `…down` | 0.45 / 0.41 | Cue 1 |
-| AIR HOLD 起点 / 动作 `se_air_hold_in` / `se_air_hold_beat` | 0.375 / 0.30 | Cue 1 |
+| AIR HOLD 起点 / 循环 / 动作 `se_air_hold_in` / `se_air_hold_loop` / `se_air_hold_beat` | 0.375 / 0.41 / 0.30 | Cue 1 / 4 / 1 |
 | AIR CRUSH `se_air_cut_break` | 0.43 × 2 层 | Cue 1 |
 
-播放端按限制键（`cue:<名称>`、`category:<名称>`）记录正在发声的音，超出上限时让最早的一声进入释音。
+播放端按限制键（`cue:<名称>`、`category:<名称>`）记录正在发声的音，超出上限时让最早的一声进入释音。经动作轨启动的音效各自成组，限制只停本组：后来的 TAP 会顶掉 HOLD 起点的 TAP 采样，但不会停它的循环音。
 
 ## 触发规则：哪种音符播哪个音效
 
@@ -42,22 +43,34 @@
 | --- | --- | --- |
 | `TapNote`、`CharaTapNote`（ExTAP） | `0xc41680` → 判定音函数 `0xc3f970`，种类 0 | `se_touch_tap_<判定>` |
 | 所有音符共用的判定处理 `0xc404b0` | ExTAP 成功时，声道 24（`FixSE_Charatap`）、音量项 `ExTapVolume` | `NotesCharaEffectTableRecord.bin` 第 8 列的音效，8 行全是 48 号，即 `se_touch_chara_laser` |
-| `HoldNote` | `0xc4ddd0`，种类 1，每条 HOLD 只播一次（有“已发声”标记） | `se_touch_hold_<判定>` |
-| `SlideNote` | `0xc31f90`，种类 2，逐节点检查，只有带标记的节点发声 | `se_touch_slide_<判定>` |
+| `HoldNote` 起点 | `0xc4f480` | `se_touch_hold_<判定>_loop`；长度不超过 6 帧（0.1 秒）时改播 TAP 判定音 |
+| `HoldNote` 终点 | `0xc4ddd0`，种类 1，时间到达终点后播一次（有“已发声”标记） | `se_touch_hold_<判定>` |
+| `SlideNote` 起点 | `0xc34d60` | `se_touch_slide_<判定>_loop`；同样有 6 帧的下限 |
+| `SlideNote` 之后的节点 | `0xc31f90`，种类 2，逐节点检查，只有带标记的节点发声 | `se_touch_slide_<判定>` |
 | `FlickNote` | `0xc444b0`，种类 6 | `se_touch_flick_<判定>` |
 | `AirNote` | `0xc424d0`，声道 4 | 方向 0–2 为 `se_air_cut_up`，3–5 为 `se_air_cut_down`，不分判定 |
-| `AirHoldNote`、`AirSlideNote` | 起点 `0xc479e0` / `0xc4bee0`，声道 4；动作 `0xc46320` / `0xc4a340`，种类 7 | 起点 `se_air_hold_in`，每个动作 `se_air_hold_beat` |
+| `AirHoldNote`、`AirSlideNote` | 起点 `0xc479e0` / `0xc4bee0`，声道 4 加一个循环声道；动作 `0xc46320` / `0xc4a340`，种类 7 | 起点 `se_air_hold_in` 加 `se_air_hold_loop`，每个动作 `se_air_hold_beat` |
 | `AirLadderNote`（AIR CRUSH，谱面记号 ALD） | `0xc35d70`，种类 9 | `se_air_cut_break` |
 
 判定音函数 `0xc3f970` 用三张表：`0x1914dd0`（种类 × 判定 → 组）、`0x1c1e8a0`（组 × 判定 → 声道）、`0x1c1e948`（组 × 判定 → 音效）。判定取 `NotesJudgeResultTableRecord.bin` 的 0–4（Miss、Attack、Justice、Justice Critical、Heaven）。预览固定用 Justice Critical 一档。
 
-由此改正了三处原先的映射：
+HOLD 的起止时间是 `HoldNote` 的 `+0x118` 和 `+0x11c`（谱面毫秒 × 0.06，单位是帧）；起点函数拿 `+0x11c` 减当前时间与 6.0 比较，终点判定音在当前时间不小于 `+0x11c` 时播。
+
+由此改正了四处原先的映射：
 
 - **TAP** 原先直接取 `se_touch_tap_jcritical_action`。游戏播的是 `se_touch_tap_jcritical`，它自身没有波形，靠两条动作轨启动 `…_action` 和 `se_touch_tap_loop_action`，50 毫秒后把两者都停掉，只剩释音。
 - **ExTAP** 原先取 `se_touch_chara_fire`。游戏播的是 TAP 判定音加 `se_touch_chara_laser`；`chara_fire` 在音符代码里没有被引用。
 - **AIR HOLD / AIR SLIDE** 原先取 `se_air_hold_jcritical`，音符代码里同样没有引用它。起点是 `se_air_hold_in`，动作是 `se_air_hold_beat`。AIR CRUSH 原先没有音效，现在是 `se_air_cut_break`。
 
-HOLD 只在起点发声、SLIDE 的控制点不发声、AIR 上下的区分，这三条与原先的做法一致，没有改。
+- **HOLD / SLIDE 的起点** 原先播 `se_touch_hold_jcritical` / `…slide…`。游戏在起点播的是 `…_loop`：它启动整条 TAP 采样（不在 50 毫秒后停止）和一条循环音，循环音持续到长条结束。`se_touch_hold_jcritical` 在 HOLD 的终点播，`se_touch_slide_jcritical` 在 SLIDE 起点之后的各节点播。
+
+SLIDE 的控制点不发声、AIR 上下的区分，这两条与原先的做法一致，没有改。
+
+## 循环音
+
+`se_touch_hold_loop`、`se_touch_slide_loop`、`se_air_hold_loop` 的波形带循环点（`WaveformExtensionDataTable`），释音 500 / 350 毫秒，Cue 上限 4。预览里从起点开始循环，到长条结束（SLIDE 与 AIR 取整条链的末端）时进入释音；从长条中间开始播放时只接上循环音，不重播起点。暂停、跳转和循环区间的末端都会停掉它。
+
+这三个 Cue 的序列类型是 6，带四条波形相同的音轨，各自多一条命令 71（数值 10、20、30）。每次启动取哪一条、命令 71 是什么都没有核对，这里固定取第一条。
 
 ## 音高、包络与动作轨
 
@@ -93,9 +106,8 @@ HOLD / SLIDE 原先整条 2.5 秒尾音都按满音量播放，这是它们刺�
 
 ## 未套用的部分
 
-- **按住期间的循环音**。HOLD / SLIDE 起点在循环声道上启动 `se_touch_<hold|slide>_<判定>_loop`（它再启动 `se_touch_hold_loop` / `se_touch_slide_loop`），AIR HOLD / AIR SLIDE 启动 `se_air_hold_loop`，松开时停止。调用位置已确认，预览里没有做。
-- **命令 31、32**（数值像双二阶与带通滤波，单位和归一化没有核对），以及 11、82、99。涉及 `se_air_cut_break`、`se_touch_tap_loop_action`、`se_touch_chara_laser`、`se_touch_tap_jcritical`。
-- **随时间变化的 AISAC**（`LocalAisacs`，控制编号 2000 以上）：`se_touch_chara_laser`、`se_touch_tap_loop_action`、`se_air_cut_break` 等带有滤波或音量扫动，没有重现。
+- **命令 31、32**（数值像双二阶与带通滤波，单位和归一化没有核对），以及 11、71、82、94、99。三条循环音都带命令 32，所以预览里的循环音比实机亮。
+- **随时间变化的 AISAC**（`LocalAisacs`，控制编号 2000 以上）：`se_touch_chara_laser`、`se_touch_hold_loop`、`se_touch_slide_loop`、`se_touch_tap_loop_action`、`se_air_cut_break` 等带有滤波或音量扫动，没有重现。
 - **包络的曲线类型**只按线性处理。只有 `se_touch_tap_loop_action` 的释音用了非线性曲线。
 - **超限时如何取代**。这里让被取代的一声进入它自己的释音（没有释音时间的淡出 20 毫秒），已经在释音中的不再打断。命令 79 的末字节是取代方式，各音效都是 0；运行库里超限后走哪条停止路径没有核对。
 - **游戏内的音量选项**：`TapVolume`、`ExTapVolume`、`HoldVolume`、`AirVolume`、`FlickVolume` 由玩家设置决定（`PlayOptionJudgeSound*TableRecord.bin`，11 档，默认第 5 档 0.3）。各类默认档相同，所以没有折算进相对音量；播放栏的“打击音”滑块是它们之外的一个总音量。

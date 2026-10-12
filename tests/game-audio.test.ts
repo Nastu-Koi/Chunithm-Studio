@@ -63,16 +63,18 @@ test('decrypts real ADX9 cues into transient PCM without clipped noise, and reus
     await assert.rejects(access(rejectedWav), { code: 'ENOENT' });
     assert.equal(extractCueLayers(original, 'se_air_cut_up').length, 1, 'Speaker and headphone routes must not be duplicated.');
     const imported = await loadGameHitSounds(game, temp);
-    assert.equal(Object.keys(imported.sounds).length, 10);
+    assert.equal(Object.keys(imported.sounds).length, 13);
     assert.equal(imported.sounds.airCrush?.cueName, 'se_air_cut_break');
     assert.equal(imported.sounds.ex?.cueName, 'se_touch_chara_laser');
     assert.equal(imported.sounds.hold?.layers.length, 2);
     assert.deepEqual(imported.sounds.hold?.layers, imported.sounds.slide?.layers);
     assert.ok(imported.warnings.some(w => w.includes('循环音')));
-    // The TAP judgement also starts 50 ms of a sustained loop waveform: the only sample that does not decay by itself.
-    const sustained = imported.sounds.tap!.layers[1].path;
+    // Loop waveforms are the only samples that do not decay by themselves; the TAP judgement borrows 50 ms of one.
+    const sustained = new Set(Object.values(imported.sounds).flatMap(sound => sound.layers.filter(layer => layer.loop).map(layer => layer.path)));
+    assert.equal(sustained.size, 2);
+    assert.ok(sustained.has(imported.sounds.tap!.layers[1].path));
     const paths = [...new Set(Object.values(imported.sounds).flatMap(sound => sound.layers.map(layer => layer.path)))];
-    assert.equal(paths.length, 11);
+    assert.equal(paths.length, 12);
     const times = new Map<string, number>();
     for (const file of paths) {
       assert.ok(file.startsWith(temp + path.sep));
@@ -97,7 +99,7 @@ test('decrypts real ADX9 cues into transient PCM without clipped noise, and reus
       // The decoded native EX fire sample contains some saturation (~1.7%).
       // The broken encrypted-as-PCM path clips 5–25% and never decays at its tail.
       assert.ok(clipping / count < 0.03, `ADX9 must be decrypted before PCM conversion; clipped fraction=${clipping / count}, RMS=${rms}`);
-      if (file !== sustained) assert.ok(tailRms < rms * 0.2, `A decaying hit must not contain persistent high-energy noise: RMS=${rms}, tail=${tailRms}`);
+      if (!sustained.has(file)) assert.ok(tailRms < rms * 0.2, `A decaying hit must not contain persistent high-energy noise: RMS=${rms}, tail=${tailRms}`);
       times.set(file, (await stat(file)).mtimeMs);
     }
     const again = await loadGameHitSounds(game, temp);
@@ -140,7 +142,13 @@ test('real cues carry their pitch, envelope and the cues their action tracks sta
   assert.deepEqual(layers('se_touch_tap_jcritical'), [
     { wave: 286, rate: 1.1225, envelope: { attack: 0, hold: 0, decay: 0, sustain: 1, release: .5 }, stopAfter: .05 },
     { wave: 283, rate: 1, envelope: { attack: 0, hold: 0, decay: 0, sustain: 1, release: .5 }, stopAfter: .05 }]);
+  // A HOLD start: the loop on one of its four equal tracks, and the whole TAP sample, each under its own limits.
+  const start = extractCue(acb, 'se_touch_hold_jcritical_loop', acf);
+  assert.deepEqual(start.layers.map(layer => [layer.waveformId, Number(layer.gain.toFixed(4)), layer.stopAfter, layer.group, layer.loop && [Number(layer.loop.start.toFixed(3)), Number(layer.loop.end.toFixed(3))]]),
+    [[283, .3375, undefined, 1, [2.048, 2.904]], [286, .57, undefined, 2, undefined]]);
+  assert.deepEqual(start.limits, [{ key: 'cue:se_touch_hold_loop', max: 4, group: 1 }, { key: 'cue:se_touch_tap_jcritical_action', max: 1, group: 2 }, { key: 'category:Limit_Tap', max: 1, group: 2 }]);
   assert.deepEqual(tap.layers.map(layer => Number(layer.gain.toFixed(4))), [.57, .1125]);
+  assert.deepEqual(tap.limits.map(limit => limit.group), [undefined, 1, 1, 2]);
   assert.deepEqual(tap.limits.map(limit => limit.key), ['cue:se_touch_tap_jcritical', 'cue:se_touch_tap_jcritical_action', 'category:Limit_Tap', 'cue:se_touch_tap_loop_action']);
   assert.deepEqual(tap.notes, ['aisac:se_touch_tap_jcritical_action', 'aisac:se_touch_tap_loop_action', 'curve:se_touch_tap_loop_action']);
 });

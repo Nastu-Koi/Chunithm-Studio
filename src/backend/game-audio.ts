@@ -13,9 +13,12 @@ const CUES: Partial<Record<GameHitSoundId, string>> = {
   flick: 'se_touch_flick_jcritical',
   hold: 'se_touch_hold_jcritical',
   slide: 'se_touch_slide_jcritical',
+  holdStart: 'se_touch_hold_jcritical_loop',
+  slideStart: 'se_touch_slide_jcritical_loop',
   airUp: 'se_air_cut_up',
   airDown: 'se_air_cut_down',
   airHoldIn: 'se_air_hold_in',
+  airHoldLoop: 'se_air_hold_loop',
   airHold: 'se_air_hold_beat',
   airCrush: 'se_air_cut_break',
 };
@@ -29,6 +32,8 @@ export interface ExtractedCueLayer {
   playbackRate: number;
   envelope?: GameHitSoundEnvelope;
   stopAfter?: number;
+  loop?: { start: number; end: number };
+  group?: number;
 }
 export interface ExtractedCue {
   layers: ExtractedCueLayer[];
@@ -187,10 +192,13 @@ class HitSoundBank {
           if (entry.bytes.length < 24 || entry.bytes.readUInt16BE(0) !== 0x8000) throw new Error('内嵌音效的 ADX 头无效。');
           const sampleRate = Number(wave.SamplingRate), sampleCount = Number(wave.NumSamples);
           if (!(sampleRate > 0) || !(sampleCount > 0)) throw new Error('音效采样信息无效。');
+          // Sustained waveforms carry their loop points in an extension row.
+          const extension = Number(wave.LoopFlag) === 2 && Number(wave.ExtensionData) !== 65535 ? this.row('WaveformExtensionDataTable', Number(wave.ExtensionData)) : undefined;
+          const loop = extension && Number(extension.LoopEnd) > Number(extension.LoopStart) ? { start: Number(extension.LoopStart) / sampleRate, end: Number(extension.LoopEnd) / sampleRate } : undefined;
           const shaped = state.attack > 0 || state.hold > 0 || state.decay > 0 || state.sustain < 1 || state.release > 0;
           layers.push({ waveformId: id, bytes: entry.bytes, sampleRate, sampleCount, gain: state.gain, playbackRate: 2 ** (state.cents / 1200),
             ...(shaped ? { envelope: { attack: state.attack / 1000, hold: state.hold / 1000, decay: state.decay / 1000, sustain: state.sustain, release: state.release / 1000 } } : {}),
-            ...(stopAfter === undefined ? {} : { stopAfter }) });
+            ...(stopAfter === undefined ? {} : { stopAfter }), ...(loop ? { loop } : {}) });
         } else if (type === 2) {
           const synth = this.row('SynthTable', index);
           if (Number(synth.Type) !== 0 || Number(synth.NumActionTracks) > 0) throw new Error('此音效使用了未支持的 synth 触发方式。');
@@ -202,10 +210,13 @@ class HitSoundBank {
           for (let i = 0; i < items.length; i += 4) visit(items.readUInt16BE(i), items.readUInt16BE(i + 2), next, depth + 1);
         } else if (type === 3) {
           const sequence = this.row('SequenceTable', index);
-          if (Number(sequence.Type) !== 0) throw new Error('此音效使用了未支持的 sequence 触发方式。');
+          // Type 6 (the sustained loops) plays one of its tracks per start; they share a waveform, so the first stands for all.
+          const single = Number(sequence.Type) === 6;
+          if (Number(sequence.Type) !== 0 && !single) throw new Error('此音效使用了未支持的 sequence 触发方式。');
+          if (single) context.notes.add('variant');
           this.aisacs(sequence, context);
           const next = this.parameters('SeqCommandTable', sequence.CommandIndex, state, context);
-          if (next === null || next.gain === 0) return;
+          if (next === null) return;
           // Action tracks start (and may later stop) other cues of this bank: TAP judgements are built this way.
           for (let i = 0; i < Number(sequence.NumActionTracks ?? 0); i++) {
             const action = this.row('ActionTrackTable', Number(sequence.ActionTrackStartIndex) + i);
@@ -225,9 +236,11 @@ class HitSoundBank {
             const after = stop === undefined ? stopAfter : Math.min(stop / 1000, stopAfter ?? Infinity);
             started.push(this.parts(target, mix, after, level + 1));
           }
+          // A cue silent on this route still starts its actions: they are routed by their own cues.
+          if (next.gain === 0) return;
           const indexes = sequence.TrackIndex;
           if (!Buffer.isBuffer(indexes) || indexes.length !== Number(sequence.NumTracks) * 2) throw new Error('音效 track 引用列表损坏。');
-          for (let i = 0; i < indexes.length; i += 2) {
+          for (let i = 0; i < (single ? Math.min(2, indexes.length) : indexes.length); i += 2) {
             const track = this.row('TrackTable', indexes.readUInt16BE(i));
             this.aisacs(track, context);
             const trackState = this.parameters('TrackCommandTable', track.CommandIndex, next, context);
@@ -246,9 +259,12 @@ class HitSoundBank {
     const parts: CueParts = { layers: layers.map(layer => ({ ...layer, gain: layer.gain * scale })),
       limits: [...(context.limit ? [{ key: `cue:${cueName}`, max: context.limit }] : []), ...(mix?.limits(context.categories) ?? [])],
       unsupported: context.unsupported, notes: new Set([...context.notes].map(note => `${note}:${cueName}`)) };
+    // Each started cue is a group of its own: its limits stop its layers and leave the rest of the sound playing.
+    let group = 0;
     for (const other of started) {
-      parts.layers.push(...other.layers);
-      for (const limit of other.limits) if (!parts.limits.some(known => known.key === limit.key)) parts.limits.push(limit);
+      group++;
+      parts.layers.push(...other.layers.map(layer => ({ ...layer, group })));
+      for (const limit of other.limits) parts.limits.push({ ...limit, group });
       for (const code of other.unsupported) parts.unsupported.add(code);
       for (const note of other.notes) parts.notes.add(note);
     }
@@ -285,7 +301,6 @@ export async function loadGameHitSounds(gamePath: string, cacheDirectory: string
   const bank = new HitSoundBank(await readFile(source));
   const result: GameHitSounds = { source, sounds: {}, warnings: [
     '使用原版 ADX 波形、默认 TAP 音色及 Phone_1pass 路由，并按音效库还原各级音量、音高、包络、动作轨（TAP 判定音在 50 毫秒后转入释音）以及 Cue 与分类的同时发声数限制；尚未重现游戏内各项音量选项（AISAC）。',
-    '未重现 HOLD / SLIDE / AIR HOLD 按住期间的循环音（se_touch_hold_loop、se_touch_slide_loop、se_air_hold_loop）。',
   ] };
   const config = path.join(gameRoot, 'data', 'sound', 'chu.acf');
   const mix = await exists(config) ? new HitSoundMix(await readFile(config)) : undefined;
@@ -312,13 +327,15 @@ export async function loadGameHitSounds(gamePath: string, cacheDirectory: string
           await rename(wav, wavPath);
         } finally { await rm(temp, { recursive: true, force: true }); }
       }
-      imported.push({ path: wavPath, gain: layer.gain, playbackRate: layer.playbackRate, ...(layer.envelope ? { envelope: layer.envelope } : {}), ...(layer.stopAfter === undefined ? {} : { stopAfter: layer.stopAfter }) });
+      imported.push({ path: wavPath, gain: layer.gain, playbackRate: layer.playbackRate, ...(layer.envelope ? { envelope: layer.envelope } : {}), ...(layer.stopAfter === undefined ? {} : { stopAfter: layer.stopAfter }),
+        ...(layer.loop ? { loop: layer.loop } : {}), ...(layer.group === undefined ? {} : { group: layer.group }) });
     }
     result.sounds[id as GameHitSoundId] = { cueName, layers: imported, ...(limits.length ? { limits } : {}) };
   }
   const short = (cues: string[]) => cues.map(cue => cue.replace(/^se_/, '')).join('、');
   if (unsupported.size) result.warnings.push(`以下命令的含义尚无依据，未套用其效果：${[...unsupported].sort((a, b) => a[0] - b[0]).map(([code, cues]) => `${code}（${short(cues)}）`).join('；')}。`);
   if (notes.has('aisac')) result.warnings.push(`以下音效带随时间变化的 AISAC（滤波或音量扫动），未重现：${short(notes.get('aisac')!)}。`);
+  if (notes.has('variant')) result.warnings.push(`以下循环音每次从四条音轨里取一条，这里固定取第一条：${short(notes.get('variant')!)}。`);
   if (notes.has('curve')) result.warnings.push(`以下音效的包络使用非线性曲线，按线性处理：${short(notes.get('curve')!)}。`);
   return result;
 }

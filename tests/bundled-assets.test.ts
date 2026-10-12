@@ -48,7 +48,7 @@ test('the desktop app can hand the renderer asset URLs instead of inlined base64
   await assert.rejects(loadBundledGameResources(root, { imageUrl: bundledAssetUrl }), /超出资源目录/);
 });
 
-test('copied project assets match their import hashes and contain ten ready-to-play cues', async () => {
+test('copied project assets match their import hashes and contain thirteen ready-to-play cues', async () => {
   const root = path.resolve('assets/game'), hashes = JSON.parse(await readFile(path.join(root, 'sha256.json'), 'utf8')) as Record<string, string>;
   for (const [file, expected] of Object.entries(hashes)) {
     const bytes = await readFile(path.join(root, file));
@@ -56,7 +56,7 @@ test('copied project assets match their import hashes and contain ten ready-to-p
     if (file.endsWith('.wav')) { assert.equal(bytes.toString('ascii', 0, 4), 'RIFF'); assert.equal(bytes.toString('ascii', 8, 12), 'WAVE'); }
   }
   const assets = await loadBundledGameResources(root);
-  assert.equal(Object.keys(assets.sounds.sounds).length, 10);
+  assert.equal(Object.keys(assets.sounds.sounds).length, 13);
   for (const kind of ['Tap', 'Chara', 'Flick', 'Mine']) for (let width = 1; width <= 16; width++) assert.ok(assets.textures.models[`Notes${kind}_${String(width).padStart(2, '0')}`]);
   for (const sound of Object.values(assets.sounds.sounds)) for (const layer of sound.layers) assert.ok(layer.path.startsWith(root + path.sep));
 });
