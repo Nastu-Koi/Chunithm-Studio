@@ -45,3 +45,12 @@ test('a held AIR HOLD line leaves the bottom of the screen at every height and s
     assert.ok(Math.abs(at.y - behind.y) < .01 && Math.abs(at.x - behind.x) < .01);
   }
 });
+
+test('the scroll projection joins the track anchor at the judgement line and keeps moving behind it', () => {
+  const anchor = projectTrackPoint(3, 0), joined = projectNativeScrollPoint(3, 0, [0, 0, 0]);
+  assert.ok(Math.abs(anchor.x - joined.x) < 1e-6 && Math.abs(anchor.y - joined.y) < 1e-6 && Math.abs(anchor.scale - joined.scale!) < 1e-9);
+  const near = -110 / nativeScrollWorldUnit(6), ground = projectNativeScrollPoint(3, near, [0, 0, 0]);
+  // Canvas 2D fallback: AIR height .8 in the track's own units still leaves the screen.
+  assert.ok(ground.y - .8 * 1080 * .15 * ground.scale! > 1080);
+  assert.equal(projectTrackPoint(3, near).y, projectTrackPoint(3, -.3).y);
+});

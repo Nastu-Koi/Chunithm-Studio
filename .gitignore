@@ -4,6 +4,7 @@ dist-electron/
 release/
 out/
 .cache/
+.claude/issue/
 test-results/
 playwright-report/
 native/**/bin/

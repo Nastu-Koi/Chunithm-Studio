@@ -4,10 +4,6 @@ Windows 64 位 CHUNITHM 制谱器与自动播放预览。俯视编辑和透视�
 
 当前提供普通谱面和 WORLD’S END 的编辑、原生 C2S 读写及完整 OPT 导出。已在 Windows 桌面环境验证程序运行、原曲解码和独立追加包生成；**原游戏内的加载与视觉一致性尚待实机验收**。旧版 `STP` 的预览按区间停滚近似，原记录会保留。
 
-0.1.10 修复 SLC 控制段重复贴图导致的紫色分隔：控制点连续通过，SLD 仍显示普通节点横条。俯视编辑器与音符工具按钮使用复制的 Margrete 1.8.0 `note_icons.png`，长条带体和编辑辅助标记仍由本程序绘制。
-
-0.1.13 合并同一时刻的相同打击音效，保留原始增益；AIR HOLD／SLIDE 播放到中间及接续节点时不再重新出现抬升段。
-
 ## 启动
 
 解压 Windows 便携包，双击 `ChuniStudio.exe`。保留同目录的 `resources`、DLL 等文件。无需另外安装 Node.js、.NET 或 FFmpeg。
@@ -16,29 +12,19 @@ Windows 64 位 CHUNITHM 制谱器与自动播放预览。俯视编辑和透视�
 
 ## 播放资源副本
 
-0.1.2 将本机游戏中的贴图和打击音转换、复制到项目 `assets/game`，便携程序中对应 `resources/app/assets/game`。0.1.9 包含 269 张去重 PNG 和 8 个 WAV，HUD 补全后为 274 张；播放器只读取这些副本，不依赖原游戏文件。播放页的“原版资源副本”按钮显示装载情况与兼容性说明。它们是程序的公共资源，无需在每个谱面工程中重复保存。
+播放页使用随程序分发的资源副本：从原游戏转换的贴图、模型和打击音，位于便携程序的 `resources/app/assets/game`。播放器只读取这些副本，不依赖原游戏文件。它们是程序的公共资源，无需在每个谱面工程中重复保存。播放页的“原版资源副本”按钮显示装载情况与兼容性说明。
 
-0.1.8 使用原始三维网格、UV、顶点颜色和材质绘制音符：包括 TAP、EX、FLICK、DAMAGE、HOLD／SLIDE 及其专用末节点、六种 AIR 方向、AIR HOLD／SLIDE 的动作环与阴影、CRUSH 首横档和后续横档。资源副本包含 407 个模型、711 个材质批次；AIR 长条和 CRUSH 连线按已核查的原程序规则生成。打击效果改为读取原动画帧、粒子参数和寿命，移除了旧的手绘渐变与圆环。
-
-AIR HOLD 顶面使用原运行时透明度。AIR SLIDE 纹理跨控制节点连续，按音乐时间适应分段 BPM。CRUSH 连线支持原色带及 `DEF / AxisY / AxisZ / Trace` 四种形态；Trace 几何已与隔离的原函数输出核对。这些验证覆盖已实现的规则，仍不等于实机画面完全一致。
-
-资源来源与完整演出是两件事：仍有部分特效命令、模型动画和实机时间基准未复现，详见 `docs/native-note-assets.md` 与 `docs/native-effects.md`，播放页“原版资源副本”也显示当前兼容性说明。默认 TAP、EX、FLICK、HOLD、SLIDE、AIR 上举／下压、AIR-HOLD 使用复制的打击音；AIR-CRUSH 音效与 CRI 动态混音仍未完整还原。曲库导入与 OPT 导出需选择游戏目录。
+音符、AIR、CRUSH 与打击效果按原始模型、材质和动画数据绘制。使用原始资源不等于完整演出：仍有部分特效命令、模型动画和实机时间基准未复现，已验证的规则也不代表实机画面完全一致，详见 `docs/native-note-assets.md` 与 `docs/native-effects.md`。默认 TAP、EX、FLICK、HOLD、SLIDE、AIR 上举／下压、AIR-HOLD 使用复制的打击音；AIR-CRUSH 音效与 CRI 动态混音仍未完整还原。曲库导入与 OPT 导出需选择游戏目录。
 
 ## 界面、舞台动作与计分
 
-编辑页按 Margrete 官方 UI 文档调整为紧凑双工具栏、黑色谱面、细灰网格与红色光标。左侧新增独立 AIR 高度窗，拖动 AIR SLIDE / AIR CRUSH 的高度节点会同步连接处两段高度；右侧属性面板继续支持精确数值、小节与任意分音。轨道宽度 100% 为标准宽度（每轨 30 px），支持 50%–300% 调整，超出画布时可横向移动视野，“标准”恢复 100%；设置自动保存，不改变谱面轨道坐标。
+编辑页按 Margrete 官方 UI 文档调整为紧凑双工具栏、黑色谱面、细灰网格与红色光标。左侧有独立的 AIR 高度窗，拖动 AIR SLIDE / AIR CRUSH 的高度节点会同步连接处两段高度；右侧属性面板支持精确数值、小节与任意分音。轨道宽度 100% 为标准宽度（每轨 30 px），支持 50%–300% 调整，超出画布时可横向移动视野，“标准”恢复 100%；设置自动保存，不改变谱面轨道坐标。
 
-0.1.1 对照 Margrete 说明书补了编辑功能：橡皮擦工具、前后翻转、按比例缩放时间间隔、把直线 SLIDE 换成曲线、拖动左边缘改宽度、左右镜像粘贴，以及在谱面右侧显示 BPM、拍号和滚速数值；默认按键改为与 Margrete 一致。HOLD / SLIDE 的带体改用游戏贴图绘制（青 / 黄色、两端粉紫渐变），不再是半透明色块。逐项对照与仍未实现的功能见 `docs/margrete-reference.md`。
+编辑功能参照 Margrete 说明书：橡皮擦工具、前后翻转、按比例缩放时间间隔、把直线 SLIDE 换成曲线、拖动左边缘改宽度、左右镜像粘贴，以及在谱面右侧显示 BPM、拍号和滚速数值；默认按键与 Margrete 一致。逐项对照与仍未实现的功能见 `docs/margrete-reference.md`。
 
-播放页保持独立，使用固定 1920×1080 设计画幅等比缩放。顶部中央显示分数与 COMBO，右上显示当前封面、曲名、作者、难度和等级；曲目信息框、数字、TRACK 编号、WORLD’S END 星级和 COMBO 字样来自游戏资源副本。HUD 的位置与裁剪来自原 SRD 文件；轨道地面和判定线由世嘉官方游玩截图标定。
- 
-0.1.11 的 HUD 按原游戏布局补全：中央使用原判定条、默认 Frame（含 MAX COMBO / SCORE 字样）、gauge 与 stock 方块，分数带千位逗号；左上按原玩家信息布局绘制默认名牌、称号条、`Lv.` 与 RATING；右上的流速与镜像设置使用原数字和 `OFF` 贴图。新增贴图的裁剪与位置按 SRD 节点名解析。预览没有玩家档案和技能：等级与 RATING 显示原布局自带的隐藏值，gauge 按已判定比例填充，stock 方块保持空槽，游玩画面内不再显示编辑器自绘的 AUTO JC、SPEED 与 PAUSE 文字。详见 `docs/game-scene-assets.md`。
+播放页保持独立，使用固定 1920×1080 设计画幅等比缩放。顶部中央显示分数与 COMBO，右上显示当前封面、曲名、作者、难度和等级，左上显示默认名牌、称号条、等级与 RATING。播放背景为纯黑，不执行舞台动画。
 
-0.1.9 的播放背景为纯黑，停用经典舞台绘制与动作控制。轨道、侧边材质与判定线仍使用项目内的原始资源。舞台解析代码和研究记录保留，当前播放页不执行舞台动画。
-
-游玩 HUD 使用复制的原游戏 RFZ 位图字体（7,161 个字形）以及专用 COMBO 数字图集。顶部四种判定等距排列；右侧流速与反转值居中；等级以 `15` / `15+` 显示，工程内的小数值不改写。游玩画面不显示校准和统计对照文字；详细兼容性信息可在资源和统计窗口查看。
-
-HOLD / SLIDE 地面长条改用原生加法混合，并先于音符头绘制，避免多长条互相覆盖及远处音符头被长条遮挡。保留原始纵向 UV，不凭截图旋转材质。多个长条交叉、变 BPM 与实际 GPU 混合均有回归测试。原程序的全部材质动画与特效时序仍未完全复现，不能将使用原生资源等同于逐像素还原。
+预览没有玩家档案和技能：等级与 RATING 显示原布局自带的隐藏值，gauge 按已判定比例填充，stock 方块保持空槽。等级以 `15` / `15+` 显示，工程内的小数值不改写。游玩画面不显示校准和统计对照文字；详细兼容性信息可在资源和统计窗口查看。HUD 的资源来源与布局见 `docs/game-scene-assets.md`。
 
 ## 从音乐开始制谱
 
@@ -123,13 +109,9 @@ XML 设置随工程保存并支持撤销。从“本地曲库”载入曲目时�
 | 放置宽度 / 量化间隔 / 时间轴缩放 | [ ] / Shift+滚轮 / Ctrl+滚轮 |
 | 乐曲设置 / 检查谱面 / 导出 | P / F4 / F5 |
 
-## 开发与验证
+## 从源码运行
 
-源码入口：`src/core` 为谱面、时间与量化模型，`src/renderer` 为编辑和预览，`src/backend` 为桌面文件、游戏资源和导出，`native` 为音频助手。编辑器的纯谱面变换在 `src/renderer/editor-operations.ts`，工具栏与画布标记在 `src/renderer/editor-template.ts`，`editor.ts` 只保留交互与绘制。应用壳 `src/renderer/main.ts` 只保留状态、同步与快捷键；页面模板在 `app-template.ts`，各对话框在 `src/renderer/dialogs/`，它们通过 `app-context.ts` 定义的上下文访问工程与播放器。音符的原生属性有明确类型 `NoteAttributes`（`src/core/model.ts`）。
-
-本地曲库扫描按资源根目录下 music / cueFile 文件夹及其修改时间生成指纹，结果缓存在用户数据目录的 `library-cache.json`；目录未变化时直接使用缓存，曲库窗口的“强制重扫”忽略缓存。渲染进程只能读取主进程交出的路径（对话框选择、工程文件、曲库扫描结果、缓存与资源目录）。
-
-桌面程序通过自定义协议 `chuni-asset://game/…` 直接提供 `assets/game` 中的贴图，主进程只把清单和 URL 交给渲染进程，不再把 PNG 转成 base64 经 IPC 传递；该协议只响应资源目录内的 PNG / WAV / JSON，并带 CORS 头以供 WebGL 读取。`.github/workflows/ci.yml` 在推送时运行类型检查、单元测试和渲染端构建；`release.yml` 在打 `v*` 标签时于 Windows runner 上准备原生依赖、打包便携目录并附加到 GitHub Release。打包输出位于 `release/<版本号>/`。Node 版本以 `.nvmrc` 与 `engines` 钉在 22。
+需要 Node 22（见 `.nvmrc`）。
 
 ```sh
 npm ci
@@ -138,9 +120,11 @@ npm run desktop
 npm test
 ```
 
-音频助手的构建和许可见 `native/README.md`。`native/win-x64`（ffmpeg 与 .NET 自包含助手，约 155 MB）不进入仓库，由 `npm run prepare:native` 从固定版本的上游下载并发布，需要网络和 .NET SDK；`npm run package:win` 会先执行它。打包还需要匹配 sharp 版本的 Windows 包，准备步骤见 `scripts/package-win.mjs`。
+音频助手的构建和许可见 `native/README.md`。`native/win-x64`（ffmpeg 与 .NET 自包含助手，约 155 MB）不进入仓库，由 `npm run prepare:native` 从固定版本的上游下载并发布，需要网络和 .NET SDK；`npm run package:win` 会先执行它。打包还需要匹配 sharp 版本的 Windows 包，准备步骤见 `scripts/package-win.mjs`。打包输出位于 `release/<版本号>/`。
 
-浏览器仅用于开发 UI，完整曲库和 OPT 功能应在桌面程序中使用。`npm run dev` 后可用 Playwright 执行 `tests/player.e2e.mjs`、`tests/rhythm.e2e.mjs`。设置 `CHUNI_UI_URL` 会启用编辑器交互测试；设置 `CHUNI_GAME_ROOT` 会启用全库原生往返测试。`scripts/copy-game-resources.ts` 是一次性资源复制脚本；运行中的程序从 `assets/game` 读取预览素材。
+浏览器仅用于开发 UI，完整曲库和 OPT 功能应在桌面程序中使用。`npm run dev` 后可用 Playwright 执行 `tests/player.e2e.mjs`、`tests/rhythm.e2e.mjs`。设置 `CHUNI_UI_URL` 会启用编辑器交互测试；设置 `CHUNI_GAME_ROOT` 会启用全库原生往返测试。
+
+模块划分、进程边界和数据流见 `docs/architecture.md`，项目术语见 `CONTEXT.md`。
 
 ## 参考与依赖
 

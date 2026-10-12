@@ -311,8 +311,11 @@ export class ChartPlayer {
     this.canvas.style.width = `${box.width}px`; this.canvas.style.height = `${box.height}px`;
     this.canvas.dataset.viewport = JSON.stringify(fitSceneViewport(box.width, box.height));
   }
-  private point(lane: number, distance: number, airHeight = 0): Point {
-    return projectTrackPoint(lane, distance, this.speed, airHeight);
+  private point(lane: number, distance: number, airHeight = 0, pastJudge = false): Point {
+    if (!pastJudge || distance >= 0) return projectTrackPoint(lane, distance, this.speed, airHeight);
+    // Same AIR calibration as projectTrackPoint, on a ground anchor that keeps moving behind the judgement line.
+    const ground = projectNativeScrollPoint(lane, distance, [0, 0, 0], this.speed), scale = ground.scale ?? 1;
+    return { x: ground.x, y: ground.y - airHeight * SCENE_HEIGHT * .15 * scale, scale };
   }
   private polygon(points: Point[], fill: string, stroke?: string, lineWidth = 1): void {
     if (this.textureLayer?.active) {
@@ -400,7 +403,7 @@ export class ChartPlayer {
       });
       for (const surface of surfaces) {
         const image = this.bodySprites.get(surface.texture)?.image; if (!image) continue;
-        this.textureLayer.mesh(surface.vertices.map(v => ({ ...projectNativeNotePoint(8, -v.position[2] / zUnit, [v.position[0], v.position[1], 0], this.speed), uv: v.uv, color: v.color })),
+        this.textureLayer.mesh(surface.vertices.map(v => ({ ...projectNativeScrollPoint(8, -v.position[2] / zUnit, [v.position[0], v.position[1], 0], this.speed), uv: v.uv, color: v.color })),
           surface.indices, { image, wrap: [0, 2] });
       }
       return;
@@ -493,8 +496,8 @@ export class ChartPlayer {
       const head = getScrollPosition(this.chart, note.tick, tick, note);
       const tail = getScrollPosition(this.chart, note.tick + (note.duration ?? 0), tick, note);
       const ribbon = getPlayerRibbonSegments(this.chart, note, tick, far);
-      // A held AIR HOLD does not end in mid-air above the judgement line: its line runs straight on, out of the bottom of the screen.
-      if (note.type === 'AIR_HOLD' && tick > note.tick && ribbon.length && Math.abs(ribbon[0].startTick - tick) < 1e-7) {
+      // A held AIR HOLD or AIR SLIDE does not end in mid-air above the judgement line: its line runs straight on, out of the bottom of the screen.
+      if ((note.type === 'AIR_HOLD' || note.type === 'AIR_SLIDE') && tick > note.tick && ribbon.length && Math.abs(ribbon[0].startTick - tick) < 1e-7) {
         ribbon.unshift({ startTick: tick, endTick: tick, startDistance: -AIR_HOLD_NEAR_Z / nativeScrollWorldUnit(this.speed), endDistance: ribbon[0].startDistance });
       }
       const airExtent: [number, number] | undefined = note.type === 'AIR_HOLD' && ribbon.length
@@ -521,11 +524,11 @@ export class ChartPlayer {
             const width = note.width + ((note.endWidth ?? note.width) - note.width) * t;
             if (note.type === 'AIR_SLIDE' || note.type === 'AIR_CRUSH') {
               const rawHeight = (note.height ?? 1) + ((note.endHeight ?? note.height ?? 1) - (note.height ?? 1)) * t;
-              const projected = projectNativeNotePoint(x + (right ? width : 0), distance,
+              const projected = projectNativeScrollPoint(x + (right ? width : 0), distance,
                 [0, nativeAirBaseHeight(rawHeight), 0], this.speed);
               return { ...projected, scale: projected.scale ?? 1 };
             }
-            return this.point(x + (right ? width : 0), distance, height + ((note.endHeight ?? height) - height) * t);
+            return this.point(x + (right ? width : 0), distance, height + ((note.endHeight ?? height) - height) * t, airborne);
           };
           primitives.push({ depth: (segment.startDistance + segment.endDistance) / 2, layer: airborne ? 0 : -1, draw: () => this.ribbon(note, segment, [
             at(segment.startTick, segment.startDistance, false), at(segment.startTick, segment.startDistance, true),

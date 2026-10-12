@@ -4,7 +4,7 @@
 
 ## 提取与校验
 
-`game-models.ts` 按 Node→Mesh→Shape→Batch/State→Texture→Image 引用解码，不按 DDS/VBO 的排列猜配对。已完整读取 407 个音符/判定线模型、711 个 mesh batch，保留原顶点坐标、节点世界矩阵、RGBA、UV0/UV1、条带三角形、材质绑定和混合参数。无纹理的 Arch 也保留。DDS 解成 PNG 后按内容去重复制，来源路径只作元数据。
+`game-models.ts` 按 Node→Mesh→Shape→Batch/State→Texture→Image 引用解码，不按 DDS/VBO 的排列猜配对。已完整读取 407 个音符/判定线模型、711 个 mesh batch，保留原顶点坐标、节点世界矩阵、RGBA、UV0/UV1、条带三角形、材质绑定和混合参数。无纹理的 Arch 也保留。DDS 解成 PNG 后按内容去重复制，来源路径只作元数据。0.1.9 的副本包含 269 张去重 PNG 和 8 个 WAV，HUD 补全后为 274 张。
 
 `GameModelTexture.nominalWidth` 来自 ModelTableRecord 末尾字段。原函数 `0xb43ec0` 经 ModelSet→Model 引用读取该字段，正数时返回 `requestedWidth / nominalWidth`，否则为 1。资源名称的宽度不保证等于建模宽度；不能仅按名称缩放。
 
@@ -119,6 +119,10 @@ CRUSH `add_` 源材质为 layer factors 1/1，operation 2，因此 RGB 乘两张
 ## 边界
 
 完整原网格和原图不自动等于完整原生演出。尚未核清的动态材质/UV、CRUSH Ground/Arch 变换和打击粒子必须单独标记覆盖程度。ModelSet 390/391 的 Ground/Arch 资源确实存在，但已确认的 ALD 初始化只取 Top/Ladder 与 AirLadderLine；尚无证据支持把 Ground/Arch 强加到普通 CRUSH。新增自定义几何、颜色近似或缺资源 fallback 都不能标记为原生已还原。
+
+## 0.1.13 AIR 长条抬升段
+
+AIR HOLD／SLIDE 播放到中间节点及接续节点时不再重新出现抬升段。
 
 ## 0.1.9 地面长条重叠
 
