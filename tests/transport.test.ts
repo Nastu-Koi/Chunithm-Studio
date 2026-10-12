@@ -1,6 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { Transport, soundForHit, getChartHits } from '../src/renderer/transport';
+import { Transport, soundsForHit, envelopeLevel, getChartHits } from '../src/renderer/transport';
 import { createProject, createNote } from '../src/core/model';
 import { tickToSeconds } from '../src/core/timing';
 
@@ -15,13 +15,15 @@ function fakeAudio() {
   const sources: { buffer: unknown; playbackRate: { value: number }; when?: number; offset?: number; stopped: boolean; disconnected: boolean }[] = [];
   const timers = new Map<number, { callback: () => void; delay: number }>();
   let nextTimer = 1;
-  const gains: { gain: { value: number }; ramps: number[] }[] = [];
+  const gains: { gain: { value: number }; ramps: number[]; events: [string, number, number][] }[] = [];
   const oscillators: unknown[] = [];
   const context = {
     currentTime: 0, destination: {},
     createGain: () => {
-      const ramps: number[] = [];
-      const node = { gain: { value: 1, setValueAtTime() {}, linearRampToValueAtTime(value: number) { ramps.push(value); }, exponentialRampToValueAtTime() {} }, ramps, connect() {}, disconnect() {} };
+      const ramps: number[] = [], events: [string, number, number][] = [];
+      const round = (value: number) => Math.round(value * 1e6) / 1e6;
+      const node = { gain: { value: 1, setValueAtTime(value: number, time: number) { events.push(['set', round(value), round(time)]); }, linearRampToValueAtTime(value: number, time: number) { ramps.push(value); events.push(['ramp', round(value), round(time)]); }, exponentialRampToValueAtTime() {},
+        cancelScheduledValues(time: number) { for (let i = events.length - 1; i >= 0; i--) if (events[i][2] >= round(time)) events.splice(i, 1); } }, ramps, events, connect() {}, disconnect() {} };
       gains.push(node); return node;
     },
     createOscillator: () => {
@@ -127,9 +129,49 @@ test('clearing sound resources invalidates an unfinished decoder', async () => {
 });
 
 test('AIR down directions choose the down cue and DAMAGE emits no hit sound', () => {
-  for (const direction of ['DW', 'DL', 'DR', 'ADW', 'ADL', 'ADR', 'DOWN']) assert.equal(soundForHit({ type: 'AIR', direction }), 'airDown');
-  assert.equal(soundForHit({ type: 'AIR', direction: 'IR' }), 'airUp');
-  assert.equal(soundForHit({ type: 'DAMAGE' }), undefined);
+  for (const direction of ['DW', 'DL', 'DR', 'ADW', 'ADL', 'ADR', 'DOWN']) assert.deepEqual(soundsForHit({ type: 'AIR', direction }), ['airDown']);
+  assert.deepEqual(soundsForHit({ type: 'AIR', direction: 'IR' }), ['airUp']);
+  assert.deepEqual(soundsForHit({ type: 'DAMAGE' }), []);
+});
+
+test('note types start the cues the game starts for them', () => {
+  // ExTAP: the TAP judgement and the ExTAP effect together.
+  assert.deepEqual(soundsForHit({ type: 'EXTAP' }), ['tap', 'ex']);
+  assert.deepEqual(soundsForHit({ type: 'AIR', direction: 'IR', sustainHead: true }), ['airHoldIn']);
+  assert.deepEqual(soundsForHit({ type: 'AIR_SLIDE' }), ['airHold']);
+  assert.deepEqual(soundsForHit({ type: 'AIR_CRUSH' }), ['airCrush']);
+  const chart = createProject().chart;
+  chart.notes = [createNote('TAP', 0, 0, 4), { ...createNote('AIR_HOLD', 0, 0, 4), duration: 480, attributes: { parent: 'TAP' } }, { ...createNote('AIR', 960, 8, 4), attributes: { direction: 'IR', parent: 'TAP' } }];
+  const air = getChartHits(chart).filter(hit => hit.type === 'AIR');
+  assert.deepEqual(air.map(hit => [hit.time > 0, soundsForHit(hit)]), [[false, ['airHoldIn']], [true, ['airUp']]]);
+});
+
+test('an envelope holds, decays to its sustain level, and a stop releases from wherever it is', async () => {
+  const envelope = { attack: 0, hold: .02, decay: .1, sustain: .4, release: .5 };
+  assert.deepEqual([0, .02, .07, .12, 1].map(time => Math.round(envelopeLevel(envelope, time) * 100) / 100), [1, 1, .7, .4, .4]);
+  assert.equal(envelopeLevel({ ...envelope, attack: .1 }, .05), .5);
+  assert.equal(envelopeLevel(undefined, 3), 1);
+  const fake = fakeAudio(), transport = new Transport();
+  try {
+    const loading = transport.setGameSounds({ source: 'copied', warnings: [], sounds: {
+      // A TAP judgement: started, stopped again 50 ms later, then a 500 ms release.
+      tap: { cueName: 'tap', layers: [{ path: 'tap.wav', gain: .5, playbackRate: 1, envelope: { attack: 0, hold: 0, decay: 0, sustain: 1, release: .5 }, stopAfter: .05 }] },
+      hold: { cueName: 'hold', layers: [{ path: 'hold.wav', gain: 1, playbackRate: 1, envelope }], limits: [{ key: 'category:Limit_HoldSlideCritical', max: 1 }] },
+    } }, async () => new Uint8Array(1));
+    await Promise.resolve(); for (const call of fake.decoding) call.resolve(buffer(3)); await loading;
+    const chart = createProject().chart;
+    chart.notes = [createNote('TAP', 0, 0, 2), { ...createNote('HOLD', 0, 4, 2), duration: 3840 }, { ...createNote('HOLD', 8, 8, 2), duration: 3840 }];
+    transport.setChart(chart);
+    const playing = transport.play(); fake.resumes[0].resolve(); await playing;
+    const [tap, first, second] = fake.gains.slice(-3), later = getChartHits(chart).at(-1)!.time;
+    assert.deepEqual(tap.events, [['set', .5, .05], ['ramp', 0, .55]]);
+    // The second HOLD replaces the first part-way through its decay: the release starts from that level.
+    const level = Math.round(envelopeLevel(envelope, later) * 1e6) / 1e6, at = Math.round(later * 1e6) / 1e6;
+    assert.ok(level > .4 && level < 1);
+    assert.deepEqual(first.events, [['set', 1, .02], ['set', level, at], ['ramp', 0, Math.round((later + .5) * 1e6) / 1e6]]);
+    assert.deepEqual(second.events, [['set', 1, Math.round((later + .02) * 1e6) / 1e6], ['ramp', .4, Math.round((later + .12) * 1e6) / 1e6]]);
+    transport.pause();
+  } finally { transport.destroy(); fake.restore(); }
 });
 
 test('AIR-CRUSH sounds preserve the shared phase across non-interval shape splits and use the owning shape', () => {

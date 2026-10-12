@@ -1,25 +1,39 @@
 import type { Chart, NoteType } from '../core/model';
 import { tickToSeconds, secondsToTick, getBeatLines } from '../core/timing';
 import { getPlayerPlaybackPoints } from './playback-points';
-import type { GameHitSoundId, GameHitSoundLimit, GameHitSounds } from '../core/game-sounds';
+import type { GameHitSoundEnvelope, GameHitSoundId, GameHitSoundLimit, GameHitSounds } from '../core/game-sounds';
 import { buildJudgementTimeline } from '../core/judgement';
-type SoundLayers = { buffer: AudioBuffer; gain: number; playbackRate: number }[];
+type SoundLayers = { buffer: AudioBuffer; gain: number; playbackRate: number; envelope?: GameHitSoundEnvelope; stopAfter?: number }[];
 type Voice = { stop(at: number): void };
-/** A voice pushed out by a cue or category limit fades this long instead of clicking off. */
+/** A stopped voice without a release time of its own fades this long instead of clicking off. */
 const LIMIT_FADE = 0.02;
-export interface Hit { time: number; type: NoteType; lane: number; width: number; key: string; direction?: string }
-export function soundForHit(hit: Pick<Hit, 'type' | 'direction'>): GameHitSoundId | undefined {
+/** `sustainHead`: the start of an AIR HOLD / AIR SLIDE chain, drawn as an AIR arrow but sounded by the sustain note itself. */
+export interface Hit { time: number; type: NoteType; lane: number; width: number; key: string; direction?: string; sustainHead?: boolean }
+/**
+ * The cues the game's note classes start, read from chusanApp.exe (docs/native-hit-sounds.md): an ExTAP sounds the TAP
+ * judgement and the ExTAP effect together; an AIR HOLD / AIR SLIDE starts with its own cue and marks each action with another.
+ */
+export function soundsForHit(hit: Pick<Hit, 'type' | 'direction' | 'sustainHead'>): GameHitSoundId[] {
   switch (hit.type) {
-    case 'TAP': return 'tap';
-    case 'EXTAP': return 'ex';
-    case 'FLICK': return 'flick';
-    case 'HOLD': return 'hold';
-    case 'SLIDE': return 'slide';
-    case 'AIR': return ['DOWN', 'DW', 'DL', 'DR', 'ADW', 'ADL', 'ADR'].includes(hit.direction ?? '') ? 'airDown' : 'airUp';
-    case 'AIR_HOLD': case 'AIR_SLIDE': return 'airHold';
-    case 'AIR_CRUSH': return 'airCrush';
-    case 'DAMAGE': return undefined;
+    case 'TAP': return ['tap'];
+    case 'EXTAP': return ['tap', 'ex'];
+    case 'FLICK': return ['flick'];
+    case 'HOLD': return ['hold'];
+    case 'SLIDE': return ['slide'];
+    case 'AIR': return [hit.sustainHead ? 'airHoldIn' : ['DOWN', 'DW', 'DL', 'DR', 'ADW', 'ADL', 'ADR'].includes(hit.direction ?? '') ? 'airDown' : 'airUp'];
+    case 'AIR_HOLD': case 'AIR_SLIDE': return ['airHold'];
+    case 'AIR_CRUSH': return ['airCrush'];
+    case 'DAMAGE': return [];
   }
+}
+/** Envelope level (0 to 1) of a sounding voice `elapsed` seconds after its start, before any release. */
+export function envelopeLevel(envelope: GameHitSoundEnvelope | undefined, elapsed: number): number {
+  if (!envelope) return 1;
+  const { attack, hold, decay, sustain } = envelope;
+  if (elapsed < attack) return Math.max(0, elapsed) / attack;
+  const decaying = elapsed - attack - hold;
+  if (decaying <= 0 || sustain >= 1) return 1;
+  return decaying < decay ? 1 + (sustain - 1) * decaying / decay : sustain;
 }
 export function getChartHits(chart: Chart): Hit[] {
   const hits: Hit[] = [];
@@ -35,7 +49,8 @@ export function getChartHits(chart: Chart): Hit[] {
   }
   for (const n of chart.notes) {
     if (n.type === 'DAMAGE' || n.type === 'AIR_CRUSH') continue;
-    for (const point of getPlayerPlaybackPoints(chart, n)) if (point.sound) hits.push({ time: tickToSeconds(chart, point.tick), type: point.type, lane: point.lane, width: point.width, key: `${n.id}:${point.position}`, direction: point.direction });
+    for (const point of getPlayerPlaybackPoints(chart, n)) if (point.sound) hits.push({ time: tickToSeconds(chart, point.tick), type: point.type, lane: point.lane, width: point.width, key: `${n.id}:${point.position}`, direction: point.direction,
+      ...(point.position === 'head' && (n.type === 'AIR_HOLD' || n.type === 'AIR_SLIDE') ? { sustainHead: true } : {}) });
   }
   hits.sort((a, b) => a.time - b.time);
   return hits;
@@ -128,13 +143,14 @@ export class Transport {
       try {
         const layers = await Promise.all(sound.layers.map(async layer => {
           if (!Number.isFinite(layer.gain) || layer.gain < 0 || !Number.isFinite(layer.playbackRate) || layer.playbackRate <= 0) throw new Error('音效参数无效');
+          if ([...Object.values(layer.envelope ?? {}), layer.stopAfter ?? 0].some(value => !Number.isFinite(value) || value < 0)) throw new Error('音效参数无效');
           if (!decoded.has(layer.path)) decoded.set(layer.path, read(layer.path).then(bytes => context.decodeAudioData(new Uint8Array(bytes).buffer)));
-          return { buffer: await decoded.get(layer.path)!, gain: layer.gain, playbackRate: layer.playbackRate };
+          return { buffer: await decoded.get(layer.path)!, gain: layer.gain, playbackRate: layer.playbackRate, envelope: layer.envelope, stopAfter: layer.stopAfter };
         }));
         if (layers.length) {
           // Some cues (including bundled HOLD/SLIDE) are the same complete sound.
           // Keep every layer within a cue, but share identity for equal cue mixes.
-          const key = JSON.stringify(sound.layers.map(layer => JSON.stringify([layer.path, layer.gain, layer.playbackRate])).sort());
+          const key = JSON.stringify(sound.layers.map(layer => JSON.stringify([layer.path, layer.gain, layer.playbackRate, layer.envelope, layer.stopAfter])).sort());
           if (!sharedLayers.has(key)) sharedLayers.set(key, layers);
           next.set(id as GameHitSoundId, sharedLayers.get(key)!);
           limits.set(id as GameHitSoundId, (sound.limits ?? []).filter(limit => limit.max >= 1));
@@ -201,11 +217,9 @@ export class Transport {
       // A scheduling pass consumes each entire timestamp group. Use chart time,
       // not the clamped audio start time, so nearby/late hits remain distinct.
       if (hit.time !== groupTime) { groupTime = hit.time; played.clear(); }
-      const soundId = soundForHit(hit); if (!soundId) continue;
-      const sound = this.samples.get(soundId) ?? soundId;
-      if (played.has(sound)) continue;
-      played.add(sound);
-      if (this.effects && hit.time >= now - 0.03 && (!this.loop || hit.time < this.loop.end)) this.scheduleEffect(hit, this.anchorClock + (hit.time - this.anchorSeconds) / this.rate);
+      const fresh = soundsForHit(hit).filter(soundId => { const sound = this.samples.get(soundId) ?? soundId; return !played.has(sound) && !!played.add(sound); });
+      if (!fresh.length) continue;
+      if (this.effects && hit.time >= now - 0.03 && (!this.loop || hit.time < this.loop.end)) this.scheduleEffect(hit, fresh, this.anchorClock + (hit.time - this.anchorSeconds) / this.rate);
     }
   }
   private scheduleMetronome(horizon: number): void {
@@ -223,39 +237,53 @@ export class Transport {
     }
     this.metronomeTick = until;
   }
-  private scheduleEffect(hit: Hit, when: number): void {
+  private playSound(soundId: GameHitSoundId, when: number): boolean {
+    const context = this.context!, destination = this.effectsGain!, layers = this.samples.get(soundId);
+    if (!layers?.length) return false;
+    const nodes = layers.map(layer => {
+      const source = context.createBufferSource(), gain = context.createGain(), envelope = layer.envelope;
+      source.buffer = layer.buffer; source.playbackRate.value = layer.playbackRate;
+      // Envelope times run in real time, whatever the pitch of the layer.
+      if (envelope && envelope.attack > 0) { gain.gain.value = 0; gain.gain.setValueAtTime(0, when); gain.gain.linearRampToValueAtTime(layer.gain, when + envelope.attack); }
+      else gain.gain.value = layer.gain;
+      if (envelope && envelope.sustain < 1) { const start = when + envelope.attack + envelope.hold; gain.gain.setValueAtTime(layer.gain, start); gain.gain.linearRampToValueAtTime(layer.gain * envelope.sustain, start + envelope.decay); }
+      source.connect(gain); gain.connect(destination); this.activeEffects.add(source);
+      source.start(when);
+      return { source, gain, level: layer.gain, envelope, stopAt: undefined as number | undefined };
+    });
+    // A stop enters the release from wherever the envelope is; an earlier stop replaces a later one.
+    const stop = (node: typeof nodes[number], at: number): void => {
+      if (node.stopAt !== undefined && node.stopAt <= at) return;
+      node.stopAt = at;
+      const release = node.envelope?.release || LIMIT_FADE, param = node.gain.gain;
+      param.cancelScheduledValues?.(at); param.setValueAtTime(node.level * envelopeLevel(node.envelope, at - when), at); param.linearRampToValueAtTime(0, at + release);
+      try { node.source.stop(at + release); } catch { /* Already ended. */ }
+    };
+    // The cue that started a layer may stop it again shortly after: a TAP judgement sounds 50 ms and then releases.
+    for (const [index, layer] of layers.entries()) if (layer.stopAfter !== undefined) stop(nodes[index], when + layer.stopAfter);
+    const voice: Voice = { stop: at => { for (const node of nodes) stop(node, at); } };
+    // The game limits how many playbacks of one cue, or of one category such as HOLD / SLIDE, sound together:
+    // a new hit takes the place of the oldest instead of piling another full-length tail on top.
+    const keys = (this.limits.get(soundId) ?? []).map(limit => {
+      const list = this.voices.get(limit.key) ?? [];
+      while (list.length >= limit.max) list.shift()!.stop(when);
+      list.push(voice); this.voices.set(limit.key, list);
+      return limit.key;
+    });
+    let remaining = nodes.length;
+    for (const { source, gain } of nodes) source.onended = () => {
+      this.activeEffects.delete(source); source.disconnect(); gain.disconnect();
+      if (--remaining) return;
+      for (const key of keys) { const list = this.voices.get(key), index = list?.indexOf(voice) ?? -1; if (index >= 0) list!.splice(index, 1); }
+    };
+    return true;
+  }
+  private scheduleEffect(hit: Hit, sounds: GameHitSoundId[], when: number): void {
     const context = this.context!, destination = this.effectsGain!;
     when = Math.max(when, context.currentTime);
-    const soundId = soundForHit(hit), layers = soundId ? this.samples.get(soundId) : undefined;
-    if (layers?.length) {
-      const nodes = layers.map(layer => {
-        const source = context.createBufferSource(), gain = context.createGain();
-        source.buffer = layer.buffer; source.playbackRate.value = layer.playbackRate; gain.gain.value = layer.gain;
-        source.connect(gain); gain.connect(destination); this.activeEffects.add(source);
-        source.start(when);
-        return { source, gain, level: layer.gain };
-      });
-      let stopped = false;
-      const voice: Voice = { stop: at => {
-        if (stopped) return; stopped = true;
-        for (const { source, gain, level } of nodes) { gain.gain.setValueAtTime(level, at); gain.gain.linearRampToValueAtTime(0, at + LIMIT_FADE); try { source.stop(at + LIMIT_FADE); } catch { /* Already ended. */ } }
-      } };
-      // The game limits how many playbacks of one cue, or of one category such as HOLD / SLIDE, sound together:
-      // a new hit takes the place of the oldest instead of piling another full-length tail on top.
-      const keys = (soundId && this.limits.get(soundId) || []).map(limit => {
-        const list = this.voices.get(limit.key) ?? [];
-        while (list.length >= limit.max) list.shift()!.stop(when);
-        list.push(voice); this.voices.set(limit.key, list);
-        return limit.key;
-      });
-      let remaining = nodes.length;
-      for (const { source, gain } of nodes) source.onended = () => {
-        this.activeEffects.delete(source); source.disconnect(); gain.disconnect();
-        if (--remaining) return;
-        for (const key of keys) { const list = this.voices.get(key), index = list?.indexOf(voice) ?? -1; if (index >= 0) list!.splice(index, 1); }
-      };
-      return;
-    }
+    let sampled = false;
+    for (const soundId of sounds) sampled = this.playSound(soundId, when) || sampled;
+    if (sampled) return;
     const air = hit.type.startsWith('AIR'), ex = hit.type === 'EXTAP';
     const oscillator = context.createOscillator(), gain = context.createGain();
     const duration = air ? 0.13 : ex ? 0.09 : 0.045;

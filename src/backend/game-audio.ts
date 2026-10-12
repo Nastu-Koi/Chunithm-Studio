@@ -3,19 +3,21 @@ import { access, mkdir, mkdtemp, readFile, realpath, rename, rm, writeFile } fro
 import path from 'node:path';
 import { parseAfs2, parseCommands, parseUtf, type UtfTable, type UtfValue } from './cri';
 import { decodeAdx, prepareAudio } from './audio';
-import type { GameHitSoundId, GameHitSoundLimit, GameHitSounds } from '../core/game-sounds';
+import type { GameHitSoundEnvelope, GameHitSoundId, GameHitSoundLimit, GameHitSounds } from '../core/game-sounds';
 export type { GameHitSoundId, GameHitSounds } from '../core/game-sounds';
 
 /** Names are taken from the user's chu.h and the bank's CueNameTable, never row numbers. */
 const CUES: Partial<Record<GameHitSoundId, string>> = {
-  tap: 'se_touch_tap_jcritical_action',
-  ex: 'se_touch_chara_fire',
+  tap: 'se_touch_tap_jcritical',
+  ex: 'se_touch_chara_laser',
   flick: 'se_touch_flick_jcritical',
   hold: 'se_touch_hold_jcritical',
   slide: 'se_touch_slide_jcritical',
   airUp: 'se_air_cut_up',
   airDown: 'se_air_cut_down',
-  airHold: 'se_air_hold_jcritical',
+  airHoldIn: 'se_air_hold_in',
+  airHold: 'se_air_hold_beat',
+  airCrush: 'se_air_cut_break',
 };
 
 export interface ExtractedCueLayer {
@@ -25,15 +27,23 @@ export interface ExtractedCueLayer {
   sampleCount: number;
   gain: number;
   playbackRate: number;
+  envelope?: GameHitSoundEnvelope;
+  stopAfter?: number;
 }
 export interface ExtractedCue {
   layers: ExtractedCueLayer[];
   limits: GameHitSoundLimit[];
   /** Command codes found on the cue's path whose meaning is not established; their effect is not reproduced. */
   unsupported: number[];
+  /** Parts handled approximately, as `kind:cueName`: `curve` (a non-linear envelope curve, played linear) and `aisac` (a time-driven AISAC, not reproduced). */
+  notes: string[];
 }
 type Row = Record<string, UtfValue>;
-type CueContext = { limit?: number; categories: number[]; unsupported: Set<number> };
+type CueContext = { limit?: number; categories: number[]; unsupported: Set<number>; notes: Set<string> };
+/** Times in milliseconds as the bank stores them; sustain is a level from 0 to 1. */
+type LayerState = { gain: number; cents: number; attack: number; hold: number; decay: number; sustain: number; release: number };
+type CueParts = { layers: ExtractedCueLayer[]; limits: GameHitSoundLimit[]; unsupported: Set<number>; notes: Set<string> };
+const START: LayerState = { gain: 1, cents: 0, attack: 0, hold: 0, decay: 0, sustain: 1, release: 0 };
 const table = (root: Row, name: string): Row[] => { const data = root[name]; return Buffer.isBuffer(data) && data.length ? parseUtf(data).rows : []; };
 
 /**
@@ -107,38 +117,60 @@ class HitSoundBank {
     if (!Buffer.isBuffer(data)) throw new Error(`音效 ${table} 命令无效。`);
     return parseCommands(data);
   }
-  private parameters(table: string, index: UtfValue | undefined, inherited: number, context: CueContext): number | null {
-    let gain = inherited;
+  /**
+   * Command meanings beyond the bus send were checked against the CRI Atom runtime linked into chusanApp.exe: its command
+   * reader writes 87 to the parameter criAtomExPlayer_SetVolume uses, 5 to the one criAtomExPlayer_SetPitch uses (cents),
+   * and 36 to 40 to the five parameters behind criAtomExPlayer_SetEnvelope{Attack,Hold,Decay}Time, ...SustainLevel
+   * and ...ReleaseTime. 121 repeats the summed pitch as the voice's maximum pitch and changes nothing audible.
+   * See docs/native-hit-sounds.md.
+   */
+  private parameters(table: string, index: UtfValue | undefined, inherited: LayerState, context: CueContext): LayerState | null {
+    const state = { ...inherited };
     for (const command of this.commands(table, index)) {
-      if (command.type === 100) {
-        if (command.data.length !== 4) throw new Error('音效 selector 格式不支持。');
-        const selector = this.row('StringValueTable', command.data.readUInt16BE(0)).StringValue;
-        const label = this.row('StringValueTable', command.data.readUInt16BE(2)).StringValue;
+      const { type, data } = command, word = (offset: number) => data.readUInt16BE(offset);
+      if (type === 100) {
+        if (data.length !== 4) throw new Error('音效 selector 格式不支持。');
+        const selector = this.row('StringValueTable', word(0)).StringValue;
+        const label = this.row('StringValueTable', word(2)).StringValue;
         if (selector !== 'Options_Tap_Inst') throw new Error(`暂不支持音效 selector ${selector}。`);
         if (label !== 'Default') return null;
-      }
-      if (command.type === 111) {
-        if (command.data.length !== 4) throw new Error('音效总线路由格式不支持。');
-        const bus = this.row('StringValueTable', command.data.readUInt16BE(0)).StringValue;
-        if (bus === 'Phone_1pass') gain *= command.data.readUInt16BE(2) / 10000;
+      } else if (type === 111) {
+        if (data.length !== 4) throw new Error('音效总线路由格式不支持。');
+        const bus = this.row('StringValueTable', word(0)).StringValue;
+        if (bus === 'Phone_1pass') state.gain *= word(2) / 10000;
       }
       // Volume in percent, the same command a category uses for its volume.
-      else if (command.type === 87 && command.data.length === 2) gain *= command.data.readUInt16BE(0) / 100;
+      else if (type === 87 && data.length === 2) state.gain *= word(0) / 100;
+      // Pitch in cents, added down the sequence, track and synth.
+      else if (type === 5 && data.length === 2) state.cents += data.readInt16BE(0);
+      else if (type === 121 && data.length === 2) { /* Maximum pitch of the voice: a hint for the mixer. */ }
+      // Envelope. The times with a curve carry its type in the third byte; 0 is linear.
+      else if ((type === 36 || type === 38 || type === 40) && data.length === 4) {
+        state[type === 36 ? 'attack' : type === 38 ? 'decay' : 'release'] = word(0);
+        if (data[2] !== 0) context.notes.add('curve');
+      }
+      else if (type === 37 && data.length === 4) state.hold = word(2);
+      else if (type === 39 && data.length === 2) state.sustain = Math.min(1, word(0) / 10000);
       // Cue limit: the first value is the number of simultaneous playbacks of this cue.
-      else if (command.type === 79 && command.data.length >= 2) context.limit = command.data.readUInt16BE(0);
+      else if (type === 79 && data.length >= 2) context.limit = word(0);
       // Category indexes into the ACF's CategoryTable.
-      else if (command.type === 65 && command.data.length % 4 === 0) for (let offset = 0; offset < command.data.length; offset += 4) context.categories.push(command.data.readUInt32BE(offset));
-      else if (command.type !== 100 && command.type !== 111) context.unsupported.add(command.type);
+      else if (type === 65 && data.length % 4 === 0) for (let offset = 0; offset < data.length; offset += 4) context.categories.push(data.readUInt32BE(offset));
+      else context.unsupported.add(type);
     }
-    return gain;
+    return state;
   }
-  extract(cueName: string, mix?: HitSoundMix): ExtractedCue {
+  /** Time-driven AISACs (filter sweeps and the like) are attached per sequence, track or synth; none is reproduced. */
+  private aisacs(row: Row, context: CueContext): void { if (Buffer.isBuffer(row.LocalAisacs) && row.LocalAisacs.length) context.notes.add('aisac'); }
+  /** One cue's own waveforms, plus those of the cues its action tracks start. */
+  private parts(cueName: string, mix: HitSoundMix | undefined, stopAfter: number | undefined, level: number): CueParts {
+    if (level > 4) throw new Error('音效动作引用过深。');
     const name = this.table('CueNameTable').rows.find(row => row.CueName === cueName);
     if (!name) throw new Error(`本地音效库没有 ${cueName}。`);
     const cue = this.row('CueTable', Number(name.CueIndex));
-    const layers: ExtractedCueLayer[] = [], active = new Set<string>(), context: CueContext = { categories: [], unsupported: new Set() };
-    const visit = (type: number, index: number, gain: number, depth = 0): void => {
-      if (gain === 0) return;
+    const layers: ExtractedCueLayer[] = [], started: CueParts[] = [], active = new Set<string>();
+    const context: CueContext = { categories: [], unsupported: new Set(), notes: new Set() };
+    const visit = (type: number, index: number, state: LayerState, depth = 0): void => {
+      if (state.gain === 0) return;
       if (depth > 16 || active.has(`${type}:${index}`)) throw new Error('音效引用含循环或过深嵌套。');
       active.add(`${type}:${index}`);
       try {
@@ -155,41 +187,77 @@ class HitSoundBank {
           if (entry.bytes.length < 24 || entry.bytes.readUInt16BE(0) !== 0x8000) throw new Error('内嵌音效的 ADX 头无效。');
           const sampleRate = Number(wave.SamplingRate), sampleCount = Number(wave.NumSamples);
           if (!(sampleRate > 0) || !(sampleCount > 0)) throw new Error('音效采样信息无效。');
-          layers.push({ waveformId: id, bytes: entry.bytes, sampleRate, sampleCount, gain, playbackRate: 1 });
+          const shaped = state.attack > 0 || state.hold > 0 || state.decay > 0 || state.sustain < 1 || state.release > 0;
+          layers.push({ waveformId: id, bytes: entry.bytes, sampleRate, sampleCount, gain: state.gain, playbackRate: 2 ** (state.cents / 1200),
+            ...(shaped ? { envelope: { attack: state.attack / 1000, hold: state.hold / 1000, decay: state.decay / 1000, sustain: state.sustain, release: state.release / 1000 } } : {}),
+            ...(stopAfter === undefined ? {} : { stopAfter }) });
         } else if (type === 2) {
           const synth = this.row('SynthTable', index);
           if (Number(synth.Type) !== 0 || Number(synth.NumActionTracks) > 0) throw new Error('此音效使用了未支持的 synth 触发方式。');
-          const nextGain = this.parameters('SynthCommandTable', synth.CommandIndex, gain, context);
-          if (nextGain === null || nextGain === 0) return;
+          this.aisacs(synth, context);
+          const next = this.parameters('SynthCommandTable', synth.CommandIndex, state, context);
+          if (next === null || next.gain === 0) return;
           const items = synth.ReferenceItems;
           if (!Buffer.isBuffer(items) || items.length % 4 !== 0) throw new Error('音效 synth 引用列表损坏。');
-          for (let i = 0; i < items.length; i += 4) visit(items.readUInt16BE(i), items.readUInt16BE(i + 2), nextGain, depth + 1);
+          for (let i = 0; i < items.length; i += 4) visit(items.readUInt16BE(i), items.readUInt16BE(i + 2), next, depth + 1);
         } else if (type === 3) {
           const sequence = this.row('SequenceTable', index);
-          if (Number(sequence.Type) !== 0 || Number(sequence.NumActionTracks) > 0) throw new Error('此音效使用了未支持的 sequence 触发方式。');
-          const nextGain = this.parameters('SeqCommandTable', sequence.CommandIndex, gain, context);
-          if (nextGain === null || nextGain === 0) return;
+          if (Number(sequence.Type) !== 0) throw new Error('此音效使用了未支持的 sequence 触发方式。');
+          this.aisacs(sequence, context);
+          const next = this.parameters('SeqCommandTable', sequence.CommandIndex, state, context);
+          if (next === null || next.gain === 0) return;
+          // Action tracks start (and may later stop) other cues of this bank: TAP judgements are built this way.
+          for (let i = 0; i < Number(sequence.NumActionTracks ?? 0); i++) {
+            const action = this.row('ActionTrackTable', Number(sequence.ActionTrackStartIndex) + i);
+            if (Number(action.TargetType) !== 1 || (this.root.Name !== undefined && action.TargetAcbName !== this.root.Name)) throw new Error('此音效的动作目标不在本音效库内。');
+            const cueIndex = this.table('CueTable').rows.findIndex(row => Number(row.CueId) === Number(action.TargetId));
+            const target = this.table('CueNameTable').rows.find(row => Number(row.CueIndex) === cueIndex)?.CueName;
+            if (cueIndex < 0 || typeof target !== 'string') throw new Error('此音效的动作目标不存在。');
+            let time = 0, play: number | undefined, stop: number | undefined;
+            for (const command of this.commands('TrackEventTable', action.CommandIndex)) {
+              if (command.type === 0) continue;
+              if (command.type === 7100 && play === undefined) play = time;
+              else if (command.type === 2001 && command.data.length === 4) time += command.data.readUInt32BE(0);
+              else if (command.type === 7101 && play !== undefined && stop === undefined) stop = time;
+              else throw new Error('此音效包含未支持的动作命令。');
+            }
+            if (play !== 0) throw new Error('此音效的动作不是立即播放，暂不支持。');
+            const after = stop === undefined ? stopAfter : Math.min(stop / 1000, stopAfter ?? Infinity);
+            started.push(this.parts(target, mix, after, level + 1));
+          }
           const indexes = sequence.TrackIndex;
           if (!Buffer.isBuffer(indexes) || indexes.length !== Number(sequence.NumTracks) * 2) throw new Error('音效 track 引用列表损坏。');
           for (let i = 0; i < indexes.length; i += 2) {
             const track = this.row('TrackTable', indexes.readUInt16BE(i));
-            const trackGain = this.parameters('TrackCommandTable', track.CommandIndex, nextGain, context);
-            if (trackGain === null || trackGain === 0) continue;
+            this.aisacs(track, context);
+            const trackState = this.parameters('TrackCommandTable', track.CommandIndex, next, context);
+            if (trackState === null || trackState.gain === 0) continue;
             for (const command of this.commands('TrackEventTable', track.EventIndex)) {
               if (command.type === 0) continue;
               if (![2000, 2003].includes(command.type) || command.data.length < 4) throw new Error('此音效包含未支持的时间或触发命令。');
-              visit(command.data.readUInt16BE(0), command.data.readUInt16BE(2), trackGain, depth + 1);
+              visit(command.data.readUInt16BE(0), command.data.readUInt16BE(2), trackState, depth + 1);
             }
           }
         } else throw new Error(`音效引用类型 ${type} 暂不支持。`);
       } finally { active.delete(`${type}:${index}`); }
     };
-    visit(Number(cue.ReferenceType), Number(cue.ReferenceIndex), 1);
-    if (!layers.length) throw new Error(`音效 ${cueName} 在默认音色与耳机路由下没有波形。`);
+    visit(Number(cue.ReferenceType), Number(cue.ReferenceIndex), START);
     const scale = mix?.gain(context.categories) ?? 1;
-    return { layers: layers.map(layer => ({ ...layer, gain: layer.gain * scale })),
+    const parts: CueParts = { layers: layers.map(layer => ({ ...layer, gain: layer.gain * scale })),
       limits: [...(context.limit ? [{ key: `cue:${cueName}`, max: context.limit }] : []), ...(mix?.limits(context.categories) ?? [])],
-      unsupported: [...context.unsupported].sort((a, b) => a - b) };
+      unsupported: context.unsupported, notes: new Set([...context.notes].map(note => `${note}:${cueName}`)) };
+    for (const other of started) {
+      parts.layers.push(...other.layers);
+      for (const limit of other.limits) if (!parts.limits.some(known => known.key === limit.key)) parts.limits.push(limit);
+      for (const code of other.unsupported) parts.unsupported.add(code);
+      for (const note of other.notes) parts.notes.add(note);
+    }
+    return parts;
+  }
+  extract(cueName: string, mix?: HitSoundMix): ExtractedCue {
+    const parts = this.parts(cueName, mix, undefined, 0);
+    if (!parts.layers.length) throw new Error(`音效 ${cueName} 在默认音色与耳机路由下没有波形。`);
+    return { layers: parts.layers, limits: parts.limits, unsupported: [...parts.unsupported].sort((a, b) => a - b), notes: [...parts.notes].sort() };
   }
 }
 
@@ -216,19 +284,18 @@ export async function loadGameHitSounds(gamePath: string, cacheDirectory: string
   if (!await exists(source)) throw new Error('游戏目录中没有 data/sound/chu.acb，无法读取原版打击音。');
   const bank = new HitSoundBank(await readFile(source));
   const result: GameHitSounds = { source, sounds: {}, warnings: [
-    '使用原版 ADX 波形、默认 TAP 音色及 Phone_1pass 路由，并按音效库还原各级音量、Cue 与分类的同时发声数限制；尚未重现 CRI 的动态 AISAC（游戏内各项音量选项）与持续循环音。',
-    'EX 选用归于 VolumeOptions_ExTap 的 se_touch_chara_fire；具体 EX 特效分支和 se_touch_chara_laser 的调用条件尚未实机对照。',
-    'airHold 使用 se_air_hold_jcritical；将它用于 AIR-SLIDE 属于预览映射，原版 AIR-SLIDE 的音效触发规则尚未确认。',
-    'AIR-CRUSH 的原版 cue 调用关系尚未确认，本次没有指定该音效。',
+    '使用原版 ADX 波形、默认 TAP 音色及 Phone_1pass 路由，并按音效库还原各级音量、音高、包络、动作轨（TAP 判定音在 50 毫秒后转入释音）以及 Cue 与分类的同时发声数限制；尚未重现游戏内各项音量选项（AISAC）。',
+    '未重现 HOLD / SLIDE / AIR HOLD 按住期间的循环音（se_touch_hold_loop、se_touch_slide_loop、se_air_hold_loop）。',
   ] };
   const config = path.join(gameRoot, 'data', 'sound', 'chu.acf');
   const mix = await exists(config) ? new HitSoundMix(await readFile(config)) : undefined;
   if (!mix) result.warnings.push('游戏目录中没有 data/sound/chu.acf：未应用分类音量、总线音量与分类发声数限制。');
-  const unsupported = new Map<number, string[]>();
+  const unsupported = new Map<number, string[]>(), notes = new Map<string, string[]>();
   await mkdir(output, { recursive: true });
   for (const [id, cueName] of Object.entries(CUES)) {
-    const { layers, limits, unsupported: codes } = bank.extract(cueName, mix);
+    const { layers, limits, unsupported: codes, notes: approximations } = bank.extract(cueName, mix);
     for (const code of codes) unsupported.set(code, [...(unsupported.get(code) ?? []), cueName]);
+    for (const note of approximations) { const [kind, cue] = note.split(':'); notes.set(kind, [...new Set([...(notes.get(kind) ?? []), cue])]); }
     const imported = [];
     for (const layer of layers) {
       const digest = createHash('sha256').update(layer.bytes).digest('hex');
@@ -245,10 +312,13 @@ export async function loadGameHitSounds(gamePath: string, cacheDirectory: string
           await rename(wav, wavPath);
         } finally { await rm(temp, { recursive: true, force: true }); }
       }
-      imported.push({ path: wavPath, gain: layer.gain, playbackRate: layer.playbackRate });
+      imported.push({ path: wavPath, gain: layer.gain, playbackRate: layer.playbackRate, ...(layer.envelope ? { envelope: layer.envelope } : {}), ...(layer.stopAfter === undefined ? {} : { stopAfter: layer.stopAfter }) });
     }
     result.sounds[id as GameHitSoundId] = { cueName, layers: imported, ...(limits.length ? { limits } : {}) };
   }
-  if (unsupported.size) result.warnings.push(`以下命令的含义尚无依据，未套用其效果（按取证标准保持原波形）：${[...unsupported].sort((a, b) => a[0] - b[0]).map(([code, cues]) => `${code}（${cues.map(cue => cue.replace(/^se_/, '')).join('、')}）`).join('；')}。`);
+  const short = (cues: string[]) => cues.map(cue => cue.replace(/^se_/, '')).join('、');
+  if (unsupported.size) result.warnings.push(`以下命令的含义尚无依据，未套用其效果：${[...unsupported].sort((a, b) => a[0] - b[0]).map(([code, cues]) => `${code}（${short(cues)}）`).join('；')}。`);
+  if (notes.has('aisac')) result.warnings.push(`以下音效带随时间变化的 AISAC（滤波或音量扫动），未重现：${short(notes.get('aisac')!)}。`);
+  if (notes.has('curve')) result.warnings.push(`以下音效的包络使用非线性曲线，按线性处理：${short(notes.get('curve')!)}。`);
   return result;
 }

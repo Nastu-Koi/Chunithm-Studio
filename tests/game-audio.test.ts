@@ -63,13 +63,16 @@ test('decrypts real ADX9 cues into transient PCM without clipped noise, and reus
     await assert.rejects(access(rejectedWav), { code: 'ENOENT' });
     assert.equal(extractCueLayers(original, 'se_air_cut_up').length, 1, 'Speaker and headphone routes must not be duplicated.');
     const imported = await loadGameHitSounds(game, temp);
-    assert.equal(Object.keys(imported.sounds).length, 8);
-    assert.equal(imported.sounds.airCrush, undefined);
+    assert.equal(Object.keys(imported.sounds).length, 10);
+    assert.equal(imported.sounds.airCrush?.cueName, 'se_air_cut_break');
+    assert.equal(imported.sounds.ex?.cueName, 'se_touch_chara_laser');
     assert.equal(imported.sounds.hold?.layers.length, 2);
     assert.deepEqual(imported.sounds.hold?.layers, imported.sounds.slide?.layers);
-    assert.ok(imported.warnings.some(w => w.includes('AIR-CRUSH')));
+    assert.ok(imported.warnings.some(w => w.includes('循环音')));
+    // The TAP judgement also starts 50 ms of a sustained loop waveform: the only sample that does not decay by itself.
+    const sustained = imported.sounds.tap!.layers[1].path;
     const paths = [...new Set(Object.values(imported.sounds).flatMap(sound => sound.layers.map(layer => layer.path)))];
-    assert.equal(paths.length, 8);
+    assert.equal(paths.length, 11);
     const times = new Map<string, number>();
     for (const file of paths) {
       assert.ok(file.startsWith(temp + path.sep));
@@ -94,7 +97,7 @@ test('decrypts real ADX9 cues into transient PCM without clipped noise, and reus
       // The decoded native EX fire sample contains some saturation (~1.7%).
       // The broken encrypted-as-PCM path clips 5–25% and never decays at its tail.
       assert.ok(clipping / count < 0.03, `ADX9 must be decrypted before PCM conversion; clipped fraction=${clipping / count}, RMS=${rms}`);
-      assert.ok(tailRms < rms * 0.2, `A decaying hit must not contain persistent high-energy noise: RMS=${rms}, tail=${tailRms}`);
+      if (file !== sustained) assert.ok(tailRms < rms * 0.2, `A decaying hit must not contain persistent high-energy noise: RMS=${rms}, tail=${tailRms}`);
       times.set(file, (await stat(file)).mtimeMs);
     }
     const again = await loadGameHitSounds(game, temp);
@@ -111,13 +114,33 @@ test('real cues carry their volumes, cue limits and the category limits of the c
   const acb = await readFile(source), acf = await readFile(config);
   const cue = (name: string) => { const result = extractCue(acb, name, acf); return { gains: result.layers.map(layer => Number(layer.gain.toFixed(4))), limits: result.limits, unsupported: result.unsupported }; };
   // Phone_1pass send x cue volume x SE_Game 0.75 x Phone_1pass bus 0.5.
-  assert.deepEqual(cue('se_touch_flick_jcritical'), { gains: [.3], limits: [{ key: 'cue:se_touch_flick_jcritical', max: 1 }], unsupported: [5, 121] });
-  assert.deepEqual(cue('se_touch_chara_fire'), { gains: [.27], limits: [{ key: 'cue:se_touch_chara_fire', max: 1 }], unsupported: [] });
+  assert.deepEqual(cue('se_touch_flick_jcritical'), { gains: [.3], limits: [{ key: 'cue:se_touch_flick_jcritical', max: 1 }], unsupported: [] });
+  assert.deepEqual(cue('se_touch_chara_laser'), { gains: [.366], limits: [{ key: 'cue:se_touch_chara_laser', max: 1 }], unsupported: [11] });
   // HOLD and SLIDE have no cue limit of their own: they share one voice through their category.
   for (const name of ['se_touch_hold_jcritical', 'se_touch_slide_jcritical'])
-    assert.deepEqual(cue(name), { gains: [.3, .3], limits: [{ key: 'category:Limit_HoldSlideCritical', max: 1 }], unsupported: [37, 38, 39, 40] });
+    assert.deepEqual(cue(name), { gains: [.3, .3], limits: [{ key: 'category:Limit_HoldSlideCritical', max: 1 }], unsupported: [] });
   assert.deepEqual(cue('se_touch_tap_jcritical_action').limits, [{ key: 'cue:se_touch_tap_jcritical_action', max: 1 }, { key: 'category:Limit_Tap', max: 1 }]);
   assert.deepEqual(cue('se_touch_tap_jcritical_action').gains, [.57]);
   // Without the config file only the bank's own parameters apply.
   assert.deepEqual(extractCue(acb, 'se_touch_flick_jcritical').layers.map(layer => layer.gain), [.8]);
+});
+
+test('real cues carry their pitch, envelope and the cues their action tracks start and stop', { skip: !configured }, async () => {
+  const acb = await readFile(source), acf = await readFile(config);
+  const layers = (name: string) => extractCue(acb, name, acf).layers.map(layer => ({ wave: layer.waveformId, rate: Number(layer.playbackRate.toFixed(4)), envelope: layer.envelope, stopAfter: layer.stopAfter }));
+  // Pitch in cents: FLICK +500, AIR down +200; the AIR hold beat reuses the FLICK waveform unpitched.
+  assert.deepEqual(layers('se_touch_flick_jcritical'), [{ wave: 67, rate: 1.3348, envelope: undefined, stopAfter: undefined }]);
+  assert.deepEqual(layers('se_air_hold_beat'), [{ wave: 67, rate: 1, envelope: undefined, stopAfter: undefined }]);
+  assert.equal(layers('se_air_cut_down')[0].rate, 1.1225);
+  // HOLD: 20 ms at full level, then each layer decays to its own sustain level; a stop releases over 500 ms.
+  assert.deepEqual(layers('se_touch_hold_jcritical').map(layer => layer.envelope), [
+    { attack: 0, hold: .02, decay: .1, sustain: .4, release: .5 }, { attack: 0, hold: .02, decay: .13, sustain: .1, release: .5 }]);
+  // The TAP judgement the game plays has no waveform of its own: it starts two cues and stops both 50 ms later.
+  const tap = extractCue(acb, 'se_touch_tap_jcritical', acf);
+  assert.deepEqual(layers('se_touch_tap_jcritical'), [
+    { wave: 286, rate: 1.1225, envelope: { attack: 0, hold: 0, decay: 0, sustain: 1, release: .5 }, stopAfter: .05 },
+    { wave: 283, rate: 1, envelope: { attack: 0, hold: 0, decay: 0, sustain: 1, release: .5 }, stopAfter: .05 }]);
+  assert.deepEqual(tap.layers.map(layer => Number(layer.gain.toFixed(4))), [.57, .1125]);
+  assert.deepEqual(tap.limits.map(limit => limit.key), ['cue:se_touch_tap_jcritical', 'cue:se_touch_tap_jcritical_action', 'category:Limit_Tap', 'cue:se_touch_tap_loop_action']);
+  assert.deepEqual(tap.notes, ['aisac:se_touch_tap_jcritical_action', 'aisac:se_touch_tap_loop_action', 'curve:se_touch_tap_loop_action']);
 });
