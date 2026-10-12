@@ -25,9 +25,9 @@ try {
     hold.duration = 192; hold.attributes.parent = 'TAP'; chart.notes = [tap, hold];
     t.state.chart = chart; t.editor.setChart(chart); t.editor.setCursor(144);
   });
-  await click(96, 0); await page.locator('.editor-options [data-action="split"]').click();
+  await page.locator('.editor-toolrow [data-action="split"]').click(); await click(144, 0); await page.keyboard.press('Escape');
   assert.deepEqual(await page.evaluate(() => (window as any).test.state.chart.notes.filter((n: any) => n.type === 'AIR_HOLD').map((n: any) => n.attributes.parent)), ['TAP', 'AHD']);
-  await click(192, 0); await page.locator('.editor-options [data-action="connect"]').click(); await click(336, 0); await page.keyboard.press('Escape');
+  await click(192, 0); await page.locator('.editor-toolrow [data-action="connect"]').click(); await click(336, 0); await page.keyboard.press('Escape');
   assert.deepEqual(await page.evaluate(() => { const t = (window as any).test; return t.parseC2S(t.serializeC2S(t.state.chart)).notes.filter((n: any) => n.type === 'AIR_HOLD').map((n: any) => n.attributes.parent); }), ['TAP', 'AHD', 'AHD']);
   await page.evaluate(() => {
     const t = (window as any).test, chart = t.createChart();
@@ -35,7 +35,7 @@ try {
     chart.events = [{id:'assign',type:'SCROLL_ASSIGNMENT',tick:48,lane:4,width:2,duration:192,group:2,value:2},{id:'speed',type:'GROUP_SCROLL',tick:0,duration:1000,group:2,value:2}];
     t.state.chart = chart; t.editor.setChart(chart); t.editor.setCursor(0);
   });
-  await click(192, 4); await page.locator('.editor-options [data-action="connect"]').click(); await click(336, 8); await page.keyboard.press('Escape');
+  await click(192, 4); await page.locator('.editor-toolrow [data-action="connect"]').click(); await click(336, 8); await page.keyboard.press('Escape');
   assert.deepEqual(await page.evaluate(() => { const t = (window as any).test; return t.state.chart.notes.map((n: any) => t.getNoteScrollGroup(t.state.chart, n)); }), [2, 2, 2]);
   await click(192, 4); await page.keyboard.press('Control+c');
   await page.evaluate(() => (window as any).test.editor.setCursor(480)); await page.keyboard.press('Control+v');

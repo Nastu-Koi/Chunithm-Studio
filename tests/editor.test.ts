@@ -1,8 +1,8 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { createChart, createNote } from '../src/core/model';
+import { createChart, createNote, type Note } from '../src/core/model';
 import { parseC2S, serializeC2S } from '../src/core/c2s';
-import { mirrorEditorSelection, moveEditorSelection, parseEditorFraction, splitEditorNote, appendEditorNote, copyEditorSelection, flipEditorSelection, scaleEditorSelection, curveEditorSlide } from '../src/renderer/editor';
+import { mirrorEditorSelection, moveEditorSelection, parseEditorFraction, splitEditorNote, appendEditorNote, copyEditorSelection, flipEditorSelection, scaleEditorSelection, shapeEditorSlide, setEditorEx } from '../src/renderer/editor';
 import { getNoteScrollGroup } from '../src/core/timing';
 
 test('moving a mixed selection clamps the whole group without changing spacing or source records', () => {
@@ -225,20 +225,53 @@ test('time scaling keeps the first selected tick and scales intervals, durations
   for (const factor of [0, -1, Number.NaN, Infinity]) assert.equal(scaleEditorSelection(chart, new Set([a.id]), factor), chart);
 });
 
-test('curved SLIDE replaces one straight segment by connected control segments on an ease-in-out path', () => {
+test('SLIDE shapes replace one segment by a connected path that keeps the start width and the chain', () => {
   const chart = createChart();
   const slide = { ...createNote('SLIDE', 96, 0, 4), duration: 384, endLane: 8, endWidth: 2, attributes: { visible: true } }, tap = createNote('TAP', 0, 0, 4);
-  chart.notes = [tap, slide];
-  const curved = curveEditorSlide(chart, slide.id, 96), segments = curved.notes.filter(note => note.type === 'SLIDE');
-  assert.equal(segments.length, 4); assert.equal(segments[0].id, slide.id); assert.equal(curved.notes[0], tap);
-  assert.deepEqual(segments.map(note => [note.tick, note.duration, note.lane, note.endLane, note.width, note.endWidth]), [[96, 96, 0, 1, 4, 4], [192, 96, 1, 4, 4, 3], [288, 96, 4, 7, 3, 2], [384, 96, 7, 8, 2, 2]]);
-  // Inserted joints are control points; the original end keeps its own node kind.
-  assert.deepEqual(segments.map(note => note.attributes.visible), [false, false, false, true]);
-  assert.deepEqual(segments.slice(1).map(note => note.attributes.parent), ['SLD', 'SLD', 'SLD']);
-  const air = { ...createNote('AIR_SLIDE', 0, 2, 2), duration: 96, endLane: 6, height: 1, endHeight: 5 }; chart.notes.push(air);
-  const lifted = curveEditorSlide(chart, air.id, 48).notes.filter(note => note.type === 'AIR_SLIDE');
+  const next = { ...createNote('SLIDE', 480, 8, 2), duration: 192, endLane: 8, endWidth: 2, attributes: { visible: true, parent: 'SLD' } };
+  chart.notes = [tap, slide, next];
+  const rows = (notes: Note[]) => notes.filter(note => note.type === 'SLIDE').map(note => [note.tick, note.duration, note.lane, note.endLane, note.width, note.endWidth]);
+  // Ease-in-out curve: control samples every step, except those on a straight line between their neighbours (lanes 1, 4, 7 here).
+  // The original end keeps its node kind, and the next segment follows the new end.
+  const curve = shapeEditorSlide(chart, slide.id, { shape: 'curve', ease: 'inout', length: 384, move: 8, count: 1, step: 96, kind: 'control' })!;
+  assert.deepEqual(rows(curve.chart.notes), [[96, 96, 0, 1, 4, 4], [192, 192, 1, 7, 4, 4], [384, 96, 7, 8, 4, 4], [480, 192, 8, 8, 4, 2]]);
+  assert.equal(curve.chart.notes[0], tap); assert.equal(curve.ids[0], slide.id); assert.equal(curve.ids.length, 3);
+  const curved = curve.chart.notes.filter(note => curve.ids.includes(note.id));
+  assert.deepEqual(curved.map(note => note.attributes.visible), [false, false, true]);
+  assert.deepEqual(curved.slice(1).map(note => note.attributes.parent), ['SLD', 'SLD']);
+  // Zigzag: straight pieces between the start lane and the far side; corners take the requested node kind.
+  const zigzag = shapeEditorSlide(chart, slide.id, { shape: 'zigzag', length: 192, move: 3, count: 4, step: 24, kind: 'normal' })!;
+  assert.deepEqual(rows(zigzag.chart.notes).slice(0, 4), [[96, 48, 0, 3, 4, 4], [144, 48, 3, 0, 4, 4], [192, 48, 0, 3, 4, 4], [240, 48, 3, 0, 4, 4]]);
+  assert.deepEqual(rows(zigzag.chart.notes)[4], [288, 384, 0, 8, 4, 2], 'the next segment starts at the new end and keeps its own end');
+  assert.deepEqual(zigzag.chart.notes.filter(note => zigzag.ids.includes(note.id)).map(note => note.attributes.visible), [true, true, true, true]);
+  const soft = shapeEditorSlide(chart, slide.id, { shape: 'zigzag', length: 192, move: 3, count: 4, step: 24, kind: 'control' })!;
+  assert.deepEqual(soft.chart.notes.filter(note => soft.ids.includes(note.id)).map(note => note.attributes.visible), [false, false, false, true]);
+  // Wave: there and back once, samples on a straight line are dropped.
+  const wave = shapeEditorSlide(chart, slide.id, { shape: 'wave', length: 384, move: 4, count: 1, step: 96, kind: 'control' })!;
+  assert.deepEqual(rows(wave.chart.notes).slice(0, 2).map(row => [row[0], row[2], row[3]]), [[96, 0, 4], [288, 4, 0]]);
+  // The far side is narrowed to stay on the lanes, and the length stops one step before the next segment's end.
+  const narrowed = shapeEditorSlide(chart, slide.id, { shape: 'zigzag', length: 96, move: 20, count: 2, step: 24, kind: 'control' })!;
+  assert.equal(narrowed.move, 12); assert.equal(Math.max(...narrowed.chart.notes.map(note => (note.endLane ?? note.lane) + (note.endWidth ?? note.width))), 16);
+  assert.equal(shapeEditorSlide(chart, slide.id, { shape: 'curve', length: 9999, move: 4, count: 1, step: 96, kind: 'control' })!.length, 480);
+  // AIR SLIDE heights follow the path linearly.
+  const air = { ...createNote('AIR_SLIDE', 0, 2, 2), duration: 96, endLane: 6, height: 1, endHeight: 5 };
+  const lifted = shapeEditorSlide({ ...chart, notes: [air] }, air.id, { shape: 'zigzag', length: 96, move: 4, count: 2, step: 24, kind: 'control' })!.chart.notes;
   assert.deepEqual(lifted.map(note => [note.height, note.endHeight]), [[1, 3], [3, 5]]);
-  // Nothing to curve: no sideways change, fewer than two steps, or another note type.
-  assert.equal(curveEditorSlide({ ...chart, notes: [{ ...slide, endLane: 0, endWidth: 4 }] }, slide.id, 96).notes.length, 1);
-  assert.equal(curveEditorSlide(chart, slide.id, 384), chart); assert.equal(curveEditorSlide(chart, tap.id, 24), chart);
+  assert.equal(shapeEditorSlide(chart, tap.id, { shape: 'curve', length: 96, move: 4, count: 1, step: 24, kind: 'control' }), undefined);
+  assert.equal(shapeEditorSlide(chart, slide.id, { shape: 'curve', length: 0, move: 4, count: 1, step: 24, kind: 'control' }), undefined);
+});
+
+test('EX is set on a whole HOLD or SLIDE chain and exports as HXD / SXD / SXC', () => {
+  const chart = createChart();
+  const head = { ...createNote('SLIDE', 0, 0, 4), duration: 96, endLane: 4, attributes: { visible: false } };
+  const tail = { ...createNote('SLIDE', 96, 4, 4), duration: 96, endLane: 8, attributes: { visible: true, parent: 'SLD' } };
+  const other = { ...createNote('SLIDE', 0, 12, 4), duration: 96, endLane: 12, attributes: { visible: true } }, hold = createNote('HOLD', 0, 8, 2), tap = createNote('TAP', 0, 10, 2);
+  chart.notes = [head, tail, other, hold, tap];
+  const ex = setEditorEx(chart, tail.id);
+  assert.deepEqual(ex.notes.map(note => Boolean(note.attributes.ex)), [true, true, false, false, false]);
+  const text = serializeC2S(setEditorEx(ex, hold.id));
+  assert.match(text, /^SXC\t/m); assert.match(text, /^SXD\t/m); assert.match(text, /^HXD\t/m); assert.match(text, /^SLD\t/m);
+  assert.deepEqual(setEditorEx(ex, head.id).notes.map(note => note.attributes.ex), [undefined, undefined, undefined, undefined, undefined]);
+  assert.equal(setEditorEx(ex, head.id, true).notes[1].attributes.ex, true);
+  assert.equal(setEditorEx(chart, tap.id), chart);
 });

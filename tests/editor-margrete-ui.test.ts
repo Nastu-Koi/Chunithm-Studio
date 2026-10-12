@@ -38,7 +38,9 @@ test('editor follows Margrete tools and keys: eraser, flip, time scale, curve, l
     assert.deepEqual((await notes()).map(n => [n.type, n.tick, n.lane, n.width, n.direction]), [['TAP', 96, 2, 2, undefined], ['AIR', 96, 2, 2, 'DW']]);
     // Eraser: one click removes the topmost object; a dragged box removes everything it touches.
     await page.keyboard.press('e'); await frame(); assert.match(String(await status()), /橡皮擦/);
-    await click(96, 2.5); assert.deepEqual((await notes()).map(n => n.type), ['TAP']);
+    // The AIR arrow floats above its parent, so it is erased by its own arrow and the TAP stays.
+    { const arrow = point(96, 2.5); await page.mouse.click(arrow.x, arrow.y - 11); } assert.deepEqual((await notes()).map(n => n.type), ['TAP']);
+    await click(96, 2.5); assert.deepEqual(await notes(), []); await page.keyboard.press('1'); await click(96, 2.5);
     await page.keyboard.press('1'); await click(48, 6.5); await click(144, 10.5);
     await page.keyboard.press('e'); await drag(point(24, 1.2), point(168, 12.8));
     assert.deepEqual(await notes(), []);
@@ -59,11 +61,14 @@ test('editor follows Margrete tools and keys: eraser, flip, time scale, curve, l
     // 5 draws a SLIDE whose joints are relay points; R turns the straight segment into a control-point curve.
     await page.keyboard.press('5'); await drag(point(288, 0.5), point(480, 6.5));
     assert.deepEqual((await notes()).filter(n => n.type === 'SLIDE').map(n => [n.tick, n.duration, n.lane, n.endLane, n.visible]), [[288, 192, 0, 6, true]]);
-    await page.keyboard.press('r');
+    // R opens the shape panel with a live preview; nothing is written until it is confirmed.
+    await page.keyboard.press('r'); await frame();
+    assert.equal(await page.locator('.editor-shape-panel').isVisible(), true); assert.equal((await notes()).filter(n => n.type === 'SLIDE').length, 1);
+    await page.keyboard.press('Enter');
     const curve = (await notes()).filter(n => n.type === 'SLIDE');
-    assert.equal(curve.length, 8); assert.deepEqual([curve[0].lane, curve.at(-1)!.endLane, curve.at(-1)!.tick + curve.at(-1)!.duration], [0, 6, 480]);
+    assert.equal(await page.locator('.editor-shape-panel').isVisible(), false); assert.ok(curve.length >= 3); assert.deepEqual([curve[0].lane, curve.at(-1)!.endLane, curve.at(-1)!.tick + curve.at(-1)!.duration], [0, 6, 480]);
     assert.ok(curve.every((segment, index) => index === 0 || segment.lane === curve[index - 1].endLane && segment.tick === curve[index - 1].tick + curve[index - 1].duration));
-    assert.deepEqual(curve.map(segment => segment.visible), [false, false, false, false, false, false, false, true]);
+    assert.deepEqual(curve.map(segment => segment.visible), [...curve.slice(1).map(() => false), true]);
 
     // Ctrl+Shift+V pastes a left-right mirrored copy at the cursor.
     await page.keyboard.press('s'); await click(48, 9.5); await page.keyboard.press('Control+c');
@@ -73,6 +78,29 @@ test('editor follows Margrete tools and keys: eraser, flip, time scale, curve, l
     const events = (): Promise<string[]> => page.evaluate(() => (window as any).testEditor.state.chart.events.map((event: any) => event.type));
     const before = (await events()).length; await page.keyboard.press('b');
     assert.equal((await events()).length, before + 1); assert.equal((await events()).at(-1), 'BPM');
+
+    // 7 is AIR up; pressing it again leans the arrow left, then right. The toolbar shows the side group only for AIR.
+    await page.keyboard.press('1'); await click(720, 2.5);
+    await page.keyboard.press('7'); await page.keyboard.press('7'); await click(720, 2.5);
+    assert.deepEqual((await notes()).filter(n => n.tick === 720).map(n => [n.type, n.direction]), [['TAP', undefined], ['AIR', 'UL']]);
+    assert.equal(await page.locator('.editor-air-side').isVisible(), true);
+    assert.equal(await page.locator('[data-tool="AIR"][data-air="IR"]').evaluate(element => element.classList.contains('editor-active')), true);
+    assert.equal(await page.locator('[data-tool="AIR"][data-air="DW"]').evaluate(element => element.classList.contains('editor-active')), false);
+    await page.locator('[data-tool="AIR"][data-air="DW"]').click(); await page.locator('[data-action="air-side"][data-side="1"]').click();
+    await page.keyboard.press('1'); await click(720, 6.5); await page.keyboard.press('8'); await click(720, 6.5);
+    assert.deepEqual((await notes()).filter(n => n.tick === 720 && n.type === 'AIR').map(n => n.direction), ['UL', 'DR']);
+    assert.equal(await page.locator('.editor-air-side').isVisible(), true); await page.keyboard.press('1'); assert.equal(await page.locator('.editor-air-side').isVisible(), false);
+    // An ExTAP dropped on a SLIDE head makes the whole chain EX instead of stacking a note; a second click undoes it.
+    const ex = (): Promise<boolean[]> => page.evaluate(() => (window as any).testEditor.state.chart.notes.filter((n: any) => n.type === 'SLIDE').map((n: any) => Boolean(n.attributes.ex)));
+    const count = (await notes()).length;
+    await page.keyboard.press('2'); await click(288, 1);
+    assert.equal((await notes()).length, count); assert.ok((await ex()).every(Boolean));
+    await click(288, 1); assert.ok((await ex()).every(value => !value));
+    // Insert-node mode: K, then click a long note's body; no selection or cursor is needed, and it stays on until Esc.
+    await page.keyboard.press('5'); await drag(point(576, 11), point(672, 11));
+    await page.keyboard.press('k'); await click(624, 11); await click(648, 11);
+    assert.deepEqual((await notes()).filter(n => n.type === 'SLIDE' && n.lane === 10).map(n => [n.tick, n.duration]), [[576, 48], [624, 24], [648, 24]]);
+    await page.keyboard.press('Escape'); assert.equal(await page.locator('.editor-toolrow [data-action="split"]').evaluate(element => element.classList.contains('editor-active')), false);
     await page.mouse.move(point(300, 8).x, point(300, 8).y); await page.keyboard.down('Shift'); await page.mouse.wheel(0, 100); await page.keyboard.up('Shift');
     assert.equal(await page.locator('[data-option="snap"]').inputValue(), '24');
 

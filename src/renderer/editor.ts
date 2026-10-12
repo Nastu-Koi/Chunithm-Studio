@@ -1,17 +1,18 @@
-import { MargreteNoteSprites } from './margrete-sprites';
+import { MargreteNoteSprites, NOTE_BAR_HEIGHT, airArrowHeight, airArrowLift, airDown, airLean, airSide } from './margrete-sprites';
 import { createChart, createNote, LANES, makeId, NOTE_TYPES, type Chart, type ChartEvent, type EventType, type Note, type NoteAttributes, type NoteType, type Scalar } from '../core/model';
 import { getChartEndTick, getGrid, secondsToTick, tickToSeconds, getNoteScrollGroup, getNotePlaybackPoints } from '../core/timing';
 import { isBundledImageSource, type GameTexture } from '../core/game-assets';
-import { getSlideUvSpans, slideUvProgress } from './slide-timing';
 import { getNativeNoteTag } from '../core/c2s';
-import { editorTemplate, COLOR, LABEL } from './editor-template';
+import { getSlideUvSpans, slideUvProgress } from './slide-timing';
+import { editorTemplate, COLOR, LABEL, noteColor } from './editor-template';
 import { LONG, AIR, CHAIN, clamp, endLane, endWidth, endTick, sameTick, formatTick, long, copyNote, hasNodeKind, limitLane, limitWidth, selectionWithAssignments, alignAssignments,
-  appendEditorNote, attachEditorAir, boundEditorParent, copyEditorSelection, curveEditorSlide, flipEditorSelection, inferEditorParent, mirrorEditorSelection, moveEditorSelection, parseEditorFraction, scaleEditorSelection, selectionWithBoundAir, setEditorAirHeight, setEditorNodeKind, splitEditorNote, syncEditorAirBindings, type Clipboard, type EditorNodeKind } from './editor-operations';
-export { appendEditorNote, attachEditorAir, boundEditorParent, copyEditorSelection, curveEditorSlide, flipEditorSelection, inferEditorParent, mirrorEditorSelection, moveEditorSelection, parseEditorFraction, scaleEditorSelection, selectionWithBoundAir, setEditorAirHeight, setEditorNodeKind, splitEditorNote, syncEditorAirBindings, type EditorNodeKind } from './editor-operations';
+  appendEditorNote, attachEditorAir, boundEditorParent, copyEditorSelection, flipEditorSelection, inferEditorParent, mirrorEditorSelection, moveEditorSelection, parseEditorFraction, scaleEditorSelection, selectionWithBoundAir, setEditorAirHeight, setEditorEx, setEditorNodeKind, shapeEditorSlide, splitEditorNote, syncEditorAirBindings, type Clipboard, type EditorNodeKind, type SlideShape, type SlideShapeResult } from './editor-operations';
+export { appendEditorNote, attachEditorAir, boundEditorParent, copyEditorSelection, flipEditorSelection, inferEditorParent, mirrorEditorSelection, moveEditorSelection, parseEditorFraction, scaleEditorSelection, selectionWithBoundAir, setEditorAirHeight, setEditorEx, setEditorNodeKind, shapeEditorSlide, splitEditorNote, syncEditorAirBindings, type EditorNodeKind, type SlideShape, type SlideShapeResult } from './editor-operations';
 
 type Callbacks = { onChange(chart: Chart, label: string): void; onCursor(tick: number): void; onUndo(): void; onRedo(): void; onOffset(seconds: number, label: string): void };
 type AudioSamples = { data: Float32Array; sampleRate: number };
-type Position = { x: number; y: number; tick: number; lane: number };
+/** `lane` is the lane under the pointer; `laneAt` is the same place as a fractional lane coordinate. */
+type Position = { x: number; y: number; tick: number; lane: number; laneAt: number };
 type DragKind = 'move' | 'end' | 'width' | 'widthLeft' | 'endWidth' | 'height' | 'endHeight' | 'box' | 'draw' | 'seek' | 'pan';
 type Tool = NoteType | 'select' | 'erase';
 type Drag = { kind: DragKind; start: Position; current: Position; chart: Chart; id?: string; before: Set<string>; moved: boolean; scroll: number; pointerId: number };
@@ -65,7 +66,13 @@ export class ChartEditor {
   private selection = new Set<string>();
   private tool: Tool = 'select';
   private penTool: NoteType = 'TAP';
-  private airDirection: 'IR' | 'DW' = 'IR';
+  private airVertical: 'IR' | 'DW' = 'IR';
+  private airLean: -1 | 0 | 1 = 0;
+  /** Insert-node mode: clicks split the long note under the pointer instead of placing or selecting. */
+  private inserting = false;
+  /** Segment being reshaped while the shape panel is open; `preview` then holds the candidate path. */
+  private shapeId?: string;
+  private readonly shapePanel: HTMLFormElement;
   private snap = 16;
   private snapBase: 'whole' | 'beat' = 'whole';
   private width = 2;
@@ -115,10 +122,14 @@ export class ChartEditor {
     this.context = this.canvas.getContext('2d')!;
     this.viewport = host.querySelector('.editor-viewport')!;
     this.inspector = host.querySelector('.editor-inspector')!;
+    this.shapePanel = host.querySelector('.editor-shape-panel')!;
     this.status = host.querySelector('.editor-status')!;
     this.minimap = host.querySelector('.editor-navigation input')!;
     const signal = this.abort.signal;
     host.addEventListener('click', event => this.onClick(event), { signal });
+    this.shapePanel.addEventListener('submit', event => { event.preventDefault(); this.closeShape(true); }, { signal });
+    this.shapePanel.addEventListener('input', () => this.previewShape(), { signal });
+    this.shapePanel.addEventListener('keydown', event => { if (event.key === 'Escape') { event.preventDefault(); this.closeShape(false); } }, { signal });
     host.addEventListener('change', event => this.onChange(event), { signal });
     host.addEventListener('input', event => this.onInput(event), { signal });
     this.canvas.addEventListener('pointerdown', event => this.pointerDown(event), { signal });
@@ -140,6 +151,8 @@ export class ChartEditor {
 
   setChart(chart: Chart): void {
     const changedMode = Boolean(this.chart.allowOutOfLane) !== Boolean(chart.allowOutOfLane);
+    // A candidate shape belongs to the chart it was computed from.
+    if (chart !== this.chart && !this.shapePanel.hidden) { this.shapePanel.hidden = true; this.shapeId = undefined; this.preview = undefined; }
     this.chart = chart;
     const ids = new Set([...chart.notes, ...chart.events].map(item => item.id));
     this.selection = new Set([...this.selection].filter(id => ids.has(id)));
@@ -228,11 +241,48 @@ export class ChartEditor {
     if (factor === undefined || !(factor > 0) || factor > 64) { this.setHint('时间缩放比例须为正数，例如 2、1/2 或 7/8'); return; }
     this.commit(scaleEditorSelection(this.chart, this.selection, factor), `时间轴缩放 ×${text}`);
   }
-  curveSelection(): void {
-    const note = this.selectedNote(), result = note ? curveEditorSlide(this.chart, note.id, this.step) : this.chart;
-    if (!note || result === this.chart) { this.setHint('选中一段有横向变化、至少跨两个量化格的 SLIDE / AIR SLIDE，再生成曲线'); return; }
-    this.selection = new Set(result.notes.filter(item => !this.chart.notes.some(old => old.id === item.id) || item.id === note.id).map(item => item.id));
-    this.commit(result, '生成曲线 SLIDE');
+  /** Open the shape panel for the selected SLIDE / AIR SLIDE segment; the chart changes only on confirm. */
+  openShape(shape?: SlideShape): void {
+    const note = this.selectedNote();
+    if (!note || note.type !== 'SLIDE' && note.type !== 'AIR_SLIDE') { this.setHint('先选中一段 SLIDE / AIR SLIDE，再生成形状'); return; }
+    if (this.aligning) this.setAligning(false);
+    if (this.inserting) this.setInserting(false);
+    this.cancelDrag(); this.continuing = false;
+    const field = <T extends HTMLElement>(name: string) => this.shapePanel.querySelector<T>(`[data-shape="${name}"]`)!;
+    if (shape) field<HTMLSelectElement>('shape').value = shape;
+    const sideways = endLane(note) - note.lane, limit = (this.chart.allowOutOfLane ? 64 : LANES - note.width) - note.lane;
+    field<HTMLInputElement>('beats').value = fractionLabel((note.duration ?? 0) * 4 / this.chart.resolution);
+    field<HTMLInputElement>('move').value = String(sideways || (limit >= 4 ? 4 : -Math.min(4, note.lane)));
+    this.shapeId = note.id; this.shapePanel.hidden = false;
+    this.previewShape(); field<HTMLInputElement>('beats').focus(); field<HTMLInputElement>('beats').select();
+  }
+  private shapeResult(): SlideShapeResult | undefined {
+    const field = (name: string) => this.shapePanel.querySelector<HTMLInputElement | HTMLSelectElement>(`[data-shape="${name}"]`)!.value;
+    const beats = parseEditorFraction(field('beats')), shape = field('shape') as SlideShape;
+    if (!this.shapeId || beats === undefined || !(beats > 0)) return undefined;
+    return shapeEditorSlide(this.chart, this.shapeId, { shape, length: beats * this.chart.resolution / 4, move: Number(field('move')) || 0, count: Number(field('count')) || 1,
+      ease: field('ease') as 'inout' | 'in' | 'out', step: this.step, kind: this.nodeKind === 'normal' ? 'normal' : 'control' });
+  }
+  private previewShape(): void {
+    const field = (name: string) => this.shapePanel.querySelector<HTMLInputElement | HTMLSelectElement>(`[data-shape="${name}"]`)!;
+    const shape = field('shape').value as SlideShape, result = this.shapeResult(), note = this.shapePanel.querySelector<HTMLElement>('[data-shape-note]')!;
+    this.shapePanel.querySelector<HTMLElement>('[data-shape-row="count"]')!.hidden = shape === 'curve';
+    this.shapePanel.querySelector<HTMLElement>('[data-shape-row="ease"]')!.hidden = shape !== 'curve';
+    this.shapePanel.querySelector<HTMLElement>('[data-shape-count-label]')!.textContent = shape === 'wave' ? '往返次数' : '段数';
+    this.preview = result?.chart;
+    const beats = parseEditorFraction(field('beats').value), wanted = Number(field('move').value) || 0;
+    note.textContent = !result ? '长度须为正数，且要给后面相接的一段留出至少一个量化格'
+      : [result.move !== Math.round(wanted) ? `水平移动已收窄为 ${result.move}，再远会超出轨道` : '', beats !== undefined && Math.abs(result.length - beats * this.chart.resolution / 4) > 1e-6 ? '长度已缩短，以保留后面相接的一段' : '',
+        `生成 ${result.ids.length} 段；${shape === 'zigzag' ? `折点为${this.nodeKind === 'normal' ? '普通节点' : '控制点'}（跟随“新节点”）` : '中间均为控制点'}`].filter(Boolean).join('；');
+    this.draw();
+  }
+  private closeShape(apply: boolean): void {
+    if (this.shapePanel.hidden) return;
+    const result = apply ? this.shapeResult() : undefined;
+    if (apply && !result) { this.previewShape(); return; }
+    this.shapePanel.hidden = true; this.shapeId = undefined; this.preview = undefined;
+    if (result) { this.selection = new Set(result.ids); this.commit(result.chart, '生成 SLIDE 形状'); } else this.draw();
+    this.viewport.focus({ preventScroll: true });
   }
   /** Margrete's SLIDE join: segments already connect by position here, so joining sets the joint's node kind. */
   joinSelection(kind: EditorNodeKind): void {
@@ -271,7 +321,12 @@ export class ChartEditor {
   private position(event: MouseEvent): Position {
     const bounds = this.canvas.getBoundingClientRect();
     const x = event.clientX - bounds.left, y = event.clientY - bounds.top;
-    return { x, y, tick: this.quantize(this.scroll + (this.canvasHeight - this.bottom - y) / this.zoom), lane: clamp(Math.floor(this.viewStart + (x - this.left + this.trackOffset) / this.laneWidth), this.chart.allowOutOfLane ? -64 : 0, this.chart.allowOutOfLane ? 64 : LANES - 1) };
+    const laneAt = this.viewStart + (x - this.left + this.trackOffset) / this.laneWidth;
+    return { x, y, tick: this.quantize(this.scroll + (this.canvasHeight - this.bottom - y) / this.zoom), laneAt, lane: clamp(Math.floor(laneAt), this.chart.allowOutOfLane ? -64 : 0, this.chart.allowOutOfLane ? 64 : LANES - 1) };
+  }
+  /** Left lane of a note of `width` centred on the pointer; an odd width over a lane centre is exact, otherwise the nearest lane boundary. */
+  private placeLane(point: Position, width = this.width): number {
+    return limitLane(this.chart, Math.round(point.laneAt - width / 2), width);
   }
   private setTrackScale(value: number): void {
     if (!Number.isFinite(value)) return;
@@ -332,6 +387,7 @@ export class ChartEditor {
   private onClick(event: MouseEvent): void {
     const button = (event.target as HTMLElement).closest<HTMLButtonElement>('button');
     if (!button || !this.host.contains(button)) return;
+    if (button.dataset.air) { this.setAir(button.dataset.air as 'IR' | 'DW', this.airLean); return; }
     if (button.dataset.tool) { this.setTool(button.dataset.tool as Tool); return; }
     switch (button.dataset.action) {
       case 'editor-undo': this.callbacks.onUndo(); break;
@@ -340,7 +396,8 @@ export class ChartEditor {
       case 'mirror': this.mirrorSelection(); break;
       case 'flip': this.flipSelection(); break;
       case 'scale': this.scaleSelection(); break;
-      case 'curve': this.curveSelection(); break;
+      case 'shape': this.openShape(); break;
+      case 'shape-cancel': this.closeShape(false); break;
       case 'copy': this.copySelection(); break;
       case 'paste': this.pasteSelection(); break;
       case 'selectAll': this.selectAll(); break;
@@ -352,11 +409,13 @@ export class ChartEditor {
       case 'connect': {
         const note = this.selectedNote();
         if (!note || !long(note)) { this.setHint('先选中一条长条，再点击“接续”'); return; }
+        if (this.inserting) this.setInserting(false);
         this.continuing = !this.continuing;
         button.classList.toggle('editor-active', this.continuing);
         this.setHint(this.continuing ? '点击下一节点的时间与轨道；Esc 取消接续' : '已取消接续'); this.draw(); break;
       }
-      case 'split': this.splitAtCursor(); break;
+      case 'split': this.setInserting(!this.inserting); break;
+      case 'air-side': this.setAir(this.airVertical, Number(button.dataset.side) as -1 | 0 | 1); break;
       case 'align': this.setAligning(!this.aligning); break;
       case 'nudge': this.setOffset(this.audioOffset + Number(button.dataset.ms) / 1000, '微调音乐偏移'); break;
       case 'event': this.addEvent(button.dataset.event as EventType); break;
@@ -366,17 +425,53 @@ export class ChartEditor {
     if (button.dataset.select) { this.selection = new Set([button.dataset.select]); this.refreshSelection(); }
   }
 
+  /** Native AIR token of the current up / down tool and its left / centre / right lean. */
+  private get airDirection(): string { return this.airVertical === 'IR' ? ['UL', 'IR', 'UR'][this.airLean + 1] : ['DL', 'DW', 'DR'][this.airLean + 1]; }
+  private setAir(vertical: 'IR' | 'DW', lean: -1 | 0 | 1): void { this.airVertical = vertical; this.airLean = lean; this.setTool('AIR'); }
+  private setInserting(on: boolean): void {
+    if (on) { if (this.aligning) this.setAligning(false); this.cancelDrag(); this.continuing = false; this.host.querySelector('[data-action="connect"]')?.classList.remove('editor-active'); }
+    this.inserting = on;
+    this.host.querySelector('[data-action="split"]')?.classList.toggle('editor-active', on);
+    this.viewport.style.cursor = on ? 'copy' : this.tool === 'select' ? 'default' : this.tool === 'erase' ? 'cell' : 'crosshair';
+    this.setHint(on ? '插入节点：把鼠标移到 SLIDE / AIR 长条上，点击即在该处插入 · 可连续插入 · Esc 退出' : '已退出插入节点');
+    this.draw();
+  }
+  /** The chained long note whose body is under the pointer, and the node a click would insert. HOLD has no inner nodes. */
+  private insertTarget(point: Position): { note: Note; lane: number; width: number } | undefined {
+    const chart = this.chart;
+    for (let index = chart.notes.length - 1; index >= 0; index--) {
+      const note = chart.notes[index];
+      if (!long(note) || note.type === 'HOLD' || !(point.tick > note.tick && point.tick < endTick(note))) continue;
+      const startY = this.y(note.tick), finishY = this.y(endTick(note));
+      if (point.y > startY + 4 || point.y < finishY - 4) continue;
+      const along = clamp((startY - point.y) / (startY - finishY), 0, 1);
+      const left = this.x(note.lane) + (this.x(endLane(note)) - this.x(note.lane)) * along, span = (note.width + (endWidth(note) - note.width) * along) * this.laneWidth;
+      if (point.x < left - 3 || point.x > left + span + 3) continue;
+      const fraction = (point.tick - note.tick) / note.duration!;
+      const width = clamp(Math.round(note.width + (endWidth(note) - note.width) * fraction), 1, chart.allowOutOfLane ? 128 : LANES);
+      return { note, width, lane: limitLane(chart, Math.round(note.lane + (endLane(note) - note.lane) * fraction), width) };
+    }
+    return undefined;
+  }
+  private insertAt(point: Position): void {
+    const target = this.insertTarget(point);
+    if (!target) { this.setHint('这里没有可插入节点的长条：请点在 SLIDE / AIR SLIDE / AIR HOLD / AIR CRUSH 的带体上（HOLD 没有中间节点）'); return; }
+    const result = splitEditorNote(this.chart, target.note.id, point.tick, this.nodeKind === 'inherit' ? undefined : this.nodeKind);
+    if (result === this.chart) return;
+    this.selection = new Set([target.note.id]);
+    this.commit(result, '插入长条节点');
+    this.setHint('节点已插入；继续点击可再插入，Esc 完成');
+  }
+  /** A HOLD, or the first segment of a SLIDE, whose head bar is under the pointer. */
+  private groundHeadAt(point: Position): Note | undefined {
+    return this.chart.notes.findLast(note => (note.type === 'HOLD' || note.type === 'SLIDE') && Math.abs(point.y - this.y(note.tick)) < 10 && point.x >= this.x(note.lane) - 3 && point.x <= this.x(note.lane + note.width) + 3
+      && getNotePlaybackPoints(this.chart, note).some(item => item.position === 'head'));
+  }
   private get noteTool(): NoteType | undefined { return this.tool === 'select' || this.tool === 'erase' ? undefined : this.tool; }
   private setNodeKind(kind: EditorNodeKind | 'inherit'): void { this.nodeKind = kind; this.host.querySelector<HTMLSelectElement>('[data-option="node-kind"]')!.value = kind; }
-  private splitAtCursor(): void {
-    const note = this.selectedNote();
-    if (!note) return;
-    const result = splitEditorNote(this.chart, note.id, this.quantize(this.cursor), this.nodeKind === 'inherit' ? undefined : this.nodeKind);
-    if (result === this.chart) { this.setHint('把播放光标放在长条内部，再插入节点；也可双击长条'); return; }
-    this.commit(result, '插入长条节点');
-  }
   private setAligning(on: boolean): void {
     if (on && !this.samples) { this.setHint('请先导入音乐，再对齐'); return; }
+    if (on && this.inserting) this.setInserting(false);
     this.aligning = on; this.continuing = false; this.cancelDrag();
     this.host.querySelector('[data-action="align"]')!.classList.toggle('editor-active', on);
     this.host.querySelector('[data-action="connect"]')?.classList.remove('editor-active');
@@ -403,12 +498,15 @@ export class ChartEditor {
   }
   private setTool(tool: Tool): void {
     if (this.aligning) this.setAligning(false);
-    this.tool = tool; this.continuing = false;
+    this.tool = tool; this.continuing = false; this.inserting = false;
     if (tool !== 'select' && tool !== 'erase') this.penTool = tool;
-    this.host.querySelectorAll<HTMLButtonElement>('[data-tool]').forEach(button => button.classList.toggle('editor-active', button.dataset.tool === tool));
+    this.host.querySelectorAll<HTMLButtonElement>('[data-tool]').forEach(button => button.classList.toggle('editor-active', button.dataset.tool === tool && (!button.dataset.air || button.dataset.air === this.airVertical)));
+    this.host.querySelector('[data-action="split"]')?.classList.remove('editor-active');
+    const side = this.host.querySelector<HTMLElement>('.editor-air-side');
+    if (side) { side.hidden = tool !== 'AIR'; side.querySelectorAll<HTMLButtonElement>('button').forEach(button => button.classList.toggle('editor-active', Number(button.dataset.side) === this.airLean)); }
     this.host.querySelector('[data-action="connect"]')?.classList.remove('editor-active');
     this.viewport.style.cursor = tool === 'select' ? 'default' : tool === 'erase' ? 'cell' : 'crosshair';
-    this.setHint(tool === 'select' ? '拖动移动 · 左右边缘改宽度 · 顶端节点改长度 · Shift 框选追加' : tool === 'erase' ? '橡皮擦：点击删除，拖动框选后松开删除 · S 选择' : `${LABEL[tool]}：点击放置${LONG.has(tool) ? '，向上拖动设置终点' : ''} · 右键删除 · S 选择`);
+    this.setHint(tool === 'select' ? '拖动移动 · 左右边缘改宽度 · 顶端节点改长度 · Shift 框选追加' : tool === 'erase' ? '橡皮擦：点击删除，拖动框选后松开删除 · S 选择' : `${tool === 'AIR' ? `AIR ${({ IR: '上', UL: '左上', UR: '右上', DW: '下', DL: '左下', DR: '右下' } as Record<string, string>)[this.airDirection]}` : LABEL[tool]}：点击放置${LONG.has(tool) ? '，向上拖动设置终点' : ''}${tool === 'EXTAP' ? '；点 HOLD / SLIDE 的头可设为 EX，再点取消' : ''} · 右键删除 · S 选择`);
     this.draw();
   }
 
@@ -443,6 +541,7 @@ export class ChartEditor {
     const number = Number(value);
     const note = this.selectedNote();
     if (note) {
+      if (property === 'attr.ex') { this.commit(setEditorEx(this.chart, note.id, Boolean(value)), value ? '设为 EX' : '取消 EX'); return; }
       if (property === 'nodeKind') { this.commit(setEditorNodeKind(this.chart, note.id, value as EditorNodeKind), '修改段末节点类型'); return; }
       if (property === 'height' || property === 'endHeight') { this.commit(setEditorAirHeight(this.chart, note.id, property, Math.max(0, number)), '修改 AIR 高度'); return; }
       if (['tick', 'lane', 'width'].includes(property) && boundEditorParent(this.chart, note.id)) { this.setHint('AIR 绑定在地面音符的尾端，位置与宽度跟随父音符；请修改父音符'); this.inspectorKey = ''; this.renderInspector(); return; }
@@ -547,8 +646,10 @@ export class ChartEditor {
       if (long(note) && Math.abs(position.y - finishY) < 9 && position.x >= finishX - 4 && position.x <= finishX + endWidth(note) * this.laneWidth + 4) {
         return { id: note.id, kind: Math.abs(position.x - (finishX + endWidth(note) * this.laneWidth)) < 7 ? 'endWidth' : 'end' };
       }
-      if (Math.abs(position.y - startY) < 10 && position.x >= startX - 3 && position.x <= startX + note.width * this.laneWidth + 3) {
-        const span = note.width * this.laneWidth;
+      const span = note.width * this.laneWidth;
+      // An AIR is picked by its lifted arrow, which leaves the ground note under it free to click.
+      if (note.type === 'AIR' ? Math.abs(position.y - (startY - airArrowLift(span - 2))) <= airArrowHeight(span - 2) / 2 + 2 && position.x >= startX - 3 && position.x <= startX + span + 3
+        : Math.abs(position.y - startY) < 10 && position.x >= startX - 3 && position.x <= startX + span + 3) {
         return { id: note.id, kind: Math.abs(position.x - (startX + span)) < 7 ? 'width' : span > 24 && Math.abs(position.x - startX) < 5 ? 'widthLeft' : 'move' };
       }
       if (long(note) && position.y < startY && position.y > finishY) {
@@ -563,6 +664,7 @@ export class ChartEditor {
 
   private pointerDown(event: PointerEvent): void {
     if (event.button !== 0 && event.button !== 1 && event.button !== 2) return;
+    this.closeShape(false);
     this.viewport.focus({ preventScroll: true });
     const point = this.position(event);
     if (this.aligning && event.button !== 1) {
@@ -585,7 +687,16 @@ export class ChartEditor {
     // A bound AIR covers its parent's tail; its width handles edit the parent, which the AIR follows.
     const covered = hit && (hit.kind === 'width' || hit.kind === 'widthLeft') ? boundEditorParent(this.chart, hit.id) : undefined;
     if (hit && covered) hit = !long(covered) ? { id: covered.id, kind: hit.kind } : covered.type === 'SLIDE' && hit.kind === 'width' ? { id: covered.id, kind: 'endWidth' } : { id: hit.id, kind: 'move' };
+    if (this.inserting && event.button === 0 && this.inTrack(point.x)) { this.insertAt(point); return; }
     if (this.continuing && event.button === 0 && this.inTrack(point.x)) { this.appendSegment(point); return; }
+    // An ExTAP dropped on the head of a HOLD / SLIDE makes that long note EX instead of stacking a second note.
+    const exHead = tool === 'EXTAP' && event.button === 0 && !event.altKey && this.inTrack(point.x) ? this.groundHeadAt(point) : undefined;
+    if (exHead) {
+      const next = setEditorEx(this.chart, exHead.id);
+      this.selection = new Set([exHead.id]); this.commit(next, exHead.attributes.ex ? '取消 EX' : '设为 EX');
+      this.setHint(exHead.attributes.ex ? `已取消 ${LABEL[exHead.type]} 的 EX` : `${LABEL[exHead.type]} 已设为 EX（导出为 ${exHead.type === 'HOLD' ? 'HXD' : 'SXD / SXC'}）`);
+      return;
+    }
     const before = new Set(this.selection);
     let kind: DragKind = 'box', id: string | undefined;
     if (event.button === 1) { kind = 'pan'; event.preventDefault(); }
@@ -598,7 +709,7 @@ export class ChartEditor {
       } else if (!this.selection.has(id)) this.selection = new Set([id]);
       this.refreshSelection();
     } else if (tool && this.inTrack(point.x)) {
-      const note = createNote(tool, point.tick, limitLane(this.chart, point.lane, this.width), this.width);
+      const note = createNote(tool, point.tick, this.placeLane(point), this.width);
       if (long(note)) note.duration = this.chart.resolution / 4;
       if (hasNodeKind(note)) note.attributes.visible = this.nodeKind === 'inherit' ? this.selectedNote()?.attributes.visible !== false : this.nodeKind === 'normal';
       if (note.type === 'AIR') note.attributes = { direction: this.airDirection, color: 'DEF' };
@@ -630,7 +741,7 @@ export class ChartEditor {
     const previous = this.selectedNote();
     if (!previous || !long(previous)) return;
     if (point.tick <= endTick(previous)) { this.setHint('接续节点必须晚于当前长条终点'); return; }
-    const next = appendEditorNote(this.chart, previous.id, point.tick, point.lane, this.width, this.nodeKind === 'inherit' ? undefined : this.nodeKind);
+    const next = appendEditorNote(this.chart, previous.id, point.tick, this.placeLane(point), this.width, this.nodeKind === 'inherit' ? undefined : this.nodeKind);
     this.selection = new Set([next.notes.at(-1)!.id]);
     this.commit(next, '接续长条节点');
     this.setHint('节点已接续；继续点击可延长，Esc 完成');
@@ -640,6 +751,7 @@ export class ChartEditor {
     const point = this.position(event); this.hover = point;
     const drag = this.drag;
     if (this.aligning && !drag) { this.canvas.style.cursor = ''; this.draw(); return; }
+    if (!drag && this.inserting) { this.canvas.style.cursor = ''; this.draw(); return; }
     if (!drag) {
       const hit = this.hit(point);
       this.canvas.style.cursor = hit?.kind === 'width' || hit?.kind === 'widthLeft' || hit?.kind === 'endWidth' || hit?.kind === 'height' || hit?.kind === 'endHeight' ? 'ew-resize' : hit?.kind === 'end' ? 'ns-resize' : hit ? 'grab' : this.tool === 'select' ? 'default' : this.tool === 'erase' ? 'cell' : 'crosshair';
@@ -666,7 +778,7 @@ export class ChartEditor {
     } else if (drag.kind === 'draw') {
       const note = this.preview?.notes.find(item => item.id === drag.id);
       if (note && long(note) && drag.moved) {
-        const next = { ...note, duration: Math.max(this.step, point.tick - note.tick), endLane: note.type === 'HOLD' || note.type === 'AIR_HOLD' ? note.lane : limitLane(this.chart, point.lane, endWidth(note)) };
+        const next = { ...note, duration: Math.max(this.step, point.tick - note.tick), endLane: note.type === 'HOLD' || note.type === 'AIR_HOLD' ? note.lane : this.placeLane(point, endWidth(note)) };
         this.preview = { ...this.preview!, notes: this.preview!.notes.map(item => item.id === note.id ? next : item) };
       }
     } else if (drag.moved && drag.id) {
@@ -748,6 +860,8 @@ export class ChartEditor {
       if (key === 'c') this.copySelection(); if (key === 'v') this.pasteSelection(event.shiftKey); if (key === 'x') { this.copySelection(); this.deleteSelection(); } return;
     }
     if (key === 'escape' && this.aligning) { this.setAligning(false); return; }
+    if (key === 'escape' && !this.shapePanel.hidden) { this.closeShape(false); return; }
+    if (key === 'escape' && this.inserting) { this.setInserting(false); return; }
     if (key === 'escape') { this.cancelDrag(); this.continuing = false; this.selection.clear(); this.setTool('select'); this.refreshSelection(); return; }
     if (key === 'delete' || key === 'backspace') { event.preventDefault(); this.deleteSelection(); return; }
     // Margrete's default single-key commands.
@@ -759,9 +873,10 @@ export class ChartEditor {
       case 'h': this.mirrorSelection(); break;
       case 'v': this.flipSelection(); break;
       case 'l': this.scaleSelection(); break;
-      case 'k': this.splitAtCursor(); break;
+      case 'k': this.setInserting(!this.inserting); break;
       case 'j': this.joinSelection(event.shiftKey ? 'control' : 'normal'); break;
-      case 'r': this.curveSelection(); break;
+      case 'r': event.preventDefault(); this.openShape('curve'); break;
+      case 'z': event.preventDefault(); this.openShape('zigzag'); break;
       case 'b': this.addEvent('BPM'); break;
       case 'n': this.addEvent('SCROLL'); break;
       case 'd': this.addEvent('NOTE_SPEED'); break;
@@ -772,7 +887,11 @@ export class ChartEditor {
       case '4': this.setTool('SLIDE'); this.setNodeKind('control'); break;
       case '5': this.setTool('SLIDE'); this.setNodeKind('normal'); break;
       case '6': this.setTool('HOLD'); break;
-      case '7': case '8': this.airDirection = key === '7' ? 'IR' : 'DW'; this.setTool('AIR'); break;
+      case '7': case '8': {
+        // Pressing the key of the AIR tool already in use steps its lean: centre, left, right.
+        const vertical = key === '7' ? 'IR' : 'DW', again = this.tool === 'AIR' && this.airVertical === vertical;
+        this.setAir(vertical, again ? ([-1, 1, 0] as const)[[0, -1, 1].indexOf(this.airLean)] : this.airLean); break;
+      }
       case '9': this.setTool('AIR_HOLD'); break;
       case 't': this.setTool('AIR_SLIDE'); this.setNodeKind('normal'); break;
       case 'y': this.setTool('AIR_SLIDE'); this.setNodeKind('control'); break;
@@ -808,7 +927,7 @@ export class ChartEditor {
     let content = `<div class="editor-inspector-title"><span>属性</span><small>${selected.length ? `已选 ${selected.length} 项` : 'INSPECTOR'}</small></div>`;
     if (selected.length === 1 && 'attributes' in selected[0]) {
       const note = selected[0];
-      content += `<div class="editor-selection-heading" style="--note-color:${COLOR[note.type]}"><i></i><strong>${LABEL[note.type]}</strong><code>${getNativeNoteTag(note)}</code></div><label class="editor-field"><span>音符类型</span><select data-property="type">${NOTE_TYPES.map(type => `<option value="${type}" ${type === note.type ? 'selected' : ''}>${LABEL[type]}</option>`).join('')}</select></label>`;
+      content += `<div class="editor-selection-heading" style="--note-color:${noteColor(note)}"><i></i><strong>${LABEL[note.type]}</strong><code>${getNativeNoteTag(note)}</code></div><label class="editor-field"><span>音符类型</span><select data-property="type">${NOTE_TYPES.map(type => `<option value="${type}" ${type === note.type ? 'selected' : ''}>${LABEL[type]}</option>`).join('')}</select></label>`;
       if (hasNodeKind(note)) {
         const normal = note.type === 'SLIDE' ? `${note.attributes.ex ? 'SXD' : 'SLD'} · 普通连接点` : note.type === 'AIR_HOLD' ? 'AHD · AIR 动作节点' : 'ASD · AIR 动作节点';
         const control = note.type === 'SLIDE' ? `${note.attributes.ex ? 'SXC' : 'SLC'} · 轨迹控制点` : note.type === 'AIR_HOLD' ? 'AHX · 无动作节点' : 'ASC · 轨迹控制点';
@@ -907,7 +1026,7 @@ export class ChartEditor {
       ctx.fillRect(this.x(event.lane ?? 0), finish, (event.width ?? 1) * this.laneWidth, y - finish);
       ctx.strokeRect(this.x(event.lane ?? 0), finish, (event.width ?? 1) * this.laneWidth, y - finish); ctx.setLineDash([]);
     }
-    const visible = chart.notes.filter(note => endTick(note) >= lo - 20 / this.zoom && note.tick <= hi + 20 / this.zoom);
+    const visible = chart.notes.filter(note => endTick(note) >= lo - 20 / this.zoom && note.tick <= hi + 32 / this.zoom);
     for (const note of visible.filter(long)) this.paintNote(ctx, note, true);
     for (const note of visible) this.paintNote(ctx, note, false);
     ctx.restore();
@@ -930,15 +1049,25 @@ export class ChartEditor {
     }
     ctx.save(); ctx.beginPath(); ctx.rect(this.left, 0, right - this.left, h - this.bottom); ctx.clip();
     const ghostTool = this.noteTool;
-    if (this.hover && !this.drag && ghostTool && !this.continuing && !this.aligning && this.inTrack(this.hover.x)) {
-      const note = createNote(ghostTool, this.hover.tick, limitLane(this.chart, this.hover.lane, this.width), this.width);
+    const insert = this.inserting && this.hover && !this.drag && this.inTrack(this.hover.x) ? this.insertTarget(this.hover) : undefined;
+    if (insert) {
+      // The node a click would insert: a bar for an ordinary node, a hollow diamond for a control point.
+      const y = this.y(this.hover!.tick), x = this.x(insert.lane) + 1, width = insert.width * this.laneWidth - 2, color = noteColor(insert.note);
+      const control = hasNodeKind(insert.note) && (this.nodeKind === 'inherit' ? insert.note.attributes.visible === false : this.nodeKind === 'control');
+      ctx.strokeStyle = '#ffffff'; ctx.fillStyle = `${color}cc`; ctx.lineWidth = 1.5;
+      if (control) { const center = x + width / 2; ctx.beginPath(); ctx.moveTo(center, y - 6); ctx.lineTo(center + 6, y); ctx.lineTo(center, y + 6); ctx.lineTo(center - 6, y); ctx.closePath(); ctx.fill(); ctx.stroke(); }
+      else { ctx.fillRect(x, y - NOTE_BAR_HEIGHT / 2, width, NOTE_BAR_HEIGHT); ctx.strokeRect(x, y - NOTE_BAR_HEIGHT / 2, width, NOTE_BAR_HEIGHT); }
+    }
+    if (this.hover && !this.drag && ghostTool && !this.continuing && !this.inserting && !this.aligning && this.inTrack(this.hover.x)) {
+      const note = createNote(ghostTool, this.hover.tick, this.placeLane(this.hover), this.width);
+      if (long(note)) note.duration = this.chart.resolution / 4;
       if (note.type === 'AIR') note.attributes.direction = this.airDirection;
-      ctx.globalAlpha = .45; this.paintNote(ctx, note, false); ctx.globalAlpha = 1;
+      ctx.globalAlpha = .45; this.paintNote(ctx, note, true, true); this.paintNote(ctx, note, false, true); ctx.globalAlpha = 1;
     }
     if (this.continuing && this.hover && this.inTrack(this.hover.x)) {
       const note = this.selectedNote();
       if (note && this.hover.tick > endTick(note)) {
-        const ghost: Note = { ...note, tick: endTick(note), lane: endLane(note), width: endWidth(note), duration: this.hover.tick - endTick(note), endLane: limitLane(this.chart, this.hover.lane, this.width), endWidth: this.width };
+        const ghost: Note = { ...note, tick: endTick(note), lane: endLane(note), width: endWidth(note), duration: this.hover.tick - endTick(note), endLane: this.placeLane(this.hover), endWidth: this.width };
         ctx.globalAlpha = .45; this.paintNote(ctx, ghost, true); this.paintNote(ctx, ghost, false); ctx.globalAlpha = 1;
       }
     }
@@ -987,7 +1116,7 @@ export class ChartEditor {
       const atEnd = endpoint === 'endHeight';
       const x = this.airHeightX(atEnd ? note.endHeight ?? note.height ?? 1 : note.height ?? 1, maximum);
       const y = this.y(atEnd ? endTick(note) : note.tick), normal = atEnd && note.attributes.visible !== false;
-      ctx.lineWidth = 1; ctx.fillStyle = normal ? COLOR[note.type] : '#111111'; ctx.strokeStyle = this.selection.has(note.id) ? '#ffffff' : '#acacac';
+      ctx.lineWidth = 1; ctx.fillStyle = normal ? noteColor(note) : '#111111'; ctx.strokeStyle = this.selection.has(note.id) ? '#ffffff' : '#acacac';
       ctx.fillRect(x - 3, y - 3, 6, 6); ctx.strokeRect(x - 3, y - 3, 6, 6);
     }
     ctx.restore(); ctx.fillStyle = '#202020'; ctx.fillRect(0, bottom, this.rulerLeft - 2, this.bottom);
@@ -1041,10 +1170,11 @@ export class ChartEditor {
     }
   }
 
-  private paintNote(ctx: CanvasRenderingContext2D, note: Note, body: boolean): void {
+  /** `ghost` paints a placement preview: it is not in the chart, so its chain head cannot be looked up and is always drawn. */
+  private paintNote(ctx: CanvasRenderingContext2D, note: Note, body: boolean, ghost = false): void {
     const x = this.x(note.lane) + 1, y = this.y(note.tick), width = note.width * this.laneWidth - 2;
     const finishX = this.x(endLane(note)) + 1, finishY = this.y(endTick(note)), finishWidth = endWidth(note) * this.laneWidth - 2;
-    const color = COLOR[note.type], selected = this.selection.has(note.id), airborne = AIR.has(note.type);
+    const color = noteColor(note), selected = this.selection.has(note.id), airborne = AIR.has(note.type);
     if (body) {
       if (!long(note)) return;
       ctx.fillStyle = `${color}35`; ctx.strokeStyle = `${color}88`; ctx.lineWidth = selected ? 2 : 1;
@@ -1066,7 +1196,13 @@ export class ChartEditor {
           ctx.beginPath(); ctx.moveTo(cx, cy); ctx.lineTo(cx + cw, cy); ctx.stroke();
         }
       }
-      if (airborne) { ctx.setLineDash([5, 5]); ctx.strokeStyle = `${color}b0`; ctx.beginPath(); ctx.moveTo(x + width / 2, y); ctx.lineTo(finishX + finishWidth / 2, finishY); ctx.stroke(); ctx.setLineDash([]); }
+      if (airborne) {
+        // AIR HOLD / AIR SLIDE read as one solid centre line, like Margrete; a CRUSH keeps a dashed guide in its own colour.
+        const line = note.type !== 'AIR_CRUSH';
+        if (!line) ctx.setLineDash([5, 5]);
+        ctx.strokeStyle = line ? color : `${color}b0`; ctx.lineWidth = line ? 2 : 1;
+        ctx.beginPath(); ctx.moveTo(x + width / 2, y); ctx.lineTo(finishX + finishWidth / 2, finishY); ctx.stroke(); ctx.setLineDash([]);
+      }
       return;
     }
     if (long(note)) {
@@ -1077,24 +1213,26 @@ export class ChartEditor {
         if (selected) { ctx.setLineDash([3, 3]); ctx.beginPath(); ctx.moveTo(finishX, finishY); ctx.lineTo(finishX + finishWidth, finishY); ctx.stroke(); ctx.setLineDash([]); }
         ctx.beginPath(); ctx.moveTo(center, finishY - 6); ctx.lineTo(center + 6, finishY); ctx.lineTo(center, finishY + 6); ctx.lineTo(center - 6, finishY); ctx.closePath(); ctx.stroke();
       } else if (!this.noteSprites.draw(ctx,note,true,finishX,finishY,finishWidth)) { ctx.fillRect(finishX, finishY - 3, finishWidth, 6); ctx.strokeStyle = selected ? '#fff' : '#cccccc'; ctx.strokeRect(finishX, finishY - 3, finishWidth, 6); }
-      if (hasNodeKind(note) && finishWidth > 30) { ctx.fillStyle = color; ctx.font = '9px "Segoe UI", sans-serif'; ctx.fillText(getNativeNoteTag(note), finishX + 2, finishY - 8); }
       if (selected) this.handle(ctx, finishX + finishWidth, finishY, color);
     }
-    if (hasNodeKind(note) && !getNotePlaybackPoints(this.preview ?? this.chart, note).some(point => point.position === 'head')) {
+    if (!ghost && hasNodeKind(note) && !getNotePlaybackPoints(this.preview ?? this.chart, note).some(point => point.position === 'head')) {
       if (selected) this.handle(ctx, x + width, y, color);
       return;
     }
-    const height = airborne ? 9 : 6;
     ctx.fillStyle = color; ctx.strokeStyle = selected ? '#ffffff' : '#eeeeee'; ctx.lineWidth = selected ? 2 : 1;
-    if (this.noteSprites.draw(ctx,note,false,x,y,width)) {
+    // An AIR, and the implied AIR that starts an AIR HOLD / AIR SLIDE chain, float above the ground note they belong to.
+    const arrow = note.type === 'AIR' || note.type === 'AIR_HOLD' || note.type === 'AIR_SLIDE';
+    if (arrow) {
+      const direction = note.type === 'AIR' ? String(note.attributes.direction ?? 'IR') : 'IR', arrowY = y - airArrowLift(width), half = airArrowHeight(width) / 2;
+      if (!this.noteSprites.drawArrow(ctx, direction, x, arrowY, width)) {
+        const down = airDown(direction), tip = x + width / 2 + airSide(direction) * airLean(width) / 2, base = down ? arrowY - half : arrowY + half, point = down ? arrowY + half : arrowY - half;
+        ctx.beginPath(); ctx.moveTo(x, base); ctx.lineTo(tip, point); ctx.lineTo(x + width, base); ctx.lineTo(tip, (base + point) / 2); ctx.closePath(); ctx.fill(); ctx.stroke();
+      }
+      if (selected) { ctx.strokeStyle = '#fff'; ctx.strokeRect(x - 1, arrowY - half - 1, width + 2, half * 2 + 2); }
+    } else if (this.noteSprites.draw(ctx,note,false,x,y,width)) {
       if (selected) { ctx.strokeStyle='#fff'; ctx.strokeRect(x-1,y-5,width+2,10); }
-    } else if (note.type === 'AIR') {
-      const down = String(note.attributes.direction ?? '').startsWith('D');
-      const direction = String(note.attributes.direction ?? 'IR');
-      const center = x + width * (direction.endsWith('L') ? .28 : direction.endsWith('R') && direction !== 'IR' ? .72 : .5);
-      ctx.beginPath(); ctx.moveTo(x, y + (down ? -5 : 5)); ctx.lineTo(center, y + (down ? 6 : -6)); ctx.lineTo(x + width, y + (down ? -5 : 5)); ctx.lineTo(x + width, y + (down ? 0 : 10)); ctx.lineTo(center, y + (down ? 11 : -1)); ctx.lineTo(x, y + (down ? 0 : 10)); ctx.closePath(); ctx.fill(); ctx.stroke();
     } else {
-      ctx.beginPath(); ctx.roundRect(x, y - height / 2, Math.max(1, width), height, 1); ctx.fill(); ctx.stroke();
+      ctx.beginPath(); ctx.roundRect(x, y - NOTE_BAR_HEIGHT / 2, Math.max(1, width), NOTE_BAR_HEIGHT, 1); ctx.fill(); ctx.stroke();
       if (note.type === 'EXTAP' || note.attributes.ex) { ctx.fillStyle = '#fff9dc'; ctx.fillRect(x + 2, y - 1.5, Math.max(1, width - 4), 3); }
       if (note.type === 'FLICK') {
         ctx.strokeStyle = '#143353'; ctx.lineWidth = 1.5;
@@ -1102,8 +1240,7 @@ export class ChartEditor {
       }
       if (note.type === 'DAMAGE') { ctx.strokeStyle = '#532741'; ctx.lineWidth = 2; for (let cx = x + 4; cx < x + width - 4; cx += 10) { ctx.beginPath(); ctx.moveTo(cx - 2, y - 3); ctx.lineTo(cx + 2, y + 3); ctx.moveTo(cx + 2, y - 3); ctx.lineTo(cx - 2, y + 3); ctx.stroke(); } }
     }
-    if (selected) this.handle(ctx, x + width, y, color);
-    if (note.height !== undefined && width > 25) { ctx.fillStyle = '#e5dcff'; ctx.font = '9px "Segoe UI", sans-serif'; ctx.fillText(`h${note.height}`, x + 2, y + 17); }
+    if (selected) this.handle(ctx, x + width, arrow ? y - airArrowLift(width) : y, color);
   }
   /**
    * HOLD / SLIDE body inside the current path. The joint texture runs from the start (bottom row) to the end (top row)

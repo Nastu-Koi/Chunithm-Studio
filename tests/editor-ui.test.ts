@@ -53,11 +53,11 @@ test('real canvas editor: mouse editing, keyboard history, connected nodes and n
     await page.locator('[data-tool="SLIDE"]').click(); await drag(48, 0, 288, 8);
     let slides = (await state()).notes.filter((note: any) => note.type === 'SLIDE');
     assert.equal(slides.length, 1); assert.equal(slides[0].duration, 240); assert.equal(slides[0].endLane, 8);
-    await page.locator('.editor-options [data-action="connect"]').click(); await click(432, 4); await page.keyboard.press('Escape');
+    await page.locator('.editor-toolrow [data-action="connect"]').click(); await click(432, 4); await page.keyboard.press('Escape');
     slides = (await state()).notes.filter((note: any) => note.type === 'SLIDE'); assert.equal(slides.length, 2);
     assert.equal(slides[0].tick + slides[0].duration, slides[1].tick);
-    await page.mouse.click(box.x + 15, point(168, 0).y); await click(48, 0);
-    await page.locator('.editor-options [data-action="split"]').click();
+    // Insert-node mode splits the long note under the pointer; the slide passes lane 4 halfway up.
+    await page.locator('.editor-toolrow [data-action="split"]').click(); await click(168, 4); await page.keyboard.press('Escape');
     slides = (await state()).notes.filter((note: any) => note.type === 'SLIDE'); assert.equal(slides.length, 3);
     const boundary = point(168, slides[0].endLane);
     const destination = point(192, slides[0].endLane + 1);
@@ -115,10 +115,13 @@ test('real canvas editor: mouse editing, keyboard history, connected nodes and n
     await page.locator('[data-option="snap-base"]').selectOption('whole');
     const types = ['TAP', 'EXTAP', 'FLICK', 'HOLD', 'SLIDE', 'AIR', 'AIR_HOLD', 'AIR_SLIDE', 'AIR_CRUSH', 'DAMAGE'];
     for (let i = 0; i < types.length; i++) {
-      await page.locator(`[data-tool="${types[i]}"]`).click();
-      await page.keyboard.down('Alt'); await click(48 + i * 48, i); await page.keyboard.up('Alt');
+      await page.locator(`[data-tool="${types[i]}"]`).first().click();
+      // AIR, AIR HOLD and AIR SLIDE bind to a ground note: drop them on the TAP, ExTAP and FLICK placed first.
+      const at = ['AIR', 'AIR_HOLD', 'AIR_SLIDE'].includes(types[i]) ? i - 5 : i;
+      await page.keyboard.down('Alt'); await click(48 + at * 48, at); await page.keyboard.up('Alt');
     }
-    assert.deepEqual((await state()).notes.map((note: any) => note.type), types);
+    // A bound AIR is stored right after its parent, so compare the set of placed types.
+    assert.deepEqual((await state()).notes.map((note: any) => note.type).sort(), [...types].sort());
     await page.evaluate(() => { const test = (window as any).testEditor; test.state.chart=test.createChart(); test.editor.setChart(test.state.chart); });
     await page.locator('.editor-advanced-controls > summary').click();
     await page.locator('[data-option="out-of-lane"]').check();

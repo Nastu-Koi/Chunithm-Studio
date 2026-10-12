@@ -2,7 +2,7 @@ import { LANES, makeId, type Chart, type ChartEvent, type Note, type NoteType } 
 import { getNoteScrollGroup } from '../core/timing';
 import { noteNativeKind } from '../core/validation';
 import { getNativeNoteTag } from '../core/c2s';
-import { getNativeAirBindings, nativeParentFamily } from '../core/judgement';
+import { getNativeAirBindings, getNativeSlideChains, nativeParentFamily } from '../core/judgement';
 
 /** Pure chart transformations behind the editor. Every function returns a new Chart and never mutates its input. */
 export type Clipboard = { notes: Note[]; events: ChartEvent[]; firstTick: number };
@@ -214,30 +214,85 @@ export function scaleEditorSelection(chart: Chart, ids: Set<string>, factor: num
 }
 
 /** Replace one straight SLIDE / AIR SLIDE segment by control segments along an ease-in-out curve. */
-export function curveEditorSlide(chart: Chart, id: string, step: number): Chart {
+export type SlideShape = 'zigzag' | 'wave' | 'curve';
+export interface SlideShapeOptions {
+  shape: SlideShape;
+  /** Length of the generated path in ticks. */
+  length: number;
+  /** Signed lane distance: the far side of a zigzag or wave, the end of a curve. */
+  move: number;
+  /** Zigzag: number of straight pieces. Wave: number of there-and-back swings. Unused by a curve. */
+  count: number;
+  /** Curve only. */
+  ease?: 'inout' | 'in' | 'out';
+  /** Sampling interval of a wave or curve, normally the quantize step. */
+  step: number;
+  /** Node kind of the zigzag corners; wave and curve samples are always control points. */
+  kind: EditorNodeKind;
+}
+export interface SlideShapeResult { chart: Chart; ids: string[]; /** `move` after fitting the lanes. */ move: number; /** `length` after fitting the next segment. */ length: number }
+const EASE = { inout: (t: number) => (1 - Math.cos(Math.PI * t)) / 2, in: (t: number) => 1 - Math.cos(Math.PI * t / 2), out: (t: number) => Math.sin(Math.PI * t / 2) };
+/**
+ * Replace one SLIDE / AIR SLIDE segment by a preset path that starts at the segment's start and keeps its start width,
+ * after Margrete's zigzag, meandering and curve generators. The segment chained after it is re-attached to the new end.
+ */
+export function shapeEditorSlide(chart: Chart, id: string, options: SlideShapeOptions): SlideShapeResult | undefined {
   const note = chart.notes.find(item => item.id === id);
-  if (!note || note.type !== 'SLIDE' && note.type !== 'AIR_SLIDE' || !(step > 0)) return chart;
-  const count = Math.min(64, Math.floor((note.duration ?? 0) / step + 1e-9));
-  if (count < 2 || endLane(note) === note.lane && endWidth(note) === note.width) return chart;
-  const at = (index: number) => {
-    const linear = index / count, eased = (1 - Math.cos(Math.PI * linear)) / 2;
-    return { tick: note.tick + note.duration! * linear, lane: Math.round(note.lane + (endLane(note) - note.lane) * eased), width: Math.round(note.width + (endWidth(note) - note.width) * eased),
-      height: note.height === undefined ? undefined : note.height + ((note.endHeight ?? note.height) - note.height) * linear };
-  };
+  if (!note || note.type !== 'SLIDE' && note.type !== 'AIR_SLIDE' || !(options.step > 0) || !(options.length > 0)) return undefined;
+  const outgoing = chart.notes.filter(item => item.id !== id && item.type === note.type && sameTick(item.tick, endTick(note)) && item.lane === endLane(note) && item.width === endWidth(note));
+  // The next segment keeps its own end, so the path must stop before it.
+  const length = Math.min(options.length, ...outgoing.map(item => endTick(item) - options.step - note.tick));
+  if (!(length > 0)) return undefined;
+  const limits = laneLimits(chart, note.width), move = clamp(Math.round(options.move), limits.min - note.lane, limits.max - note.lane);
+  const points: { at: number; lane: number; corner: boolean }[] = [{ at: 0, lane: note.lane, corner: false }];
+  if (options.shape === 'zigzag') {
+    const count = clamp(Math.round(options.count), 1, 256);
+    for (let index = 1; index <= count; index++) points.push({ at: index / count, lane: note.lane + (index % 2 ? move : 0), corner: true });
+  } else {
+    const samples = clamp(Math.floor(length / options.step + 1e-9), 1, 512), swings = clamp(Math.round(options.count), 1, 64);
+    const sway = options.shape === 'wave' ? (t: number) => (1 - Math.cos(2 * Math.PI * swings * t)) / 2 : EASE[options.ease ?? 'inout'];
+    for (let index = 1; index <= samples; index++) points.push({ at: index / samples, lane: Math.round(note.lane + move * sway(index / samples)), corner: false });
+    // A sample lying on the straight line between its neighbours adds a note without changing the path.
+    for (let index = points.length - 2; index > 0; index--) {
+      const before = points[index - 1], here = points[index], after = points[index + 1];
+      if (Math.abs((here.lane - before.lane) * (after.at - before.at) - (after.lane - before.lane) * (here.at - before.at)) < 1e-9) points.splice(index, 1);
+    }
+  }
+  // Whole ticks stay whole, so a generated path remains exportable; nodes that land on the same tick collapse.
+  const whole = Number.isInteger(note.tick) && Number.isInteger(length), offset = (at: number) => whole ? Math.round(length * at) : length * at;
+  for (let index = points.length - 2; index >= 0; index--) if (offset(points[index].at) >= offset(points[index + 1].at)) points.splice(index || 1, 1);
+  if (points.length < 2) return undefined;
+  const height = note.height, endHeight = note.endHeight ?? note.height;
   const segments: Note[] = [];
-  for (let index = 0; index < count; index++) {
-    const from = at(index), to = at(index + 1);
-    // Only the original end keeps its node kind; every inserted joint is a control point.
-    const segment: Note = { ...copyNote(note), id: index ? makeId('note') : note.id, tick: from.tick, lane: from.lane, width: from.width, duration: to.tick - from.tick, endLane: to.lane, endWidth: to.width,
-      ...(from.height !== undefined ? { height: from.height, endHeight: to.height } : {}),
-      attributes: { ...note.attributes, ...(index < count - 1 ? { visible: false } : {}), ...(index ? { parent: continuationParent(segments[index - 1]) } : {}) } };
+  for (let index = 0; index + 1 < points.length; index++) {
+    const from = points[index], to = points[index + 1], last = index + 2 === points.length;
+    // Only the original end keeps its node kind; corners follow the caller, samples are control points.
+    const segment: Note = { ...copyNote(note), id: index ? makeId('note') : note.id, tick: note.tick + offset(from.at), lane: from.lane, duration: offset(to.at) - offset(from.at), endLane: to.lane, endWidth: note.width,
+      ...(height !== undefined ? { height: height + (endHeight! - height) * from.at, endHeight: height + (endHeight! - height) * to.at } : {}),
+      attributes: { ...note.attributes, ...(last ? {} : { visible: to.corner && options.kind === 'normal' }), ...(index ? { parent: continuationParent(segments[index - 1]) } : {}) } };
     if (index) delete segment.native;
     segments.push(segment);
   }
-  return { ...chart, notes: chart.notes.flatMap(item => item.id === id ? segments : [item]) };
+  const tail = segments.at(-1)!, outgoingIds = new Set(outgoing.map(item => item.id));
+  const notes = chart.notes.flatMap(item => item.id === id ? segments : outgoingIds.has(item.id)
+    ? [{ ...item, tick: endTick(tail), duration: endTick(item) - endTick(tail), lane: endLane(tail), width: endWidth(tail), attributes: { ...item.attributes, parent: continuationParent(tail) } }] : [item]);
+  return { chart: { ...chart, notes }, ids: segments.map(item => item.id), move, length };
 }
 
-/** Insert a real editable/native segment boundary into a long note. */
+/** EX belongs to the whole ground long note: the game writes HXD for a HOLD and SXD / SXC on every segment of a SLIDE. */
+export function setEditorEx(chart: Chart, id: string, ex?: boolean): Chart {
+  const note = chart.notes.find(item => item.id === id);
+  if (!note || note.type !== 'HOLD' && note.type !== 'SLIDE') return chart;
+  const chain = note.type === 'SLIDE' ? getNativeSlideChains(chart).find(items => items.some(item => item.id === id)) ?? [note] : [note];
+  const ids = new Set(chain.map(item => item.id)), value = ex ?? !chain[0].attributes.ex;
+  return { ...chart, notes: chart.notes.map(item => {
+    if (!ids.has(item.id)) return item;
+    const attributes = { ...item.attributes };
+    if (value) attributes.ex = true; else { delete attributes.ex; delete attributes.effect; }
+    return { ...item, attributes };
+  }) };
+}
+
 export function splitEditorNote(chart: Chart, id: string, tick: number, kind?: EditorNodeKind): Chart {
   const note = chart.notes.find(item => item.id === id);
   if (!note || !long(note) || tick <= note.tick || tick >= endTick(note)) return chart;
