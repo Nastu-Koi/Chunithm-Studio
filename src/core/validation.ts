@@ -1,5 +1,6 @@
 import { LANES, NOTE_TYPES, type Chart, type Note, type Project, type ValidationIssue } from './model';
 import { analyzeC2SQuantization } from './quantization';
+import { getNativeAirBindings } from './judgement';
 function issue(code: string, message: string, entity?: { id: string; tick: number }, severity: 'error' | 'warning' = 'error'): ValidationIssue {
   return { code, message, severity, ...(entity ? { entityId: entity.id, tick: entity.tick } : {}) };
 }
@@ -27,6 +28,7 @@ export function validateChart(chart: Chart): ValidationIssue[] {
     if (note.type === 'AIR_CRUSH' && (!Number.isFinite(Number(note.attributes.interval ?? 24)) || Number(note.attributes.interval ?? 24) < 0)) result.push(issue('crush-interval', 'AIR-CRUSH 判定间隔必须是非负数，0 表示装饰段。', note));
     if (note.type === 'AIR' && note.attributes.direction && !['IR', 'UL', 'UR', 'DW', 'DL', 'DR'].includes(String(note.attributes.direction))) result.push(issue('air-direction', 'AIR 方向无效。', note));
   }
+  for (const note of getNativeAirBindings(chart).orphans) result.push(issue('air-parent', 'AIR / AIR-HOLD / AIR-SLIDE 必须绑定在地面音符的尾端（时间、轨道、宽度与关联类型一致，每个地面音符只带一个）；原游戏找不到父音符时读谱失败。', note));
   for (const event of chart.events) {
     if (ids.has(event.id)) result.push(issue('duplicate-id', '事件 ID 重复。', event)); ids.add(event.id);
     if (!Number.isFinite(event.tick) || event.tick < 0) result.push(issue('event-tick', '事件时间必须是非负有限 tick，可使用分数。', event));

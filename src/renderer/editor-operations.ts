@@ -2,6 +2,7 @@ import { LANES, makeId, type Chart, type ChartEvent, type Note, type NoteType } 
 import { getNoteScrollGroup } from '../core/timing';
 import { noteNativeKind } from '../core/validation';
 import { getNativeNoteTag } from '../core/c2s';
+import { getNativeAirBindings, nativeParentFamily } from '../core/judgement';
 
 /** Pure chart transformations behind the editor. Every function returns a new Chart and never mutates its input. */
 export type Clipboard = { notes: Note[]; events: ChartEvent[]; firstTick: number };
@@ -31,9 +32,67 @@ const laneLimits = (chart: Chart, width: number) => chart.allowOutOfLane ? { min
 export const limitLane = (chart: Chart, lane: number, width: number) => { const limits = laneLimits(chart, width); return clamp(lane, limits.min, limits.max); };
 export const limitWidth = (chart: Chart, width: number, lane: number) => clamp(width, 1, chart.allowOutOfLane ? 128 : Math.max(1, LANES - lane));
 /** Native AIR parent tokens identify the ground family even for EX/control variants. */
+const groundParentToken = (parent: Note): string => parent.type === 'HOLD' ? 'HLD' : parent.type === 'SLIDE' ? 'SLD' : noteNativeKind(parent);
 export function inferEditorParent(chart: Chart, tick: number, lane: number, width: number): string {
   const parent = chart.notes.filter(note => sameTick(endTick(note), tick) && endLane(note) === lane && endWidth(note) === width && !AIR.has(note.type)).at(-1);
-  return parent?.type === 'HOLD' ? 'HLD' : parent?.type === 'SLIDE' ? 'SLD' : parent ? noteNativeKind(parent) : 'TAP';
+  return parent ? groundParentToken(parent) : 'TAP';
+}
+/** The ground note an AIR head is bound to; continuation segments and unbound records have none. */
+export function boundEditorParent(chart: Chart, id: string): Note | undefined {
+  const { parentOf, airOf } = getNativeAirBindings(chart), parent = parentOf.get(id);
+  return parent && airOf.get(parent.id)![0].id === id ? parent : undefined;
+}
+/** A ground note and the AIR on its tail are one native root: picking the ground note takes its AIR chain,
+ * and picking the AIR head takes the ground note unless only the downward direction is wanted (deleting).
+ */
+export function selectionWithBoundAir(chart: Chart, ids: Set<string>, withParents = true): Set<string> {
+  const { airOf } = getNativeAirBindings(chart), selected = new Set(ids);
+  if (!airOf.size) return selected;
+  if (withParents) for (const id of ids) { const parent = boundEditorParent(chart, id); if (parent) selected.add(parent.id); }
+  for (const id of [...selected]) for (const air of airOf.get(id) ?? []) selected.add(air.id);
+  return selected;
+}
+/** Put a new AIR head on a ground note's tail. Undefined when that root cannot take it, as ScoreReader would find no parent. */
+export function attachEditorAir(chart: Chart, air: Note, parentId: string): Chart | undefined {
+  const index = chart.notes.findIndex(note => note.id === parentId), parent = chart.notes[index];
+  if (!parent || AIR.has(parent.type) || !['AIR', 'AIR_HOLD', 'AIR_SLIDE'].includes(air.type)) return undefined;
+  const lane = endLane(parent), width = endWidth(parent);
+  const note: Note = { ...air, tick: endTick(parent), lane, width, ...(long(air) ? { endLane: lane, endWidth: width } : {}), attributes: { ...air.attributes, parent: groundParentToken(parent) } };
+  // Records are read in tick order: right behind the parent keeps the AIR ahead of a SLIDE segment continuing from the same joint.
+  for (const at of [index + 1, 0]) {
+    const notes = [...chart.notes]; notes.splice(at, 0, note);
+    const result = { ...chart, notes };
+    // Taking the slot from an AIR already bound there would only orphan that one instead.
+    const bound = getNativeAirBindings(result);
+    if (bound.parentOf.get(note.id)?.id === parentId && bound.orphans.length <= getNativeAirBindings(chart).orphans.length) return result;
+  }
+  return undefined;
+}
+/** After an edit, re-seat every AIR bound in `before` on its parent's tail: same time, lane, width and parent type. */
+export function syncEditorAirBindings(before: Chart, after: Chart): Chart {
+  const { airOf } = getNativeAirBindings(before);
+  if (!airOf.size || before === after) return after;
+  const current = new Map(after.notes.map(note => [note.id, note])), moved = new Map<string, Note>();
+  for (const [groundId, chain] of airOf) {
+    const ground = current.get(groundId), head = current.get(chain[0].id);
+    if (!ground || !head || AIR.has(ground.type) || !AIR.has(head.type)) continue;
+    const tick = endTick(ground), lane = endLane(ground), width = endWidth(ground), parent = groundParentToken(ground);
+    const retoken = nativeParentFamily(head.attributes.parent ?? 'TAP') !== parent;
+    if (head.tick === tick && head.lane === lane && head.width === width && !retoken) continue;
+    const dt = tick - head.tick, dl = lane - head.lane;
+    for (const item of chain) {
+      const air = current.get(item.id);
+      if (!air) continue;
+      const first = air === head, next: Note = { ...air, tick: first ? tick : air.tick + dt };
+      if (first && retoken) next.attributes = { ...air.attributes, parent };
+      if (first || air.type === 'AIR_HOLD') { next.lane = lane; next.width = width; }
+      else next.lane = limitLane(after, air.lane + dl, air.width);
+      if (air.type === 'AIR_HOLD') { next.endLane = lane; next.endWidth = width; }
+      else if (air.endLane !== undefined) next.endLane = limitLane(after, air.endLane + dl, endWidth(air));
+      moved.set(air.id, next);
+    }
+  }
+  return moved.size ? { ...after, notes: after.notes.map(note => moved.get(note.id) ?? note) } : after;
 }
 /** Move an AIR-height joint and keep its directly connected segment aligned. */
 export function setEditorAirHeight(chart: Chart, id: string, endpoint: 'height' | 'endHeight', height: number): Chart {
@@ -68,7 +127,7 @@ export function alignAssignments(chart: Chart, previous: Note, next: Note): Char
 
 /** Move a mixed selection as one block, retaining its relative spacing at the edges. */
 export function moveEditorSelection(chart: Chart, ids: Set<string>, ticks: number, lanes: number): Chart {
-  ids = selectionWithAssignments(chart, ids);
+  ids = selectionWithAssignments(chart, selectionWithBoundAir(chart, ids));
   const notes = chart.notes.filter(note => ids.has(note.id));
   const events = chart.events.filter(event => ids.has(event.id));
   const minTick = Math.min(...notes.map(note => note.tick), ...events.map(event => event.tick));
@@ -109,7 +168,7 @@ export function moveEditorSelection(chart: Chart, ids: Set<string>, ticks: numbe
 }
 
 export function mirrorEditorSelection(chart: Chart, ids: Set<string>): Chart {
-  ids = selectionWithAssignments(chart, ids);
+  ids = selectionWithAssignments(chart, selectionWithBoundAir(chart, ids));
   return { ...chart, events: chart.events.map(event => ids.has(event.id) && event.type === 'SCROLL_ASSIGNMENT' ? { ...event, lane: LANES - (event.lane ?? 0) - (event.width ?? 1) } : event), notes: chart.notes.map(note => {
     if (!ids.has(note.id)) return note;
     const direction = String(note.attributes.direction ?? '');
@@ -146,7 +205,7 @@ export function flipEditorSelection(chart: Chart, ids: Set<string>): Chart {
 
 /** Stretch or compress the selected notes and events in time about the earliest selected tick. */
 export function scaleEditorSelection(chart: Chart, ids: Set<string>, factor: number): Chart {
-  ids = selectionWithAssignments(chart, ids);
+  ids = selectionWithAssignments(chart, selectionWithBoundAir(chart, ids));
   const notes = chart.notes.filter(note => ids.has(note.id)), events = chart.events.filter(event => ids.has(event.id));
   if (!(factor > 0) || !Number.isFinite(factor) || !notes.length && !events.length) return chart;
   const origin = Math.min(...notes.map(note => note.tick), ...events.map(event => event.tick));
@@ -227,7 +286,7 @@ export function appendEditorNote(chart: Chart, id: string, tick: number, lane: n
 
 /** Copy the requested notes, supplying only missing native group assignments for detached segments. */
 export function copyEditorSelection(chart: Chart, selected: Set<string>): Clipboard | undefined {
-  const ids = selectionWithAssignments(chart, selected);
+  const ids = selectionWithAssignments(chart, selectionWithBoundAir(chart, selected));
   const notes = chart.notes.filter(note => ids.has(note.id)).map(copyNote);
   const events = chart.events.filter(event => ids.has(event.id)).map(event => ({ ...event }));
   if (!notes.length && !events.length) return undefined;
