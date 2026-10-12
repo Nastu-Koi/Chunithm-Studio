@@ -426,12 +426,15 @@ try {
   const trackLeft = Number(await canvas.getAttribute('data-track-left')), laneWidth = Number(await canvas.getAttribute('data-lane-width'));
   const zoom = Number(await page.locator('[data-option="zoom"]').inputValue());
   const point = (tick, lane) => ({ x: box.x + trackLeft + (lane + .5) * laneWidth, y: box.y + box.height - 30 - tick * zoom });
-  for (const [type, lane] of [['SLIDE', 1.2], ['AIR_HOLD', 6.4], ['AIR_SLIDE', 10.7]]) {
-    const p = point(168, lane); await page.mouse.click(p.x, p.y);
-    assert.equal(await page.locator('[data-property="type"]').inputValue(), type);
+  for (const [type, lane, endLane] of [['SLIDE', 1.2, 4.5], ['AIR_HOLD', 6.4, 6.5], ['AIR_SLIDE', 10.7, 12.5]]) {
+    // The node kind is edited on the picked node; the body picks the segment, which has none.
+    const node = point(288, endLane); await page.mouse.click(node.x, node.y);
     await page.locator('[data-property="nodeKind"]').selectOption('control');
     assert.equal(await page.locator('[data-property="nodeKind"]').inputValue(), 'control');
     await page.locator('[data-property="nodeKind"]').selectOption('normal');
+    const p = point(168, lane); await page.mouse.click(p.x, p.y);
+    assert.equal(await page.locator('[data-property="type"]').inputValue(), type);
+    assert.equal(await page.locator('[data-property="nodeKind"]').count(), 0);
     await page.locator('[data-option="node-kind"]').selectOption('control');
     await page.mouse.click(box.x + 15, point(192, 0).y);
     await page.locator('.editor-options [data-action="split"]').click();

@@ -80,6 +80,19 @@ test('editor follows Margrete tools and keys: eraser, flip, time scale, curve, l
     const closed = await slideIds();
     assert.equal(closed.length, made.length - 1); assert.deepEqual(closed[1], { ...joint, duration: joint.duration + made[2].duration, endLane: made[2].endLane });
     assert.ok(closed.every((segment, index) => index === 0 || segment.lane === closed[index - 1].endLane && segment.tick === closed[index - 1].tick + closed[index - 1].duration));
+    // A picked node is edited as a node: its kind, and a position the segments on both sides follow.
+    const first = closed[0], nodeAt = point(first.tick + first.duration, first.endLane + 1);
+    await page.mouse.click(nodeAt.x, nodeAt.y); assert.equal(await page.locator('[data-property="type"]').count(), 0);
+    await page.locator('[data-property="nodeKind"]').selectOption('normal'); await frame();
+    assert.equal((await notes()).find(n => n.type === 'SLIDE')!.visible, true);
+    await page.locator('[data-property="endLane"]').fill('9'); await page.locator('[data-property="endLane"]').press('Tab');
+    const moved = await slideIds(); assert.deepEqual([moved[0].endLane, moved[1].lane, moved.length], [8, 8, closed.length]);
+    // The body picks the segment, which has no node kind of its own, and cannot be deleted: only nodes are.
+    const bodyAt = point(moved[1].tick + moved[1].duration / 2, (moved[1].lane + moved[1].endLane) / 2 + 1);
+    await page.mouse.click(bodyAt.x, bodyAt.y); assert.deepEqual(await selectedIds(), [moved[1].id]);
+    assert.equal(await page.locator('[data-property="nodeKind"]').count(), 0); assert.equal(await page.locator('[data-property="type"]').inputValue(), 'SLIDE');
+    await page.mouse.click(bodyAt.x, bodyAt.y, { button: 'right' }); assert.equal((await slideIds()).length, moved.length);
+    await page.mouse.click(bodyAt.x, bodyAt.y); await page.keyboard.press('Delete'); assert.equal((await slideIds()).length, moved.length);
 
     await page.keyboard.press('s'); await click(48, 9.5); await page.keyboard.press('Control+c');
     await click(600, 14.5); await page.keyboard.press('Control+Shift+v');
@@ -133,6 +146,12 @@ test('editor follows Margrete tools and keys: eraser, flip, time scale, curve, l
     await page.waitForFunction(() => document.querySelector<HTMLCanvasElement>('.editor-viewport canvas')?.dataset.bodyTextures === 'game'); await frame();
     const textured = await pixel(768, 12.5);
     assert.ok(textured[0] < 40 && textured[1] > 230 && textured[2] < 40, `HOLD body with a texture ${textured}`);
+    // A right click on the last node takes the segment before it; on the head node it takes the whole long note.
+    await page.keyboard.press('s');
+    const curved = async () => (await slideIds()).filter(n => n.tick < 480);
+    const whole = await curved(), last = whole.at(-1)!, lastAt = point(last.tick + last.duration, last.endLane + 1), headAt = point(whole[0].tick, whole[0].lane + 1);
+    await page.mouse.click(lastAt.x, lastAt.y, { button: 'right' }); assert.deepEqual((await curved()).map(n => n.id), whole.slice(0, -1).map(n => n.id));
+    await page.mouse.click(headAt.x, headAt.y, { button: 'right' }); assert.deepEqual(await curved(), []);
     assert.deepEqual(errors, []);
   } finally { await browser.close(); }
 });

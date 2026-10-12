@@ -2,7 +2,7 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import { readFile } from 'node:fs/promises';
 import { createNote } from '../src/core/model';
-import { getNativeHeadModel, nativeAirBaseHeight, AIR_HEIGHT_STEP, projectNativeNotePoint } from '../src/renderer/native-notes';
+import { getNativeHeadModel, nativeAirBaseHeight, nativeScrollWorldUnit, AIR_HEIGHT_STEP, projectNativeNotePoint, projectNativeScrollPoint } from '../src/renderer/native-notes';
 import { projectTrackPoint } from '../src/renderer/player-scene';
 
 test('every standard note family and AIR direction selects an actual copied model, across all 16 widths', async () => {
@@ -33,4 +33,15 @@ test('normal AIR adds no invented elevation, while original source geometry reta
   const left = projectNativeNotePoint(8, .5, [-5.5, 15, -5]), right = projectNativeNotePoint(8, .5, [5.5, 15, -5]);
   assert.ok(Math.abs(left.x + right.x - 2 * base.x) < 1e-9);
   assert.notEqual(projectNativeNotePoint(8, .5, [5.5, 15, 0]).x, right.x);
+});
+
+test('a held AIR HOLD line leaves the bottom of the screen at every height and speed', () => {
+  for (const speed of [1, 6, 12]) for (const height of [1, 5, 9]) {
+    const y = nativeAirBaseHeight(height) + 15.574, near = -110 / nativeScrollWorldUnit(speed);
+    assert.ok(projectNativeScrollPoint(8, near, [0, y, 0], speed).y > 1080, `speed ${speed} height ${height}`);
+    // The old anchor-only projection stalled at the track's near clamp, in the middle of the screen for high lines.
+    if (height === 9) assert.ok(projectNativeNotePoint(8, near, [0, y, 0], speed).y < 1080);
+    const at = projectNativeScrollPoint(8, 0, [0, y, 0], speed), behind = projectNativeScrollPoint(8, -1e-6, [0, y, 0], speed);
+    assert.ok(Math.abs(at.y - behind.y) < .01 && Math.abs(at.x - behind.x) < .01);
+  }
 });

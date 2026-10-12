@@ -59,3 +59,9 @@ export function projectNativeNotePoint(lane: number, distance: number, position:
     y: 540 - focal * (y + cosine * position[1] - sine * position[2]) / actualDepth,
     scale: anchor.scale * depth / actualDepth };
 }
+/** The track anchor stops just behind the judgement line, so scroll distances past it continue along source Z instead. */
+export function projectNativeScrollPoint(lane: number, distance: number, position: readonly number[], speed = 6): MeshPoint {
+  return distance < 0
+    ? projectNativeNotePoint(lane, 0, [position[0], position[1], position[2] - distance * nativeScrollWorldUnit(speed)], speed)
+    : projectNativeNotePoint(lane, distance, position, speed);
+}

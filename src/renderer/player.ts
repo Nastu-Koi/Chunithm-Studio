@@ -12,7 +12,7 @@ import { sampleStageSkinMatrices, transformStagePoint, type StageAnimation } fro
 import { createStageModelSampler, getStageCamera } from '../core/stage-program';
 import { stageWorldToAffine, type StageCamera } from './stage-projection';
 import { GameMeshRenderer, type MeshPaint } from './game-mesh-renderer';
-import { getNativeHeadModel, projectNativeNotePoint, nativeAirBaseHeight, nativeScrollWorldUnit, AIR_LINE_HEIGHT } from './native-notes';
+import { getNativeHeadModel, projectNativeNotePoint, projectNativeScrollPoint, nativeAirBaseHeight, nativeScrollWorldUnit, AIR_LINE_HEIGHT } from './native-notes';
 import { getNativeAirSlideUvSpans, nativeAirSlideVAtTick } from './native-air-timing';
 import { clipNativeMeshZ } from './clip-native-mesh';
 import { NativeHudFont } from './game-font';
@@ -146,8 +146,8 @@ export function getPlayerRibbonSegments(chart: Chart, note: Note, currentTick: n
   }
   return result;
 }
-/** Scroll distance on the near side of the judgement line at which a line at AIR height has left the screen. */
-const AIR_HOLD_NEAR = -3;
+/** Source Z on the near side of the judgement line at which a line at AIR height has left the screen; the camera is 120.9 away. */
+const AIR_HOLD_NEAR_Z = 110;
 function noteColor(note: Note): string { return nativeColors[String(note.attributes.color)] ?? colors[note.type]; }
 /** Perspective is visual only. Hit timestamps always come from the shared audio timeline. */
 export class ChartPlayer {
@@ -416,7 +416,7 @@ export class ChartPlayer {
       const clip: [number, number] = [Math.min(z0, z1) - 1e-7, Math.max(z0, z1) + 1e-7];
       const projected = (position: readonly number[], xScale: number) => {
         const fraction = Math.max(0, Math.min(1, -position[2] / 4));
-        return projectNativeNotePoint(note.lane + note.width / 2,
+        return projectNativeScrollPoint(note.lane + note.width / 2,
           near + span * fraction,
           [position[0] * xScale, position[1] + nativeAirBaseHeight(note.height ?? 1), 0], this.speed);
       };
@@ -495,9 +495,7 @@ export class ChartPlayer {
       const ribbon = getPlayerRibbonSegments(this.chart, note, tick, far);
       // A held AIR HOLD does not end in mid-air above the judgement line: its line runs straight on, out of the bottom of the screen.
       if (note.type === 'AIR_HOLD' && tick > note.tick && ribbon.length && Math.abs(ribbon[0].startTick - tick) < 1e-7) {
-        const from = ribbon[0].startDistance, pieces = Math.ceil((from - AIR_HOLD_NEAR) / .75);
-        for (let piece = 0; piece < pieces; piece++) ribbon.unshift({ startTick: tick, endTick: tick,
-          startDistance: from + (AIR_HOLD_NEAR - from) * (piece + 1) / pieces, endDistance: from + (AIR_HOLD_NEAR - from) * piece / pieces });
+        ribbon.unshift({ startTick: tick, endTick: tick, startDistance: -AIR_HOLD_NEAR_Z / nativeScrollWorldUnit(this.speed), endDistance: ribbon[0].startDistance });
       }
       const airExtent: [number, number] | undefined = note.type === 'AIR_HOLD' && ribbon.length
         ? [Math.min(...ribbon.flatMap(s => [s.startDistance, s.endDistance])), Math.max(...ribbon.flatMap(s => [s.startDistance, s.endDistance]))] : undefined;

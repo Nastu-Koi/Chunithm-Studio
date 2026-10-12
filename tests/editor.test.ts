@@ -2,7 +2,7 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import { createChart, createNote, type Note } from '../src/core/model';
 import { parseC2S, serializeC2S } from '../src/core/c2s';
-import { mirrorEditorSelection, moveEditorSelection, parseEditorFraction, splitEditorNote, appendEditorNote, copyEditorSelection, flipEditorSelection, scaleEditorSelection, shapeEditorSlide, removeEditorJoint, attachEditorAir, boundEditorParent, setEditorEx } from '../src/renderer/editor';
+import { mirrorEditorSelection, moveEditorSelection, parseEditorFraction, splitEditorNote, appendEditorNote, copyEditorSelection, flipEditorSelection, scaleEditorSelection, shapeEditorSlide, removeEditorJoint, editorChain, attachEditorAir, boundEditorParent, setEditorEx } from '../src/renderer/editor';
 import { getNoteScrollGroup } from '../src/core/timing';
 
 test('moving a mixed selection clamps the whole group without changing spacing or source records', () => {
@@ -308,6 +308,9 @@ test('removing a joint joins the two segments around it and keeps what hangs on 
   assert.equal(boundEditorParent(tail, air.id)?.id, b.id);
   // The end of a chain is no joint.
   assert.equal(removeEditorJoint(bound, c.id), bound);
+  // Any segment names the whole long note, in order.
+  for (const segment of [a, b, c]) assert.deepEqual(editorChain(bound, segment).map(note => note.id), [a.id, b.id, c.id]);
+  assert.deepEqual(editorChain(bound, air), [air]);
   // AIR SLIDE: heights run through, and the segment after the joint names its new parent's tag.
   const up = { ...createNote('AIR_SLIDE', 0, 0, 2), duration: 96, endLane: 2, height: 1, endHeight: 3, attributes: { visible: false } };
   const on = { ...createNote('AIR_SLIDE', 96, 2, 2), duration: 96, endLane: 4, height: 3, endHeight: 5, attributes: { visible: true, parent: 'ASC' } };

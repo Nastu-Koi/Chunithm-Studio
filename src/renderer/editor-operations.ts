@@ -342,6 +342,18 @@ export function nextEditorSegment(chart: Chart, note: Note): Note | undefined {
   return chart.notes.find(item => item.id !== note.id && item.type === note.type && sameTick(item.tick, endTick(note)) && item.lane === endLane(note) && item.width === endWidth(note)
     && (item.height === undefined || item.height === (note.endHeight ?? note.height)));
 }
+/** Every segment of the long note this segment belongs to, in order. */
+export function editorChain(chart: Chart, note: Note): Note[] {
+  const chain = [note], seen = new Set([note.id]);
+  for (let next = nextEditorSegment(chart, note); next && !seen.has(next.id); next = nextEditorSegment(chart, next)) { chain.push(next); seen.add(next.id); }
+  if (!long(note) || note.type === 'HOLD') return chain;
+  for (;;) {
+    const head = chain[0], previous = chart.notes.find(item => !seen.has(item.id) && item.type === head.type && sameTick(endTick(item), head.tick) && endLane(item) === head.lane && endWidth(item) === head.width
+      && (head.height === undefined || head.height === (item.endHeight ?? item.height)));
+    if (!previous) return chain;
+    chain.unshift(previous); seen.add(previous.id);
+  }
+}
 /** Remove the joint at this segment's end: the segment runs straight on to the end of the one that followed and takes its node kind. */
 export function removeEditorJoint(chart: Chart, id: string): Chart {
   const note = chart.notes.find(item => item.id === id), next = note && nextEditorSegment(chart, note);
