@@ -1,6 +1,7 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { Transport, soundsForHit, envelopeLevel, getChartHits } from '../src/renderer/transport';
+import { Transport, soundsForHit, envelopeLevel, getChartHits, bandpassCoefficients } from '../src/renderer/transport';
+import { curveShape } from '../src/core/game-sounds';
 import { createProject, createNote } from '../src/core/model';
 import { tickToSeconds } from '../src/core/timing';
 
@@ -17,7 +18,7 @@ function fakeAudio() {
   let nextTimer = 1;
   const gains: { gain: { value: number }; ramps: number[]; events: [string, number, number][] }[] = [];
   const oscillators: unknown[] = [];
-  const filters: { type: string; frequency: { value: number }; Q: { value: number } }[] = [];
+  const filters: { type: string; frequency: { value: number }; Q: { value: number }; gain: { value: number }; feedforward?: number[]; feedback?: number[] }[] = [];
   const context = {
     currentTime: 0, destination: {},
     createGain: () => {
@@ -35,7 +36,8 @@ function fakeAudio() {
     resume: () => { const call = deferred<void>(); resumes.push(call); return call.promise; },
     close: async () => {},
     sampleRate: 48000,
-    createBiquadFilter: () => { const node = { type: '', frequency: { value: 0 }, Q: { value: 1 }, connect() {}, disconnect() {} }; filters.push(node); return node; },
+    createBiquadFilter: () => { const node = { type: '', frequency: { value: 0 }, Q: { value: 1 }, gain: { value: 0 }, connect() {}, disconnect() {} }; filters.push(node); return node; },
+    createIIRFilter: (feedforward: number[], feedback: number[]) => { const node = { type: 'iir', feedforward, feedback, frequency: { value: 0 }, Q: { value: 1 }, gain: { value: 0 }, connect() {}, disconnect() {} }; filters.push(node); return node; },
     createBufferSource: () => {
       const source = { buffer: null as unknown, playbackRate: { value: 1 }, when: undefined as number | undefined, offset: undefined as number | undefined, stopped: false, disconnected: false, connect() {}, disconnect() { this.disconnected = true; }, start(when: number, offset?: number) { this.when = when; this.offset = offset; }, stop() { this.stopped = true; } };
       sources.push(source); return source;
@@ -496,7 +498,7 @@ test('loops started together are set apart, filtered and swelled in the way thei
   try {
     Math.random = () => .5;
     const loading = transport.setGameSounds({ source: 'fixture', warnings: [], sounds: { holdStart: { cueName: 'start', layers: [
-      { path: 'loop.wav', gain: .3, playbackRate: 1, loop: { start: 2, end: 2.9 }, group: 1, lowpass: 8000, swell: [{ time: 0, level: .1 }, { time: .1, level: 1 }] }],
+      { path: 'loop.wav', gain: .3, playbackRate: 1, loop: { start: 2, end: 2.9 }, group: 1, bandpass: { low: 24, high: 8000 }, swell: [{ time: 0, level: .1 }, { time: .1, level: 1 }] }],
       combos: [{ key: 'cue:loop', window: .03, loopback: 0, steps: [{ delay: 0, spread: 0 }, { delay: .01, spread: .001 }, { delay: .02, spread: .001 }], group: 1 }] } } }, async () => new Uint8Array(1));
     await Promise.resolve(); for (const call of fake.decoding) call.resolve(buffer(3)); await loading;
     const chart = createProject().chart;
@@ -507,10 +509,53 @@ test('loops started together are set apart, filtered and swelled in the way thei
     const later = tickToSeconds(chart, 480);
     // Steps 0, 1, 2, then back to the loop-back step; the late start begins again at the first.
     assert.deepEqual(fake.sources.map(source => Math.round(source.when! * 1e6) / 1e6), [0, .01, .02, 0, Math.round(later * 1e6) / 1e6]);
-    assert.deepEqual(fake.filters.map(filter => [filter.type, filter.frequency.value]), Array(5).fill(['lowpass', 8000]));
+    assert.deepEqual(fake.filters.map(filter => [filter.type, filter.feedforward]), Array(5).fill(['iir', bandpassCoefficients(24, 8000, 48000)!.feedforward]));
     // Each loop has a gain of its own for the swell, which starts with the delayed layer.
     const swells = fake.gains.filter(node => node.events[0]?.[1] === .1);
     assert.deepEqual(swells.slice(0, 2).map(node => node.events), [[['set', .1, 0], ['ramp', 1, .1]], [['set', .1, .01], ['ramp', 1, .11]]]);
     transport.pause();
   } finally { Math.random = random; transport.destroy(); fake.restore(); }
+});
+
+test('curve shapes follow the runtime and the band-pass section has its corners 3 dB down', () => {
+  const at = (type: number, strength: number, x: number) => Math.round(curveShape({ type, strength }, x) * 1e6) / 1e6;
+  // Strength 0 is linear whatever the type; every shape runs from 0 to 1.
+  for (const type of [1, 2, 3, 4]) { assert.equal(at(type, 0, .3), .3); assert.deepEqual([at(type, 1, 0), at(type, 1, 1), at(type, 2, 0), at(type, 2, 1)], [0, 1, 0, 1]); }
+  assert.deepEqual([at(1, 1, .5), at(1, 2, .5), at(1, .5, .5)], [.25, .0625, .375]);
+  assert.deepEqual([at(2, 1, .5), at(2, 2, .5)], [.75, .9375]);
+  assert.deepEqual([at(3, 1, .25), at(3, 1, .5), at(3, 2, .25), at(3, 2, .75)], [.15625, .5, .0625, .9375]);
+  assert.deepEqual([at(4, 1, .25), at(4, 1, .5), at(4, 1, .75), at(4, 2, .25), at(4, 2, .5)], [.375, .5, .625, .46875, .5]);
+  assert.equal(curveShape(undefined, .3), .3);
+  // Magnitude of the section at a frequency.
+  const gain = (low: number, high: number, frequency: number) => {
+    const { feedforward: b, feedback: a } = bandpassCoefficients(low, high, 48000)!, w = 2 * Math.PI * frequency / 48000;
+    const size = (c: number[]) => Math.hypot(c[0] + c[1] * Math.cos(w) + c[2] * Math.cos(2 * w), c[1] * Math.sin(w) + c[2] * Math.sin(2 * w));
+    return size(b) / size(a);
+  };
+  assert.ok(Math.abs(gain(24, 7947, 7947) - Math.SQRT1_2) < .005); assert.ok(Math.abs(gain(24, 7947, 24) - Math.SQRT1_2) < .005);
+  assert.ok(gain(24, 7947, 1000) > .99);
+  // One pole either side: an octave above the corner it is down by about 7 dB, not 12.
+  assert.ok(gain(24, 7947, 15894) > .3 && gain(24, 7947, 15894) < .5);
+  assert.equal(bandpassCoefficients(5000, 5000, 48000), null);
+});
+
+test('a curved release and a curved swell are scheduled along their shapes', async () => {
+  const fake = fakeAudio(), transport = new Transport();
+  try {
+    const loading = transport.setGameSounds({ source: 'fixture', warnings: [], sounds: { tap: { cueName: 'tap', layers: [
+      { path: 'a.wav', gain: .4, playbackRate: 1, stopAfter: .05, envelope: { attack: 0, hold: 0, decay: 0, sustain: 1, release: .5, releaseCurve: { type: 2, strength: 1 } },
+        swell: [{ time: 0, level: .05 }, { time: .1, level: 1, curve: { type: 1, strength: 1 } }], peaking: { frequency: 309, q: .79, gain: .23 } }] } } }, async () => new Uint8Array(1));
+    await Promise.resolve(); for (const call of fake.decoding) call.resolve(buffer(3)); await loading;
+    const chart = createProject().chart; chart.notes = [createNote('TAP', 0, 0, 2)];
+    transport.setChart(chart); await playNow(transport, fake);
+    const [swell, level] = fake.gains.slice(-2).sort((a, b) => b.events.length - a.events.length && (a.events[0][1] === .05 ? -1 : 1));
+    // Type 2 falls fast first: a quarter of the way through the release three sixteenths short of half remain.
+    assert.deepEqual(level.events.slice(0, 2), [['set', .4, .05], ['ramp', Math.round(.4 * (1 - curveShape({ type: 2, strength: 1 }, 1 / 16)) * 1e6) / 1e6, .05 + .5 / 16]]);
+    assert.deepEqual(level.events.at(-1), ['ramp', 0, .55]); assert.equal(level.events.length, 17);
+    // Type 1 rises slowly first.
+    assert.deepEqual(swell.events[0], ['set', .05, 0]); assert.deepEqual(swell.events.at(-1), ['ramp', 1, .1]);
+    assert.ok(swell.events.some(event => event[2] === .05 && Math.abs(event[1] - (.05 + .95 * .25)) < 1e-6));
+    assert.deepEqual(fake.filters.map(filter => [filter.type, filter.frequency.value, filter.Q.value, Math.round(filter.gain.value * 100) / 100]), [['peaking', 309, .79, -12.77]]);
+    transport.pause();
+  } finally { transport.destroy(); fake.restore(); }
 });

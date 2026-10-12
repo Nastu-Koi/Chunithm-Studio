@@ -1,7 +1,7 @@
 import type { Chart, NoteType } from '../core/model';
 import { tickToSeconds, secondsToTick, getBeatLines } from '../core/timing';
 import { getPlayerPlaybackPoints } from './playback-points';
-import type { GameHitSoundCombo, GameHitSoundId, GameHitSoundLayer, GameHitSoundLimit, GameHitSounds } from '../core/game-sounds';
+import { curveShape, type GameHitSoundCombo, type GameHitSoundCurve, type GameHitSoundId, type GameHitSoundLayer, type GameHitSoundLimit, type GameHitSounds } from '../core/game-sounds';
 import { buildJudgementTimeline } from '../core/judgement';
 type SoundLayers = (Omit<GameHitSoundLayer, 'path'> & { buffer: AudioBuffer })[];
 type Voice = { stop(at: number): void };
@@ -9,6 +9,24 @@ type Voice = { stop(at: number): void };
 const LIMIT_FADE = 0.02;
 /** A HOLD or SLIDE no longer than this sounds a plain TAP at its start and no sustained loop (6 frames in the game). */
 const SUSTAIN_MINIMUM = 0.1;
+/** A curved stage is scheduled as this many straight pieces. */
+const CURVE_STEPS = 16;
+/** Moves `param` from one value to another over `duration` from `start`: one ramp if linear, a run of short ones along a curve. */
+function shapedRamp(param: AudioParam, from: number, to: number, start: number, duration: number, curve?: GameHitSoundCurve): void {
+  param.setValueAtTime(from, start);
+  if (!curve?.type) { param.linearRampToValueAtTime(to, start + duration); return; }
+  for (let step = 1; step <= CURVE_STEPS; step++) param.linearRampToValueAtTime(from + (to - from) * curveShape(curve, step / CURVE_STEPS), start + duration * step / CURVE_STEPS);
+}
+/**
+ * The band-pass section the game's runtime designs (0x139c178): gain B and a zero at 0 over s² + Bs + low·high with
+ * B = high − low, both corners pre-warped, then the bilinear transform. Returns null where the runtime bypasses it.
+ */
+export function bandpassCoefficients(low: number, high: number, sampleRate: number): { feedforward: number[]; feedback: number[] } | null {
+  low = Math.max(low, 10); high = Math.min(high, sampleRate / 2 - 100);
+  if (low > high - 1) return null;
+  const a = Math.tan(Math.PI * low / sampleRate), b = Math.tan(Math.PI * high / sampleRate), width = b - a, square = a * b;
+  return { feedforward: [width, 0, -width], feedback: [1 + width + square, 2 * square - 2, 1 - width + square] };
+}
 /**
  * `sustainHead`: the start of an AIR HOLD / AIR SLIDE chain, drawn as an AIR arrow but sounded by the sustain note itself.
  * `until`: on the start of a HOLD, SLIDE or AIR sustain chain, the time its end is reached and its loop stops.
@@ -38,10 +56,10 @@ export function soundsForHit(hit: Pick<Hit, 'type' | 'direction' | 'sustainHead'
 export function envelopeLevel(envelope: GameHitSoundLayer['envelope'], elapsed: number): number {
   if (!envelope) return 1;
   const { attack, hold, decay, sustain } = envelope;
-  if (elapsed < attack) return Math.max(0, elapsed) / attack;
+  if (elapsed < attack) return curveShape(envelope.attackCurve, Math.max(0, elapsed) / attack);
   const decaying = elapsed - attack - hold;
   if (decaying <= 0 || sustain >= 1) return 1;
-  return decaying < decay ? 1 + (sustain - 1) * decaying / decay : sustain;
+  return decaying < decay ? 1 + (sustain - 1) * curveShape(envelope.decayCurve, decaying / decay) : sustain;
 }
 export function getChartHits(chart: Chart): Hit[] {
   const hits: Hit[] = [];
@@ -174,8 +192,8 @@ export class Transport {
       try {
         const layers = await Promise.all(sound.layers.map(async layer => {
           if (!Number.isFinite(layer.gain) || layer.gain < 0 || !Number.isFinite(layer.playbackRate) || layer.playbackRate <= 0) throw new Error('音效参数无效');
-          if ([...Object.values(layer.envelope ?? {}), layer.stopAfter ?? 0, layer.delay ?? 0, ...(layer.swell ?? []).flatMap(point => [point.time, point.level])].some(value => !Number.isFinite(value) || value < 0)) throw new Error('音效参数无效');
-          if ([layer.lowpass ?? 1, layer.highpass ?? 1].some(value => !Number.isFinite(value) || value <= 0)) throw new Error('音效参数无效');
+          if ([...Object.values(layer.envelope ?? {}).filter(value => typeof value === 'number'), layer.stopAfter ?? 0, layer.delay ?? 0, ...(layer.swell ?? []).flatMap(point => [point.time, point.level])].some(value => !Number.isFinite(value) || value < 0)) throw new Error('音效参数无效');
+          if ([layer.bandpass?.low ?? 1, layer.bandpass?.high ?? 1, layer.peaking?.frequency ?? 1, layer.peaking?.q ?? 1, layer.peaking?.gain ?? 1].some(value => !Number.isFinite(value) || value <= 0)) throw new Error('音效参数无效');
           if (!decoded.has(layer.path)) decoded.set(layer.path, read(layer.path).then(bytes => context.decodeAudioData(new Uint8Array(bytes).buffer)));
           const { path: _path, ...rest } = layer;
           return { ...rest, buffer: await decoded.get(layer.path)! };
@@ -183,7 +201,7 @@ export class Transport {
         if (layers.length) {
           // Some cues (including bundled HOLD/SLIDE) are the same complete sound.
           // Keep every layer within a cue, but share identity for equal cue mixes.
-          const key = JSON.stringify(sound.layers.map(layer => JSON.stringify([layer.path, layer.gain, layer.playbackRate, layer.envelope, layer.stopAfter, layer.loop, layer.group, layer.delay, layer.lowpass, layer.highpass, layer.swell])).sort());
+          const key = JSON.stringify(sound.layers.map(layer => JSON.stringify([layer.path, layer.gain, layer.playbackRate, layer.envelope, layer.stopAfter, layer.loop, layer.group, layer.delay, layer.bandpass, layer.peaking, layer.swell])).sort());
           if (!sharedLayers.has(key)) sharedLayers.set(key, layers);
           next.set(id as GameHitSoundId, sharedLayers.get(key)!);
           limits.set(id as GameHitSoundId, (sound.limits ?? []).filter(limit => limit.max >= 1));
@@ -304,20 +322,26 @@ export class Transport {
       const start = when + (layer.delay ?? 0) + (shifts.get(layer.group) ?? 0);
       source.buffer = layer.buffer; source.playbackRate.value = layer.playbackRate;
       if (layer.loop) { source.loop = true; source.loopStart = layer.loop.start; source.loopEnd = layer.loop.end; }
-      // The cue's band-pass filter: a low-pass and a high-pass without resonance.
-      for (const [type, frequency] of [['lowpass', layer.lowpass], ['highpass', layer.highpass]] as const) if (frequency) {
-        const filter = context.createBiquadFilter(); filter.type = type; filter.frequency.value = Math.min(frequency, context.sampleRate / 2); filter.Q.value = -3.0103; chain.push(filter);
+      // The cue's filters, with the coefficients the game's runtime computes for them.
+      const band = layer.bandpass && bandpassCoefficients(layer.bandpass.low, layer.bandpass.high, context.sampleRate);
+      if (band) chain.push(context.createIIRFilter(band.feedforward, band.feedback));
+      if (layer.peaking) {
+        const filter = context.createBiquadFilter(); filter.type = 'peaking'; filter.Q.value = layer.peaking.q; filter.gain.value = 20 * Math.log10(layer.peaking.gain);
+        filter.frequency.value = Math.max(10, Math.min(layer.peaking.frequency, context.sampleRate / 2 - 100)); chain.push(filter);
       }
       // Volume over the time since the start, apart from the envelope: the sustained loops swell in over 0.1 s.
       if (layer.swell?.length) {
-        const swell = context.createGain(); swell.gain.value = layer.swell[0].level; swell.gain.setValueAtTime(layer.swell[0].level, start);
-        for (const point of layer.swell.slice(1)) swell.gain.linearRampToValueAtTime(point.level, start + point.time);
+        const swell = context.createGain(), points = layer.swell; swell.gain.value = points[0].level; swell.gain.setValueAtTime(points[0].level, start);
+        for (let index = 1; index < points.length; index++) {
+          if (points[index].curve?.type) shapedRamp(swell.gain, points[index - 1].level, points[index].level, start + points[index - 1].time, points[index].time - points[index - 1].time, points[index].curve);
+          else swell.gain.linearRampToValueAtTime(points[index].level, start + points[index].time);
+        }
         chain.push(swell);
       }
       // Envelope times run in real time, whatever the pitch of the layer.
-      if (envelope && envelope.attack > 0) { gain.gain.value = 0; gain.gain.setValueAtTime(0, start); gain.gain.linearRampToValueAtTime(layer.gain, start + envelope.attack); }
+      if (envelope && envelope.attack > 0) { gain.gain.value = 0; shapedRamp(gain.gain, 0, layer.gain, start, envelope.attack, envelope.attackCurve); }
       else gain.gain.value = layer.gain;
-      if (envelope && envelope.sustain < 1) { const decay = start + envelope.attack + envelope.hold; gain.gain.setValueAtTime(layer.gain, decay); gain.gain.linearRampToValueAtTime(layer.gain * envelope.sustain, decay + envelope.decay); }
+      if (envelope && envelope.sustain < 1) shapedRamp(gain.gain, layer.gain, layer.gain * envelope.sustain, start + envelope.attack + envelope.hold, envelope.decay, envelope.decayCurve);
       chain.push(gain);
       for (let index = 1; index < chain.length; index++) chain[index - 1].connect(chain[index]);
       gain.connect(destination); this.activeEffects.add(source);
@@ -329,7 +353,7 @@ export class Transport {
       if (node.stopAt !== undefined && node.stopAt <= at) return;
       node.stopAt = at;
       const release = node.envelope?.release || LIMIT_FADE, param = node.gain.gain;
-      param.cancelScheduledValues?.(at); param.setValueAtTime(node.level * envelopeLevel(node.envelope, at - node.start), at); param.linearRampToValueAtTime(0, at + release);
+      param.cancelScheduledValues?.(at); shapedRamp(param, node.level * envelopeLevel(node.envelope, at - node.start), 0, at, release, node.envelope?.releaseCurve);
       try { node.source.stop(at + release); } catch { /* Already ended. */ }
     };
     for (const [index, layer] of layers.entries()) {

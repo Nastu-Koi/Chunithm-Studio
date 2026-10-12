@@ -3,7 +3,7 @@ import { access, mkdir, mkdtemp, readFile, realpath, rename, rm, writeFile } fro
 import path from 'node:path';
 import { parseAfs2, parseCommands, parseUtf, type UtfTable, type UtfValue } from './cri';
 import { decodeAdx, prepareAudio } from './audio';
-import type { GameHitSoundCombo, GameHitSoundEnvelope, GameHitSoundId, GameHitSoundLimit, GameHitSounds } from '../core/game-sounds';
+import type { GameHitSoundCombo, GameHitSoundCurve, GameHitSoundEnvelope, GameHitSoundId, GameHitSoundLayer, GameHitSoundLimit, GameHitSounds } from '../core/game-sounds';
 export type { GameHitSoundId, GameHitSounds } from '../core/game-sounds';
 
 /** Names are taken from the user's chu.h and the bank's CueNameTable, never row numbers. */
@@ -37,9 +37,9 @@ export interface ExtractedCueLayer {
   delay?: number;
   /** The delay is drawn anew for every start from this many seconds either side of `delay`. */
   delaySpread?: number;
-  lowpass?: number;
-  highpass?: number;
-  swell?: { time: number; level: number }[];
+  bandpass?: GameHitSoundLayer['bandpass'];
+  peaking?: GameHitSoundLayer['peaking'];
+  swell?: GameHitSoundLayer['swell'];
 }
 export interface ExtractedCue {
   layers: ExtractedCueLayer[];
@@ -48,9 +48,9 @@ export interface ExtractedCue {
   /** Command codes found on the cue's path whose meaning is not established; their effect is not reproduced. */
   unsupported: number[];
   /**
-   * Parts handled approximately, as `kind:cueName`: `curve` (a non-linear curve, played linear), `aisac` (an AISAC that is
-   * not reproduced), `variant` (a sequence whose tracks differ in more than their delay; the first stands for all) and
-   * `filter` (a band-pass filter, played with second-order slopes).
+   * Parts handled approximately, as `kind:cueName`: `curve` (a curve of a type the runtime does not define, played
+   * linear), `aisac` (an AISAC that is not reproduced) and `variant` (a sequence whose tracks differ in more than their
+   * delay; the first stands for all).
    */
   notes: string[];
 }
@@ -60,9 +60,10 @@ type CueContext = { limit?: number; combo?: { window: number; loopback: number }
  * Times in milliseconds as the bank stores them; sustain is a level from 0 to 1. `low` and `high` are the band-pass
  * cutoffs on the runtime's normalized scale, where 0 to 1 spans 24 Hz to 24 kHz logarithmically.
  */
-type LayerState = { gain: number; cents: number; attack: number; hold: number; decay: number; sustain: number; release: number; delay: number; spread: number; low: number; high: number; swell?: { time: number; level: number }[]; graphRelease?: number };
+type LayerState = { gain: number; cents: number; attack: number; hold: number; decay: number; sustain: number; release: number; delay: number; spread: number; low: number; high: number;
+  curves: { attack?: GameHitSoundCurve; decay?: GameHitSoundCurve; release?: GameHitSoundCurve }; peaking?: GameHitSoundLayer['peaking']; swell?: GameHitSoundLayer['swell']; graphRelease?: number };
 type CueParts = { layers: ExtractedCueLayer[]; limits: GameHitSoundLimit[]; combos: GameHitSoundCombo[]; unsupported: Set<number>; notes: Set<string> };
-const START: LayerState = { gain: 1, cents: 0, attack: 0, hold: 0, decay: 0, sustain: 1, release: 0, delay: 0, spread: 0, low: 0, high: 1 };
+const START: LayerState = { gain: 1, cents: 0, attack: 0, hold: 0, decay: 0, sustain: 1, release: 0, delay: 0, spread: 0, low: 0, high: 1, curves: {} };
 const cutoff = (normalized: number) => Math.round(24 * 1000 ** normalized);
 const table = (root: Row, name: string): Row[] => { const data = root[name]; return Buffer.isBuffer(data) && data.length ? parseUtf(data).rows : []; };
 
@@ -147,7 +148,8 @@ class HitSoundBank {
    * and 36 to 40 to the five parameters behind criAtomExPlayer_SetEnvelope{Attack,Hold,Decay}Time, ...SustainLevel
    * and ...ReleaseTime. 121 repeats the summed pitch as the voice's maximum pitch and changes nothing audible.
    * 71 adds to the parameter behind criAtomExPlayer_SetPreDelayTime (milliseconds, and a range to draw from), 32 sets the
-   * two normalized cutoffs of the band-pass filter, and 94 holds the combo time and loop-back track of a type 6 sequence.
+   * two normalized cutoffs of the band-pass filter, 31 the type, normalized frequency, Q and gain of the biquad filter,
+   * and 94 holds the combo time and loop-back track of a type 6 sequence.
    * See docs/native-hit-sounds.md.
    */
   private parameters(table: string, index: UtfValue | undefined, inherited: LayerState, context: CueContext): LayerState | null {
@@ -170,10 +172,12 @@ class HitSoundBank {
       // Pitch in cents, added down the sequence, track and synth.
       else if (type === 5 && data.length === 2) state.cents += data.readInt16BE(0);
       else if (type === 121 && data.length === 2) { /* Maximum pitch of the voice: a hint for the mixer. */ }
-      // Envelope. The times with a curve carry its type in the third byte; 0 is linear.
+      // Envelope. The times with a curve carry its type in the third byte (0 is linear) and its strength in hundredths.
       else if ((type === 36 || type === 38 || type === 40) && data.length === 4) {
-        state[type === 36 ? 'attack' : type === 38 ? 'decay' : 'release'] = word(0);
-        if (data[2] !== 0) context.notes.add('curve');
+        const stage = type === 36 ? 'attack' : type === 38 ? 'decay' : 'release';
+        state[stage] = word(0);
+        if (data[2] > 4) context.notes.add('curve');
+        state.curves = { ...state.curves, [stage]: data[2] >= 1 && data[2] <= 4 ? { type: data[2], strength: data[3] / 100 } : undefined };
       }
       else if (type === 37 && data.length === 4) state.hold = word(2);
       else if (type === 39 && data.length === 2) state.sustain = Math.min(1, word(0) / 10000);
@@ -183,6 +187,11 @@ class HitSoundBank {
       else if (type === 71 && data.length === 4) { state.delay += word(0); state.spread += Math.abs(data.readInt16BE(2)); }
       // Band-pass filter: low and high cutoff in ten-thousandths. Levels combine the way the runtime merges them.
       else if (type === 32 && data.length === 4) { if (data.readInt16BE(0) >= 0) { state.low = 1 - (1 - state.low) * (1 - word(0) / 10000); state.high *= word(2) / 10000; } }
+      // Biquad filter: type (255 leaves it alone), frequency in ten-thousandths of the same scale, Q and gain in hundredths.
+      // Type 6 is the peaking equalizer, the one whose coefficients were read from the runtime.
+      else if (type === 31 && data.length === 7 && (data[0] === 255 || (data[0] === 6 && !state.peaking))) {
+        if (data[0] === 6) state.peaking = { frequency: cutoff(word(1) / 10000), q: Math.min(10, Math.max(.001, word(3) / 100)), gain: Math.max(1 / 65536, word(5) / 100) };
+      }
       // Combo sequence: milliseconds within which a restart moves on to the next track, and the track to return to.
       else if (type === 94 && data.length === 14) context.combo = { window: data.readUInt32BE(0) / 1000, loopback: word(4) === 65535 ? 0 : word(4) };
       // Category indexes into the ACF's CategoryTable.
@@ -209,11 +218,16 @@ class HitSoundBank {
         if (!Buffer.isBuffer(controls) || !Buffer.isBuffer(levels) || controls.length !== levels.length * 2) { context.notes.add('aisac'); continue; }
         // Types 7 to 14 are the sends to eight buses, which the config file names.
         if (type >= 7 && type <= 14) { const bus = mix?.graphBus(type - 7); if (!bus || bus === 'Phone_1pass') context.notes.add('aisac'); continue; }
-        // A release time: checked against the envelope's once that is known.
+        // A release time: it stands in for the envelope's, wherever that is set.
         if (type === 42 && levels.length === 2 && next.graphRelease === undefined) { next = { ...next, graphRelease: levels.readUInt16BE(0) }; continue; }
-        const points = Array.from({ length: levels.length / 2 }, (_, point) => ({ time: controls.readFloatBE(point * 4) / 1000, level: levels.readUInt16BE(point * 2) / 10000 }));
+        // Each point may name the curve that leads to it from the point before.
+        const curve = (point: number): GameHitSoundCurve | undefined => {
+          const kind = Buffer.isBuffer(curves) && curves.length === levels.length ? curves[point * 2] : 0;
+          if (kind > 4) context.notes.add('curve');
+          return point > 0 && kind >= 1 && kind <= 4 ? { type: kind, strength: (curves as Buffer)[point * 2 + 1] / 100 } : undefined;
+        };
+        const points = Array.from({ length: levels.length / 2 }, (_, point) => { const shape = curve(point); return { time: controls.readFloatBE(point * 4) / 1000, level: levels.readUInt16BE(point * 2) / 10000, ...(shape ? { curve: shape } : {}) }; });
         if (type !== 1 || next.swell || !points.length || points.some((point, at) => !(point.time >= (points[at - 1]?.time ?? 0)))) { context.notes.add('aisac'); continue; }
-        if (Buffer.isBuffer(curves) && curves.some((value, at) => at % 2 === 0 && value !== 0)) context.notes.add('curve');
         next = { ...next, swell: points };
       }
     }
@@ -249,14 +263,17 @@ class HitSoundBank {
           // Sustained waveforms carry their loop points in an extension row.
           const extension = Number(wave.LoopFlag) === 2 && Number(wave.ExtensionData) !== 65535 ? this.row('WaveformExtensionDataTable', Number(wave.ExtensionData)) : undefined;
           const loop = extension && Number(extension.LoopEnd) > Number(extension.LoopStart) ? { start: Number(extension.LoopStart) / sampleRate, end: Number(extension.LoopEnd) / sampleRate } : undefined;
-          const shaped = state.attack > 0 || state.hold > 0 || state.decay > 0 || state.sustain < 1 || state.release > 0;
-          if (state.low > 0 || state.high < 1) context.notes.add('filter');
-          if (state.graphRelease !== undefined && state.graphRelease !== state.release) context.notes.add('aisac');
+          // The runtime replaces one release time by another; which of two different ones ends up in force was not read.
+          if (state.graphRelease !== undefined && state.release !== 0 && state.graphRelease !== state.release) context.notes.add('aisac');
+          const release = state.release || state.graphRelease || 0, { attack: attackCurve, decay: decayCurve, release: releaseCurve } = state.curves;
+          const shaped = state.attack > 0 || state.hold > 0 || state.decay > 0 || state.sustain < 1 || release > 0;
           layers.push({ waveformId: id, bytes: entry.bytes, sampleRate, sampleCount, gain: state.gain, playbackRate: 2 ** (state.cents / 1200),
-            ...(shaped ? { envelope: { attack: state.attack / 1000, hold: state.hold / 1000, decay: state.decay / 1000, sustain: state.sustain, release: state.release / 1000 } } : {}),
+            ...(shaped ? { envelope: { attack: state.attack / 1000, hold: state.hold / 1000, decay: state.decay / 1000, sustain: state.sustain, release: release / 1000,
+              ...(attackCurve && state.attack > 0 ? { attackCurve } : {}), ...(decayCurve && state.decay > 0 ? { decayCurve } : {}), ...(releaseCurve && release > 0 ? { releaseCurve } : {}) } } : {}),
             ...(stopAfter === undefined ? {} : { stopAfter }), ...(loop ? { loop } : {}),
             ...(state.delay > 0 ? { delay: state.delay / 1000 } : {}), ...(state.spread > 0 ? { delaySpread: state.spread / 1000 } : {}),
-            ...(state.high < 1 ? { lowpass: cutoff(state.high) } : {}), ...(state.low > 0 ? { highpass: cutoff(state.low) } : {}), ...(state.swell ? { swell: state.swell } : {}) });
+            ...(state.low > 0 || state.high < 1 ? { bandpass: { low: cutoff(state.low), high: cutoff(state.high) } } : {}), ...(state.peaking ? { peaking: state.peaking } : {}),
+            ...(state.swell ? { swell: state.swell } : {}) });
         } else if (type === 2) {
           const synth = this.row('SynthTable', index);
           if (Number(synth.Type) !== 0 || Number(synth.NumActionTracks) > 0) throw new Error('此音效使用了未支持的 synth 触发方式。');
@@ -376,7 +393,7 @@ export async function loadGameHitSounds(gamePath: string, cacheDirectory: string
   if (!await exists(source)) throw new Error('游戏目录中没有 data/sound/chu.acb，无法读取原版打击音。');
   const bank = new HitSoundBank(await readFile(source));
   const result: GameHitSounds = { source, sounds: {}, warnings: [
-    '使用原版 ADX 波形、默认 TAP 音色及 Phone_1pass 路由，并按音效库还原各级音量、音高、包络、带通滤波、随时间变化的音量、动作轨（TAP 判定音在 50 毫秒后转入释音）、循环音的连发错开以及 Cue 与分类的同时发声数限制；尚未重现游戏内各项音量选项（AISAC）。',
+    '使用原版 ADX 波形、默认 TAP 音色及 Phone_1pass 路由，并按音效库还原各级音量、音高、包络及其曲线、带通与峰值滤波、随时间变化的音量、动作轨（TAP 判定音在 50 毫秒后转入释音）、循环音的连发错开以及 Cue 与分类的同时发声数限制；尚未重现游戏内各项音量选项（AISAC）。',
   ] };
   const config = path.join(gameRoot, 'data', 'sound', 'chu.acf');
   const mix = await exists(config) ? new HitSoundMix(await readFile(config)) : undefined;
@@ -405,7 +422,7 @@ export async function loadGameHitSounds(gamePath: string, cacheDirectory: string
       }
       imported.push({ path: wavPath, gain: layer.gain, playbackRate: layer.playbackRate, ...(layer.envelope ? { envelope: layer.envelope } : {}), ...(layer.stopAfter === undefined ? {} : { stopAfter: layer.stopAfter }),
         ...(layer.loop ? { loop: layer.loop } : {}), ...(layer.group === undefined ? {} : { group: layer.group }), ...(layer.delay ? { delay: layer.delay } : {}),
-        ...(layer.lowpass ? { lowpass: layer.lowpass } : {}), ...(layer.highpass ? { highpass: layer.highpass } : {}), ...(layer.swell ? { swell: layer.swell } : {}) });
+        ...(layer.bandpass ? { bandpass: layer.bandpass } : {}), ...(layer.peaking ? { peaking: layer.peaking } : {}), ...(layer.swell ? { swell: layer.swell } : {}) });
     }
     result.sounds[id as GameHitSoundId] = { cueName, layers: imported, ...(limits.length ? { limits } : {}), ...(combos.length ? { combos } : {}) };
   }
@@ -413,7 +430,6 @@ export async function loadGameHitSounds(gamePath: string, cacheDirectory: string
   if (unsupported.size) result.warnings.push(`以下命令的含义尚无依据，未套用其效果：${[...unsupported].sort((a, b) => a[0] - b[0]).map(([code, cues]) => `${code}（${short(cues)}）`).join('；')}。`);
   if (notes.has('aisac')) result.warnings.push(`以下音效带有未重现的 AISAC：${short(notes.get('aisac')!)}。`);
   if (notes.has('variant')) result.warnings.push(`以下音效每次从几条内容不同的音轨里取一条，这里固定取第一条：${short(notes.get('variant')!)}。`);
-  if (notes.has('curve')) result.warnings.push(`以下音效的包络或音量曲线是非线性的，按线性处理：${short(notes.get('curve')!)}。`);
-  if (notes.has('filter')) result.warnings.push(`以下音效的带通滤波按二阶处理，游戏里的滤波阶数没有核对：${short(notes.get('filter')!)}。`);
+  if (notes.has('curve')) result.warnings.push(`以下音效的包络或音量曲线用了未知的曲线类型，按线性处理：${short(notes.get('curve')!)}。`);
   return result;
 }
