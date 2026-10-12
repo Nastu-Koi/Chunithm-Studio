@@ -213,28 +213,48 @@ export function scaleEditorSelection(chart: Chart, ids: Set<string>, factor: num
   return { ...chart, notes: chart.notes.map(note => ids.has(note.id) ? scale(note) : note), events: chart.events.map(event => ids.has(event.id) ? scale(event) : event) };
 }
 
-/** Replace one straight SLIDE / AIR SLIDE segment by control segments along an ease-in-out curve. */
 export type SlideShape = 'zigzag' | 'wave' | 'curve';
 export interface SlideShapeOptions {
   shape: SlideShape;
   /** Length of the generated path in ticks. */
   length: number;
-  /** Signed lane distance: the far side of a zigzag or wave, the end of a curve. */
+  /** Signed lane distance: the far side of a zigzag or wave, the far end of a curve's arc. */
   move: number;
   /** Zigzag: number of straight pieces. Wave: number of there-and-back swings. Unused by a curve. */
   count: number;
-  /** Curve only. */
-  ease?: 'inout' | 'in' | 'out';
-  /** Sampling interval of a wave or curve, normally the quantize step. */
+  /** Curve only: lane and width the path starts from; the segment's own when absent or when its start is bound. */
+  start?: number;
+  width?: number;
+  /** Curve only: the arc runs out and back again within the length. */
+  symmetryV?: boolean;
+  /** Curve only: every node spans from its edge to the same edge mirrored about the middle of the lanes. */
+  symmetryH?: boolean;
+  /** Curve only: the arc leaves straight ahead and ends sideways instead of the reverse. */
+  flipV?: boolean;
+  /** Sampling interval of a wave, normally the quantize step. */
   step: number;
-  /** Node kind of the zigzag corners; wave and curve samples are always control points. */
+  /** Node kind of the zigzag corners; wave and curve nodes are always control points. */
   kind: EditorNodeKind;
 }
 export interface SlideShapeResult { chart: Chart; ids: string[]; /** `move` after fitting the lanes. */ move: number; /** `length` after fitting the next segment. */ length: number }
-const EASE = { inout: (t: number) => (1 - Math.cos(Math.PI * t)) / 2, in: (t: number) => 1 - Math.cos(Math.PI * t / 2), out: (t: number) => Math.sin(Math.PI * t / 2) };
 /**
- * Replace one SLIDE / AIR SLIDE segment by a preset path that starts at the segment's start and keeps its start width,
- * after Margrete's zigzag, meandering and curve generators. The segment chained after it is re-attached to the new end.
+ * Nodes of a quarter circle that moves `reach` lanes sideways over the time 0 to 1, as `[time, lanes moved]`: one node
+ * per lane, each exactly on the arc, so the straight pieces between them are its chords. Nodes less than `gap` apart
+ * are left out.
+ */
+function arcNodes(reach: number, gap: number): [number, number][] {
+  const nodes: [number, number][] = [[0, 0]];
+  for (let lane = 1; lane < reach; lane++) {
+    const at = 1 - Math.sqrt(1 - (lane / reach) ** 2);
+    if (at - nodes.at(-1)![0] >= gap - 1e-9 && 1 - at >= gap - 1e-9) nodes.push([at, lane]);
+  }
+  nodes.push([1, reach]);
+  return nodes;
+}
+/**
+ * Replace one SLIDE / AIR SLIDE segment by a preset path, after Margrete's zigzag, meandering and curve generators.
+ * A zigzag or wave starts at the segment's start and keeps its width; a curve may also name its start lane and width.
+ * The segments chained before and after it are re-attached to the new ends.
  */
 export function shapeEditorSlide(chart: Chart, id: string, options: SlideShapeOptions): SlideShapeResult | undefined {
   const note = chart.notes.find(item => item.id === id);
@@ -243,19 +263,37 @@ export function shapeEditorSlide(chart: Chart, id: string, options: SlideShapeOp
   // The next segment keeps its own end, so the path must stop before it.
   const length = Math.min(options.length, ...outgoing.map(item => endTick(item) - options.step - note.tick));
   if (!(length > 0)) return undefined;
-  const limits = laneLimits(chart, note.width), move = clamp(Math.round(options.move), limits.min - note.lane, limits.max - note.lane);
-  const points: { at: number; lane: number; corner: boolean }[] = [{ at: 0, lane: note.lane, corner: false }];
+  // An AIR SLIDE head sits on its ground parent's tail and cannot start anywhere else.
+  const free = options.shape === 'curve' && !boundEditorParent(chart, id);
+  const width = free && Number.isFinite(options.width) ? clamp(Math.round(options.width!), 1, chart.allowOutOfLane ? 128 : LANES) : note.width;
+  const limits = laneLimits(chart, width), start = free && Number.isFinite(options.start) ? clamp(Math.round(options.start!), limits.min, limits.max) : note.lane;
+  const move = clamp(Math.round(options.move), limits.min - start, limits.max - start);
+  const points: { at: number; lane: number; width: number; corner: boolean }[] = [{ at: 0, lane: start, width, corner: false }];
   if (options.shape === 'zigzag') {
     const count = clamp(Math.round(options.count), 1, 256);
-    for (let index = 1; index <= count; index++) points.push({ at: index / count, lane: note.lane + (index % 2 ? move : 0), corner: true });
-  } else {
+    for (let index = 1; index <= count; index++) points.push({ at: index / count, lane: start + (index % 2 ? move : 0), width, corner: true });
+  } else if (options.shape === 'wave') {
     const samples = clamp(Math.floor(length / options.step + 1e-9), 1, 512), swings = clamp(Math.round(options.count), 1, 64);
-    const sway = options.shape === 'wave' ? (t: number) => (1 - Math.cos(2 * Math.PI * swings * t)) / 2 : EASE[options.ease ?? 'inout'];
-    for (let index = 1; index <= samples; index++) points.push({ at: index / samples, lane: Math.round(note.lane + move * sway(index / samples)), corner: false });
+    for (let index = 1; index <= samples; index++) points.push({ at: index / samples, lane: Math.round(start + move * (1 - Math.cos(2 * Math.PI * swings * index / samples)) / 2), width, corner: false });
     // A sample lying on the straight line between its neighbours adds a note without changing the path.
     for (let index = points.length - 2; index > 0; index--) {
       const before = points[index - 1], here = points[index], after = points[index + 1];
       if (Math.abs((here.lane - before.lane) * (after.at - before.at) - (after.lane - before.lane) * (here.at - before.at)) < 1e-9) points.splice(index, 1);
+    }
+  } else {
+    const reach = Math.abs(move), halves = options.symmetryV ? 2 : 1;
+    let nodes = arcNodes(reach, Math.max(1 / 60, halves / length));
+    if (options.flipV) nodes = nodes.map(([at, lanes]): [number, number] => [1 - at, reach - lanes]).reverse();
+    if (options.symmetryV) nodes = [...nodes, ...nodes.slice(0, -1).reverse().map(([at, lanes]): [number, number] => [2 - at, lanes])];
+    points.length = 0;
+    for (const [at, lanes] of nodes) {
+      let lane = start + Math.sign(move) * lanes, span = width;
+      if (options.symmetryH) {
+        // Margrete's rule: an edge right of the middle is taken as the right edge and mirrored to the left first.
+        if (lane >= LANES / 2 - 1) lane = LANES - lane - Math.max(span, 2);
+        span = clamp(Math.max(LANES - lane * 2, Math.min(lane + span, LANES / 2) - lane), 1, chart.allowOutOfLane ? 128 : LANES);
+      }
+      points.push({ at: at / halves, lane, width: span, corner: false });
     }
   }
   // Whole ticks stay whole, so a generated path remains exportable; nodes that land on the same tick collapse.
@@ -267,16 +305,21 @@ export function shapeEditorSlide(chart: Chart, id: string, options: SlideShapeOp
   for (let index = 0; index + 1 < points.length; index++) {
     const from = points[index], to = points[index + 1], last = index + 2 === points.length;
     // Only the original end keeps its node kind; corners follow the caller, samples are control points.
-    const segment: Note = { ...copyNote(note), id: index ? makeId('note') : note.id, tick: note.tick + offset(from.at), lane: from.lane, duration: offset(to.at) - offset(from.at), endLane: to.lane, endWidth: note.width,
+    const segment: Note = { ...copyNote(note), id: index ? makeId('note') : note.id, tick: note.tick + offset(from.at), lane: from.lane, width: from.width, duration: offset(to.at) - offset(from.at), endLane: to.lane, endWidth: to.width,
       ...(height !== undefined ? { height: height + (endHeight! - height) * from.at, endHeight: height + (endHeight! - height) * to.at } : {}),
       attributes: { ...note.attributes, ...(last ? {} : { visible: to.corner && options.kind === 'normal' }), ...(index ? { parent: continuationParent(segments[index - 1]) } : {}) } };
     if (index) delete segment.native;
     segments.push(segment);
   }
-  const tail = segments.at(-1)!, outgoingIds = new Set(outgoing.map(item => item.id));
+  const head = segments[0], tail = segments.at(-1)!, outgoingIds = new Set(outgoing.map(item => item.id));
+  const moved = head.lane !== note.lane || head.width !== note.width;
+  const incomingIds = new Set(moved ? chart.notes.filter(item => item.id !== id && item.type === note.type && sameTick(endTick(item), note.tick) && endLane(item) === note.lane && endWidth(item) === note.width).map(item => item.id) : []);
   const notes = chart.notes.flatMap(item => item.id === id ? segments : outgoingIds.has(item.id)
-    ? [{ ...item, tick: endTick(tail), duration: endTick(item) - endTick(tail), lane: endLane(tail), width: endWidth(tail), attributes: { ...item.attributes, parent: continuationParent(tail) } }] : [item]);
-  return { chart: { ...chart, notes }, ids: segments.map(item => item.id), move, length };
+    ? [{ ...item, tick: endTick(tail), duration: endTick(item) - endTick(tail), lane: endLane(tail), width: endWidth(tail), attributes: { ...item.attributes, parent: continuationParent(tail) } }]
+    : incomingIds.has(item.id) ? [{ ...item, endLane: head.lane, endWidth: head.width }] : [item]);
+  // An AIR bound to this segment's tail now belongs to the tail of the path.
+  const before = { ...chart, notes: chart.notes.map(item => item.id === id ? { ...item, id: tail.id } : item) };
+  return { chart: syncEditorAirBindings(before, { ...chart, notes, events: moved ? alignAssignments(chart, note, { ...head, duration: note.duration }) : chart.events }), ids: segments.map(item => item.id), move, length };
 }
 
 /** EX belongs to the whole ground long note: the game writes HXD for a HOLD and SXD / SXC on every segment of a SLIDE. */
@@ -291,6 +334,23 @@ export function setEditorEx(chart: Chart, id: string, ex?: boolean): Chart {
     if (value) attributes.ex = true; else { delete attributes.ex; delete attributes.effect; }
     return { ...item, attributes };
   }) };
+}
+
+/** The segment that continues from this segment's end: same type, time, lane, width and, in the air, height. */
+export function nextEditorSegment(chart: Chart, note: Note): Note | undefined {
+  if (!long(note) || note.type === 'HOLD') return undefined;
+  return chart.notes.find(item => item.id !== note.id && item.type === note.type && sameTick(item.tick, endTick(note)) && item.lane === endLane(note) && item.width === endWidth(note)
+    && (item.height === undefined || item.height === (note.endHeight ?? note.height)));
+}
+/** Remove the joint at this segment's end: the segment runs straight on to the end of the one that followed and takes its node kind. */
+export function removeEditorJoint(chart: Chart, id: string): Chart {
+  const note = chart.notes.find(item => item.id === id), next = note && nextEditorSegment(chart, note);
+  if (!note || !next) return chart;
+  const merged: Note = { ...copyNote(note), duration: endTick(next) - note.tick, endLane: endLane(next), endWidth: endWidth(next), ...(note.height !== undefined ? { endHeight: next.endHeight ?? next.height } : {}) };
+  if (next.attributes.visible === undefined) delete merged.attributes.visible; else merged.attributes.visible = next.attributes.visible;
+  const after = nextEditorSegment(chart, next);
+  return { ...chart, notes: chart.notes.flatMap(item => item.id === next.id ? [] : item.id === id ? [merged]
+    : item.id === after?.id ? [{ ...item, attributes: { ...item.attributes, parent: continuationParent(merged) } }] : [item]) };
 }
 
 export function splitEditorNote(chart: Chart, id: string, tick: number, kind?: EditorNodeKind): Chart {

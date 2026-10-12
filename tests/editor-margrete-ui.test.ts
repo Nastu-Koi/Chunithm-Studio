@@ -70,7 +70,17 @@ test('editor follows Margrete tools and keys: eraser, flip, time scale, curve, l
     assert.ok(curve.every((segment, index) => index === 0 || segment.lane === curve[index - 1].endLane && segment.tick === curve[index - 1].tick + curve[index - 1].duration));
     assert.deepEqual(curve.map(segment => segment.visible), [...curve.slice(1).map(() => false), true]);
 
-    // Ctrl+Shift+V pastes a left-right mirrored copy at the cursor.
+    // Clicking a joint picks the segment that ends there, so the joint itself is edited; a right click removes it and the path closes up.
+    const selectedIds = (): Promise<string[]> => page.evaluate(() => [...(window as any).testEditor.editor.selection]);
+    const slideIds = (): Promise<{ id: string; tick: number; duration: number; lane: number; endLane: number }[]> => page.evaluate(() => (window as any).testEditor.state.chart.notes.filter((n: any) => n.type === 'SLIDE').map((n: any) => ({ id: n.id, tick: n.tick, duration: n.duration, lane: n.lane, endLane: n.endLane })));
+    await page.keyboard.press('s');
+    const made = await slideIds(), joint = made[1], jointAt = point(joint.tick + joint.duration, joint.endLane + 1);
+    await page.mouse.click(jointAt.x, jointAt.y); assert.deepEqual(await selectedIds(), [joint.id]);
+    await page.mouse.click(jointAt.x, jointAt.y, { button: 'right' });
+    const closed = await slideIds();
+    assert.equal(closed.length, made.length - 1); assert.deepEqual(closed[1], { ...joint, duration: joint.duration + made[2].duration, endLane: made[2].endLane });
+    assert.ok(closed.every((segment, index) => index === 0 || segment.lane === closed[index - 1].endLane && segment.tick === closed[index - 1].tick + closed[index - 1].duration));
+
     await page.keyboard.press('s'); await click(48, 9.5); await page.keyboard.press('Control+c');
     await click(600, 14.5); await page.keyboard.press('Control+Shift+v');
     assert.deepEqual((({ tick, lane, width }) => [tick, lane, width])((await notes()).at(-1)!), [600, 4, 4]);
@@ -112,7 +122,7 @@ test('editor follows Margrete tools and keys: eraser, flip, time scale, curve, l
       return [...element.getContext('2d')!.getImageData(Math.round(x * ratio), Math.round(y * ratio), 1, 1).data];
     }, [point(tick, lane).x - box.x, point(tick, lane).y - box.y]);
     assert.equal(await canvas.getAttribute('data-body-textures'), null);
-    const hold = await pixel(768, 12.5), slide = await pixel(384, 3.2);
+    const hold = await pixel(768, 12.5), slide = await pixel(384, 5.6);
     assert.ok(hold[0] > 230 && hold[1] > 170 && hold[2] < 40, `HOLD body centre ${hold}`);
     assert.ok(slide[0] < 80 && slide[1] > 170 && slide[2] > 220, `SLIDE body centre ${slide}`);
     await page.evaluate(() => {

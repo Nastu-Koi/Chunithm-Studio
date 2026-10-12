@@ -6,8 +6,8 @@ import { getNativeNoteTag } from '../core/c2s';
 import { getSlideUvSpans, slideUvProgress } from './slide-timing';
 import { editorTemplate, COLOR, LABEL, noteColor } from './editor-template';
 import { LONG, AIR, CHAIN, clamp, endLane, endWidth, endTick, sameTick, formatTick, long, copyNote, hasNodeKind, limitLane, limitWidth, selectionWithAssignments, alignAssignments,
-  appendEditorNote, attachEditorAir, boundEditorParent, copyEditorSelection, flipEditorSelection, inferEditorParent, mirrorEditorSelection, moveEditorSelection, parseEditorFraction, scaleEditorSelection, selectionWithBoundAir, setEditorAirHeight, setEditorEx, setEditorNodeKind, shapeEditorSlide, splitEditorNote, syncEditorAirBindings, type Clipboard, type EditorNodeKind, type SlideShape, type SlideShapeResult } from './editor-operations';
-export { appendEditorNote, attachEditorAir, boundEditorParent, copyEditorSelection, flipEditorSelection, inferEditorParent, mirrorEditorSelection, moveEditorSelection, parseEditorFraction, scaleEditorSelection, selectionWithBoundAir, setEditorAirHeight, setEditorEx, setEditorNodeKind, shapeEditorSlide, splitEditorNote, syncEditorAirBindings, type EditorNodeKind, type SlideShape, type SlideShapeResult } from './editor-operations';
+  appendEditorNote, attachEditorAir, nextEditorSegment, removeEditorJoint, boundEditorParent, copyEditorSelection, flipEditorSelection, inferEditorParent, mirrorEditorSelection, moveEditorSelection, parseEditorFraction, scaleEditorSelection, selectionWithBoundAir, setEditorAirHeight, setEditorEx, setEditorNodeKind, shapeEditorSlide, splitEditorNote, syncEditorAirBindings, type Clipboard, type EditorNodeKind, type SlideShape, type SlideShapeResult } from './editor-operations';
+export { appendEditorNote, attachEditorAir, nextEditorSegment, removeEditorJoint, boundEditorParent, copyEditorSelection, flipEditorSelection, inferEditorParent, mirrorEditorSelection, moveEditorSelection, parseEditorFraction, scaleEditorSelection, selectionWithBoundAir, setEditorAirHeight, setEditorEx, setEditorNodeKind, shapeEditorSlide, splitEditorNote, syncEditorAirBindings, type EditorNodeKind, type SlideShape, type SlideShapeResult } from './editor-operations';
 
 type Callbacks = { onChange(chart: Chart, label: string): void; onCursor(tick: number): void; onUndo(): void; onRedo(): void; onOffset(seconds: number, label: string): void };
 type AudioSamples = { data: Float32Array; sampleRate: number };
@@ -70,6 +70,8 @@ export class ChartEditor {
   private airLean: -1 | 0 | 1 = 0;
   /** Insert-node mode: clicks split the long note under the pointer instead of placing or selecting. */
   private inserting = false;
+  /** Segment whose end joint was picked rather than its body; the highlight then marks the joint alone. */
+  private pickedJoint?: string;
   /** Segment being reshaped while the shape panel is open; `preview` then holds the candidate path. */
   private shapeId?: string;
   private readonly shapePanel: HTMLFormElement;
@@ -253,26 +255,35 @@ export class ChartEditor {
     const sideways = endLane(note) - note.lane, limit = (this.chart.allowOutOfLane ? 64 : LANES - note.width) - note.lane;
     field<HTMLInputElement>('beats').value = fractionLabel((note.duration ?? 0) * 4 / this.chart.resolution);
     field<HTMLInputElement>('move').value = String(sideways || (limit >= 4 ? 4 : -Math.min(4, note.lane)));
+    // Lanes are shown as in the inspector: counted from 1 unless the chart may leave the track.
+    const bound = !!boundEditorParent(this.chart, note.id);
+    field<HTMLInputElement>('start').value = String(note.lane + this.laneBase); field<HTMLInputElement>('width').value = String(note.width);
+    field<HTMLInputElement>('start').disabled = field<HTMLInputElement>('width').disabled = bound;
     this.shapeId = note.id; this.shapePanel.hidden = false;
     this.previewShape(); field<HTMLInputElement>('beats').focus(); field<HTMLInputElement>('beats').select();
   }
+  private get laneBase(): number { return this.chart.allowOutOfLane ? 0 : 1; }
   private shapeResult(): SlideShapeResult | undefined {
-    const field = (name: string) => this.shapePanel.querySelector<HTMLInputElement | HTMLSelectElement>(`[data-shape="${name}"]`)!.value;
+    const input = (name: string) => this.shapePanel.querySelector<HTMLInputElement | HTMLSelectElement>(`[data-shape="${name}"]`)!;
+    const field = (name: string) => input(name).value, checked = (name: string) => (input(name) as HTMLInputElement).checked;
     const beats = parseEditorFraction(field('beats')), shape = field('shape') as SlideShape;
     if (!this.shapeId || beats === undefined || !(beats > 0)) return undefined;
     return shapeEditorSlide(this.chart, this.shapeId, { shape, length: beats * this.chart.resolution / 4, move: Number(field('move')) || 0, count: Number(field('count')) || 1,
-      ease: field('ease') as 'inout' | 'in' | 'out', step: this.step, kind: this.nodeKind === 'normal' ? 'normal' : 'control' });
+      ...(field('start').trim() ? { start: Number(field('start')) - this.laneBase } : {}), ...(field('width').trim() ? { width: Number(field('width')) } : {}),
+      symmetryV: checked('symmetryV'), symmetryH: checked('symmetryH'), flipV: checked('flipV'), step: this.step, kind: this.nodeKind === 'normal' ? 'normal' : 'control' });
   }
   private previewShape(): void {
     const field = (name: string) => this.shapePanel.querySelector<HTMLInputElement | HTMLSelectElement>(`[data-shape="${name}"]`)!;
     const shape = field('shape').value as SlideShape, result = this.shapeResult(), note = this.shapePanel.querySelector<HTMLElement>('[data-shape-note]')!;
     this.shapePanel.querySelector<HTMLElement>('[data-shape-row="count"]')!.hidden = shape === 'curve';
-    this.shapePanel.querySelector<HTMLElement>('[data-shape-row="ease"]')!.hidden = shape !== 'curve';
+    for (const row of ['start', 'width', 'symmetryV', 'symmetryH', 'flipV']) this.shapePanel.querySelector<HTMLElement>(`[data-shape-row="${row}"]`)!.hidden = shape !== 'curve';
     this.shapePanel.querySelector<HTMLElement>('[data-shape-count-label]')!.textContent = shape === 'wave' ? '往返次数' : '段数';
+    this.shapePanel.querySelector<HTMLElement>('[data-shape-move-label]')!.textContent = shape === 'curve' ? '位移（轨道，负数向左）' : '水平移动（轨道，负数向左）';
     this.preview = result?.chart;
     const beats = parseEditorFraction(field('beats').value), wanted = Number(field('move').value) || 0;
     note.textContent = !result ? '长度须为正数，且要给后面相接的一段留出至少一个量化格'
-      : [result.move !== Math.round(wanted) ? `水平移动已收窄为 ${result.move}，再远会超出轨道` : '', beats !== undefined && Math.abs(result.length - beats * this.chart.resolution / 4) > 1e-6 ? '长度已缩短，以保留后面相接的一段' : '',
+      : [result.move !== Math.round(wanted) ? `${shape === 'curve' ? '位移' : '水平移动'}已收窄为 ${result.move}，再远会超出轨道` : '', beats !== undefined && Math.abs(result.length - beats * this.chart.resolution / 4) > 1e-6 ? '长度已缩短，以保留后面相接的一段' : '',
+        shape === 'curve' && field('start').disabled ? '起点绑定在地面音符上，起始位置与宽度不可改' : '',
         `生成 ${result.ids.length} 段；${shape === 'zigzag' ? `折点为${this.nodeKind === 'normal' ? '普通节点' : '控制点'}（跟随“新节点”）` : '中间均为控制点'}`].filter(Boolean).join('；');
     this.draw();
   }
@@ -639,6 +650,8 @@ export class ChartEditor {
       return event ? { id: event.id, kind: 'move' } : undefined;
     }
     const notes = [...chart.notes].sort((a, b) => Number(this.selection.has(a.id)) - Number(this.selection.has(b.id)));
+    // A joint is the end of the segment before it; the segment after it is picked by its body only.
+    const joints = new Set(chart.notes.map(note => nextEditorSegment(chart, note)?.id));
     for (let i = notes.length - 1; i >= 0; i--) {
       const note = notes[i];
       const startY = this.y(note.tick), finishY = this.y(endTick(note));
@@ -649,7 +662,7 @@ export class ChartEditor {
       const span = note.width * this.laneWidth;
       // An AIR is picked by its lifted arrow, which leaves the ground note under it free to click.
       if (note.type === 'AIR' ? Math.abs(position.y - (startY - airArrowLift(span - 2))) <= airArrowHeight(span - 2) / 2 + 2 && position.x >= startX - 3 && position.x <= startX + span + 3
-        : Math.abs(position.y - startY) < 10 && position.x >= startX - 3 && position.x <= startX + span + 3) {
+        : !joints.has(note.id) && Math.abs(position.y - startY) < 10 && position.x >= startX - 3 && position.x <= startX + span + 3) {
         return { id: note.id, kind: Math.abs(position.x - (startX + span)) < 7 ? 'width' : span > 24 && Math.abs(position.x - startX) < 5 ? 'widthLeft' : 'move' };
       }
       if (long(note) && position.y < startY && position.y > finishY) {
@@ -677,13 +690,14 @@ export class ChartEditor {
     let hit = this.hit(point);
     if (event.button === 2) {
       event.preventDefault();
-      if (hit) { this.selection = new Set([hit.id]); this.deleteSelection(); } return;
+      if (hit) this.erase(hit);
+      return;
     }
     const hitNote = hit ? this.chart.notes.find(note => note.id === hit!.id) : undefined;
     // AIR layers share a tick and a sensor span with their ground parent.
     const tool = this.noteTool;
     if (event.altKey || tool && AIR.has(tool) && hitNote && !AIR.has(hitNote.type)) hit = undefined;
-    if (this.tool === 'erase' && event.button === 0 && hit) { this.selection = new Set([hit.id]); this.deleteSelection(); return; }
+    if (this.tool === 'erase' && event.button === 0 && hit) { this.erase(hit); return; }
     // A bound AIR covers its parent's tail; its width handles edit the parent, which the AIR follows.
     const covered = hit && (hit.kind === 'width' || hit.kind === 'widthLeft') ? boundEditorParent(this.chart, hit.id) : undefined;
     if (hit && covered) hit = !long(covered) ? { id: covered.id, kind: hit.kind } : covered.type === 'SLIDE' && hit.kind === 'width' ? { id: covered.id, kind: 'endWidth' } : { id: hit.id, kind: 'move' };
@@ -703,10 +717,12 @@ export class ChartEditor {
     else if (!hit && (point.x < this.eventLeft || point.y > this.canvasHeight - this.bottom)) { kind = 'seek'; this.emitCursor(point.tick); }
     else if (hit) {
       id = hit.id; kind = hit.kind;
+      this.pickedJoint = kind === 'end' || kind === 'endWidth' ? id : undefined;
+      // Only a move carries the rest of the selection along; a handle or joint is edited on its own.
       if (event.shiftKey || event.ctrlKey || event.metaKey) {
         if (this.selection.has(id)) { this.selection.delete(id); this.refreshSelection(); return; }
         this.selection.add(id);
-      } else if (!this.selection.has(id)) this.selection = new Set([id]);
+      } else if (!this.selection.has(id) || kind !== 'move') this.selection = new Set([id]);
       this.refreshSelection();
     } else if (tool && this.inTrack(point.x)) {
       const note = createNote(tool, point.tick, this.placeLane(point), this.width);
@@ -728,6 +744,13 @@ export class ChartEditor {
     }
     this.drag = { kind, start: point, current: point, chart: this.chart, id, before: event.shiftKey || event.ctrlKey || event.metaKey ? before : new Set(), moved: false, scroll: this.scroll, pointerId: event.pointerId };
     this.canvas.setPointerCapture(event.pointerId); this.draw();
+  }
+
+  /** Delete what was picked: a joint between two segments goes alone and its neighbours join up, anything else goes whole. */
+  private erase(hit: { id: string; kind: DragKind }): void {
+    const joined = hit.kind === 'end' || hit.kind === 'endWidth' ? removeEditorJoint(this.chart, hit.id) : this.chart;
+    if (joined !== this.chart) { this.selection = new Set([hit.id]); this.commit(joined, '删除节点'); return; }
+    this.selection = new Set([hit.id]); this.deleteSelection();
   }
 
   /** The ground note whose tail is nearest the pointer, within one snap step or the head hit distance. */
@@ -1177,7 +1200,7 @@ export class ChartEditor {
     const color = noteColor(note), selected = this.selection.has(note.id), airborne = AIR.has(note.type);
     if (body) {
       if (!long(note)) return;
-      ctx.fillStyle = `${color}35`; ctx.strokeStyle = `${color}88`; ctx.lineWidth = selected ? 2 : 1;
+      ctx.fillStyle = `${color}35`; ctx.strokeStyle = `${color}88`; ctx.lineWidth = selected && !(this.selection.size === 1 && this.pickedJoint === note.id) ? 2 : 1;
       ctx.beginPath(); ctx.moveTo(x, y); ctx.lineTo(finishX, finishY); ctx.lineTo(finishX + finishWidth, finishY); ctx.lineTo(x + width, y); ctx.closePath();
       // AIR bodies stay translucent so the ground notes under them remain visible.
       if (airborne) ctx.fill(); else this.paintGroundBody(ctx, note, x, y, width, finishX, finishY, finishWidth);

@@ -21,6 +21,7 @@
 .editor-shape-panel { position: absolute; top: 8px; right: 8px; z-index: 3; width: 232px; padding: 10px; display: flex; flex-direction: column; gap: 2px; background: #262626; border: 1px solid #777; border-radius: 2px; box-shadow: 0 5px 18px #0008; font-size: 11px; }
 .editor-shape-panel[hidden], .editor-shape-panel [hidden] { display: none; }
 .editor-shape-panel strong { margin-bottom: 6px; }
+.editor-shape-panel .editor-checkbox { flex-direction: row; gap: 5px; margin: 0 0 6px; }
 .editor-shape-panel p { margin: 0; font-size: 10px; line-height: 1.6; color: #aaa; min-height: 16px; }
 .editor-air-side { display: inline-flex; gap: 1px; margin: 0 4px 0 1px; }
 .editor-air-side[hidden] { display: none; }
