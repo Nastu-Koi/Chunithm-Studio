@@ -12,7 +12,7 @@ const output = path.join(root, 'out/screenshots'); await mkdir(output, { recursi
 const data = await mkdtemp(path.join(tmpdir(), 'chuni-hud-'));
 const env = { ...process.env, CHUNI_USER_DATA_DIR: data, CHUNI_DEV_URL: '' }; delete env.ELECTRON_RUN_AS_NODE;
 const resources = await loadBundledGameResources(path.join(root, 'assets/game'));
-const cover = `data:image/png;base64,${(await readFile(path.join(root, 'examples/calibration.assets/cover.png'))).toString('base64')}`;
+const cover = `data:image/png;base64,${(await readFile(path.join(root, 'examples/calibration/cover.png'))).toString('base64')}`;
 const app = await electron.launch({ executablePath: path.join(runtime, 'ChuniStudio.exe'), cwd: runtime, env, args: [`--user-data-dir=${data}`] });
 const errors = [];
 try {

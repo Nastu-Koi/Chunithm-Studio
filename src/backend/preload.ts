@@ -3,7 +3,7 @@ import type { StudioBridge } from '../bridge';
 const bridge: StudioBridge = {
   platform: process.platform,
   loadGameResources: () => ipcRenderer.invoke('resources:load'),
-  openProject: () => ipcRenderer.invoke('project:open'),
+  openProject: directory => ipcRenderer.invoke('project:open', directory), listRecentProjects: () => ipcRenderer.invoke('project:recent'),
   importC2s: () => ipcRenderer.invoke('chart:import'),
   saveProject: (p, file, saveAs) => ipcRenderer.invoke('project:save', p, file, saveAs),
   exportC2s: (p, quantize) => ipcRenderer.invoke('chart:export', p, quantize),

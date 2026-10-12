@@ -33,7 +33,9 @@ async function helper(mode: 'encode' | 'decode' | 'decode-adx', input: string, o
   return info;
 }
 
-/** Normalize common input formats to a real, local PCM16 WAV. Positive offset adds silence. */
+/** Sample rate of every normalized WAV; offsets are applied in whole samples at this rate. */
+export const AUDIO_SAMPLE_RATE = 48000;
+/** Normalize common input formats to a real, local PCM16 WAV. Positive offset adds silence, negative offset trims the start. */
 export async function prepareAudio(inputPath: string, outputWavPath: string, offsetSeconds = 0): Promise<string> {
   if (path.resolve(inputPath) === path.resolve(outputWavPath)) throw new Error('转换目标不能覆盖输入音频。');
   if (!Number.isFinite(offsetSeconds) || Math.abs(offsetSeconds) > 600) throw new Error('音频偏移超出支持范围。');
@@ -42,9 +44,11 @@ export async function prepareAudio(inputPath: string, outputWavPath: string, off
   if (!executable || !await exists(executable)) throw new Error('缺少 FFmpeg 音频转换工具。');
   await mkdir(path.dirname(outputWavPath), { recursive: true });
   const args = ['-hide_banner', '-loglevel', 'error', '-nostdin', '-y', '-i', inputPath, '-map', '0:a:0', '-vn'];
-  if (offsetSeconds > 0) args.push('-af', `adelay=${Math.round(offsetSeconds * 1000)}:all=1`);
-  else if (offsetSeconds < 0) args.push('-af', `atrim=start=${-offsetSeconds},asetpts=PTS-STARTPTS`);
-  args.push('-ar', '48000', '-ac', '2', '-c:a', 'pcm_s16le', '-f', 'wav', outputWavPath);
+  // Resample first, then shift by a whole number of output samples, so the exported start matches the editor to 1/48000 s.
+  const shift = Math.round(Math.abs(offsetSeconds) * AUDIO_SAMPLE_RATE);
+  if (offsetSeconds > 0 && shift) args.push('-af', `aresample=${AUDIO_SAMPLE_RATE},adelay=${shift}S:all=1`);
+  else if (offsetSeconds < 0 && shift) args.push('-af', `aresample=${AUDIO_SAMPLE_RATE},atrim=start_sample=${shift},asetpts=PTS-STARTPTS`);
+  args.push('-ar', String(AUDIO_SAMPLE_RATE), '-ac', '2', '-c:a', 'pcm_s16le', '-f', 'wav', outputWavPath);
   await run(executable, args);
   return outputWavPath;
 }

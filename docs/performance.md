@@ -14,7 +14,7 @@ RFZ 文字缓存以单字形小图保存，最多 1,024 项；不会为每种文
 
 ## 可重复反馈
 
-`tests/windows-performance.mjs` 使用 Windows Node 和已有 Windows runtime，自动打开原创 `examples/calibration.chuni.json`，播放预热 1.8 秒后采集 8 秒 rAF 间隔、AudioContext 时钟、播放位置与 Canvas 调用，再记录 3 秒 CPU profile。测试窗为 1466×923、DPR 1.5，播放器 framebuffer 为 2199×1068。
+`tests/windows-performance.mjs` 使用 Windows Node 和已有 Windows runtime，自动打开原创 `examples/calibration` 项目，播放预热 1.8 秒后采集 8 秒 rAF 间隔、AudioContext 时钟、播放位置与 Canvas 调用，再记录 3 秒 CPU profile。测试窗为 1466×923、DPR 1.5，播放器 framebuffer 为 2199×1068。
 
 命令参数为 `--runtime=<Windows程序目录> --data=<独立测试数据目录> --label=<报告名> --assert-smooth`。阈值是 p99 不超过 25 毫秒，超过 50 毫秒的帧不多于 2 帧；它是本机回归标准，不是对所有硬件的帧率承诺。`--mode=no-stage-paint` 仅抑制舞台绘制，保留音乐、谱面、相机、动画和 CPU 几何计算。`--renderer=<独立构建index.html>` 可加载测试构建而不覆盖原 runtime。
 

@@ -259,10 +259,25 @@ try {
     exportSettings: { optId: 'AZ01', musicId: 7000, cueId: 7000, weTag: '止', stars: 3 },
     chart: { version: '1.13.00', resolution: 384, defaultBpm: 120, notes: [{ id: 'tap', type: 'TAP', tick: 96, lane: 4, width: 4, attributes: {} }], events: [], headerRecords: [], unknownRecords: [] },
   };
-  const xmlFixture = path.join(out, 'xml-input.chuni.json'), xmlSaved = path.join(out, 'xml-edited.chuni.json');
-  await writeFile(xmlFixture, JSON.stringify(project));
-  await app.evaluate(({ dialog }, filename) => { dialog.showOpenDialog = async () => ({ canceled: false, filePaths: [filename] }); }, xmlFixture);
-  await page.locator('[data-action="open"]').click();
+  // A project is a folder holding project.chuni.json. Once any project is known, "open" lists recent projects first.
+  const writeProjectFolder = async (name, data) => { const directory = path.join(out, name); await rm(directory, { recursive: true, force: true }); await mkdir(directory, { recursive: true }); await writeFile(path.join(directory, 'project.chuni.json'), JSON.stringify(data)); return directory; };
+  const openProjectFolder = async directory => {
+    await app.evaluate(({ dialog }, folder) => { dialog.showOpenDialog = async () => ({ canceled: false, filePaths: [folder] }); }, directory);
+    const recent = await page.evaluate(() => window.studio.listRecentProjects());
+    await page.locator('[data-action="open"]').click();
+    if (recent.length) await page.locator('#recent-browse').click();
+  };
+  // Save As asks for a parent folder and creates a folder named after the title inside it.
+  const saveProjectAs = async name => {
+    const parent = path.join(out, name); await rm(parent, { recursive: true, force: true }); await mkdir(parent, { recursive: true });
+    await app.evaluate(({ dialog }, folder) => { dialog.showOpenDialog = async () => ({ canceled: false, filePaths: [folder] }); }, parent);
+    const title = await page.locator('#project-title').textContent();
+    await page.keyboard.press('Control+Shift+s');
+    await page.waitForFunction(() => document.querySelector('#dirty-indicator').textContent === '');
+    return path.join(parent, title.replace(/[<>:"/\\|?*\u0000-\u001f]/g, '_').replace(/[. ]+$/, '').trim());
+  };
+  const xmlFixture = await writeProjectFolder('xml-input', project);
+  await openProjectFolder(xmlFixture);
   await page.waitForFunction(() => document.querySelector('#project-title').textContent === 'Windows Integration 自制曲');
   evidence.gameScene.synthetic = await checkScene({ title: project.metadata.title, difficulty: 'WORLD’S END', cover: 'true' });
   evidence.gameScene.syntheticScreenshot = await captureScene('windows-player-synthetic-cover.png');
@@ -289,10 +304,9 @@ try {
   await xmlForm.locator('button[type="submit"]').click();
   await page.waitForFunction(() => !document.querySelector('#modal').open && document.querySelector('#project-title').textContent === 'Windows XML <&> 自制曲');
   evidence.gameScene.renamed = await checkScene({ title: 'Windows XML <&> 自制曲', difficulty: 'WORLD’S END', cover: 'true' });
-  await app.evaluate(({ dialog }, filename) => { dialog.showSaveDialog = async () => ({ canceled: false, filePath: filename }); }, xmlSaved);
-  await page.keyboard.press('Control+Shift+s');
-  await page.waitForFunction(() => document.querySelector('#dirty-indicator').textContent === '');
-  const saved = JSON.parse(await readFile(xmlSaved, 'utf8'));
+  const xmlSaved = await saveProjectAs('xml-edited');
+  const saved = JSON.parse(await readFile(path.join(xmlSaved, 'project.chuni.json'), 'utf8'));
+  assert.match(saved.audio.path, /^audio\.[a-z0-9]+$/); await access(path.join(xmlSaved, saved.audio.path)); await access(path.join(xmlSaved, saved.coverPath));
   assert.equal(saved.xmlMetadata.music.releaseDate, '20261009'); assert.equal(saved.xmlMetadata.music.priority, 37);
   assert.equal(saved.exportSettings.cueId, 7001);
   await app.evaluate(({ dialog }, filename) => { dialog.showOpenDialog = async () => ({ canceled: false, filePaths: [filename] }); }, xmlSaved);
@@ -320,9 +334,8 @@ try {
   evidence.xmlEditing = { savedProject: xmlSaved, title: musicXml.name.str, sortName: musicXml.sortName, releaseDate: musicXml.releaseDate, priority: musicXml.priority, musicId: musicXml.name.id, cueId: cueXml.name.id, designer: activeFumen.notesDesigner };
   const c2s = await readFile(path.join(evidence.export.optPath, 'music/music7000/7000_05.c2s'), 'utf8');
   assert.match(c2s, /^DIFFICULT\t05\r?$/m, 'The current WORLD’S END difficulty must appear in the native chart header.');
-  const calibration = path.join(release, 'examples', 'calibration.chuni.json');
-  await app.evaluate(({ dialog }, filename) => { dialog.showOpenDialog = async () => ({ canceled: false, filePaths: [filename] }); }, calibration);
-  await page.locator('[data-action="open"]').click();
+  const calibration = path.join(release, 'examples', 'calibration');
+  await openProjectFolder(calibration);
   await page.waitForFunction(() => document.querySelector('#project-title').textContent === 'Chuni Studio Calibration' && document.querySelector('#audio-label').textContent === 'audio.wav');
   evidence.portableExample = { path: calibration, title: await page.locator('#project-title').textContent(), duration: await page.locator('#time-total').textContent() };
   await page.locator('#seek').evaluate(input => { input.value = '12.8'; input.dispatchEvent(new Event('input', { bubbles: true })); });
@@ -344,9 +357,7 @@ try {
     { id: 'tempo', type: 'BPM', tick: 1056, value: 180 },
     { id: 'meter7', type: 'METER', tick: 1344, value: .875, numerator: 7, denominator: 8 },
   ] };
-  const measureFile = path.join(out, 'measure-test.chuni.json'); await writeFile(measureFile, JSON.stringify(measureProject));
-  await app.evaluate(({ dialog }, filename) => { dialog.showOpenDialog = async () => ({ canceled: false, filePaths: [filename] }); }, measureFile);
-  await page.locator('[data-action="open"]').click();
+  await openProjectFolder(await writeProjectFolder('measure-test', measureProject));
   await page.waitForFunction(() => document.querySelector('#project-title').textContent.startsWith('Measure navigation') && document.querySelector('#audio-label').textContent === 'audio.wav');
   await page.locator('#edit-tab').click(); await page.locator('#measure-button').click();
   await page.locator('#start-measure').fill('5');
@@ -385,8 +396,7 @@ try {
   // The paused label and the next navigation default must still say bar eight.
   measureProject.metadata.title = 'Measure navigation boundary at 150 BPM';
   measureProject.chart.defaultBpm = 150; measureProject.chart.events = [];
-  await writeFile(measureFile, JSON.stringify(measureProject));
-  await page.locator('[data-action="open"]').click();
+  await openProjectFolder(await writeProjectFolder('measure-test', measureProject));
   await page.waitForFunction(() => document.querySelector('#project-title').textContent === 'Measure navigation boundary at 150 BPM');
   await page.locator('#measure-button').click(); await page.locator('#start-measure').fill('8'); await page.locator('#measure-locate').click();
   await page.waitForFunction(() => document.querySelector('#position-label').textContent.startsWith('第 008 小节'));
@@ -408,10 +418,7 @@ try {
     { id: 'air-slide-base', type: 'TAP', tick: 96, lane: 10, width: 2, attributes: {} },
     { id: 'air-slide', type: 'AIR_SLIDE', tick: 96, duration: 192, lane: 10, width: 2, endLane: 12, endWidth: 2, height: 1, endHeight: 2, attributes: { visible: true, parent: 'TAP' } },
   ];
-  const nodeFile = path.join(out, 'node-input.chuni.json'), nodeSaved = path.join(out, 'node-edited.chuni.json');
-  await writeFile(nodeFile, JSON.stringify(nodeProject));
-  await app.evaluate(({ dialog }, filename) => { dialog.showOpenDialog = async () => ({ canceled: false, filePaths: [filename] }); }, nodeFile);
-  await page.locator('[data-action="open"]').click();
+  await openProjectFolder(await writeProjectFolder('node-input', nodeProject));
   await page.waitForFunction(() => document.querySelector('#project-title').textContent.startsWith('Node endpoints'));
   await page.locator('#edit-tab').click(); await page.locator('[data-tool="select"]').click();
   await page.keyboard.press('Home');
@@ -439,11 +446,9 @@ try {
   await page.mouse.down();
   await page.mouse.move(box.x + airLeft + airWidth * 2.5 / 5, heightY, { steps: 5 });
   await page.mouse.up();
-  await app.evaluate(({ dialog }, filename) => { dialog.showSaveDialog = async () => ({ canceled: false, filePath: filename }); }, nodeSaved);
   await page.locator('.editor-viewport').focus();
-  await page.keyboard.press('Control+Shift+s');
-  await page.waitForFunction(() => document.querySelector('#dirty-indicator').textContent === '');
-  const savedNodes = JSON.parse(await readFile(nodeSaved, 'utf8'));
+  const nodeSaved = await saveProjectAs('node-edited');
+  const savedNodes = JSON.parse(await readFile(path.join(nodeSaved, 'project.chuni.json'), 'utf8'));
   for (const type of ['SLIDE', 'AIR_HOLD', 'AIR_SLIDE']) {
     const segments = savedNodes.chart.notes.filter(note => note.type === type).sort((a, b) => a.tick - b.tick);
     assert.equal(segments.length, 2, type); assert.equal(segments[0].attributes.visible, false, type);
@@ -467,9 +472,7 @@ try {
     { id: 'crush-a', type: 'AIR_CRUSH', tick: 384, duration: 70, lane: 2, width: 2, endLane: 6, endWidth: 2, height: 1, endHeight: 2, attributes: { interval: 48 } },
     { id: 'crush-b', type: 'AIR_CRUSH', tick: 454, duration: 74, lane: 6, width: 2, endLane: 10, endWidth: 2, height: 2, endHeight: 3, attributes: { interval: 48 } },
   ] };
-  const crushFile = path.join(out, 'crush-continuous.chuni.json'); await writeFile(crushFile, JSON.stringify(crushProject));
-  await app.evaluate(({ dialog }, filename) => { dialog.showOpenDialog = async () => ({ canceled: false, filePaths: [filename] }); }, crushFile);
-  await page.locator('[data-action="open"]').click(); await page.waitForFunction(() => document.querySelector('#project-title').textContent === 'CRUSH continuous phase');
+  await openProjectFolder(await writeProjectFolder('crush-continuous', crushProject)); await page.waitForFunction(() => document.querySelector('#project-title').textContent === 'CRUSH continuous phase');
   await page.locator('#play-tab').click(); await seekScene(2.375);
   const crushMiddle = await checkScene({ title: 'CRUSH continuous phase', difficulty: 'WORLD’S END', cover: 'true' });
   assert.equal(crushMiddle.judgementTotal, 4); assert.equal(crushMiddle.combo, 2); assert.equal(crushMiddle.score, 505000);

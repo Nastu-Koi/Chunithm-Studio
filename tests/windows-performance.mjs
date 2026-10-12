@@ -26,7 +26,7 @@ try {
   else await page.reload();
   await page.waitForFunction(() => document.querySelector('#resource-status')?.dataset.loaded === 'true', { timeout: 60000 });
   if (scenario === 'calibration') {
-    const file = path.join(runtime, 'examples', 'calibration.chuni.json');
+    const file = path.join(runtime, 'examples', 'calibration');
     await app.evaluate(({ dialog }, filename) => { dialog.showOpenDialog = async () => ({ canceled: false, filePaths: [filename] }); }, file);
     await page.locator('[data-action="open"]').click();
     await page.waitForFunction(() => document.querySelector('#audio-label')?.textContent.endsWith('.wav'), { timeout: 60000 });

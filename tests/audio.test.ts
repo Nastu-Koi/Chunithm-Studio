@@ -22,6 +22,20 @@ test('AFS2 aligns audio blocks and retains IDs, including multiple unequal entri
   const entries = [{ id: 4, bytes: Buffer.alloc(19, 0xaa) }, { id: 12, bytes: Buffer.alloc(53, 0xbb) }];
   assert.deepEqual(parseAfs2(writeAfs2(entries)).entries, entries);
 });
+test('audio offset shifts the normalized WAV by exactly the rounded number of 48 kHz samples', { timeout: 60000 }, async () => {
+  const temp = await mkdtemp(path.join(os.tmpdir(), 'chuni-offset-'));
+  try {
+    const input = path.join(temp, 'input.wav'), source = sineWav(1); await writeFile(input, source);
+    const frames = async (offset: number) => { const file = path.join(temp, `out${offset}.wav`); await prepareAudio(input, file, offset); const bytes = await readFile(file), data = bytes.indexOf(Buffer.from('data')) + 8; return { count: bytes.readUInt32LE(data - 4) / 4, at: (frame: number) => bytes.readInt16LE(data + frame * 4) }; };
+    const original = (frame: number) => source.readInt16LE(44 + frame * 4), shift = Math.round(0.0123 * 48000);
+    const delayed = await frames(0.0123); assert.equal(delayed.count, 48000 + shift);
+    for (let frame = 0; frame < shift; frame++) assert.equal(delayed.at(frame), 0);
+    for (const frame of [1, 25, 100, 4000, 47999]) assert.equal(delayed.at(frame + shift), original(frame));
+    const trimmed = await frames(-0.0123); assert.equal(trimmed.count, 48000 - shift);
+    for (const frame of [0, 25, 100, 4000]) assert.equal(trimmed.at(frame), original(frame + shift));
+    const unchanged = await frames(0.000004); assert.equal(unchanged.count, 48000); assert.equal(unchanged.at(100), original(100));
+  } finally { await rm(temp, { recursive: true, force: true }); }
+});
 test('installed ACB round-trips without changing any nested resource bytes', { skip: !available }, async () => {
   const original = parseUtf(await readFile(template));
   assert.deepEqual(parseUtf(writeUtf(original)).rows, original.rows);

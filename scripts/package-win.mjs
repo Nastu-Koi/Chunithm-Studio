@@ -42,7 +42,7 @@ for (const packagePath of paths) {
   // Only original, movable project examples belong in the portable app. The locally
   // generated OPT uses installation-specific metadata and is delivered separately.
   await mkdir(path.join(packagePath, 'examples'), { recursive: true });
-  for (const name of ['calibration.chuni.json', 'calibration.assets', 'sevenths.chuni.json', 'sevenths.assets', '校准说明.txt']) {
+  for (const name of ['calibration', 'sevenths', '校准说明.txt']) {
     await cp(path.join(root, 'examples', name), path.join(packagePath, 'examples', name), { recursive: true });
   }
   console.log(`Windows runtime ready: ${packagePath}`);

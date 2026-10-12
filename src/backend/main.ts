@@ -1,12 +1,12 @@
 import { app, BrowserWindow, dialog, ipcMain, shell, Menu, protocol } from 'electron';
-import { readFile, writeFile, mkdir, rm, access } from 'node:fs/promises';
+import { readFile, writeFile, mkdir, rm, access, stat, rename } from 'node:fs/promises';
 import path from 'node:path';
 import { createHash } from 'node:crypto';
 import sharp from 'sharp';
 import { createProject, type Project } from '../core/model';
 import { parseC2S, serializeC2S } from '../core/c2s';
 import { validateChart } from '../core/validation';
-import { readProject, saveProject, atomicJson, validateProjectDocument } from './projects';
+import { openProject, saveProject, createProjectFolder, listRecentProjects, rememberRecentProject, atomicJson, validateProjectDocument } from './projects';
 import { scanLibrary, readLibraryXmlMetadata } from './library';
 import { decodeDDS } from './dds-preview';
 import { configureAudioRuntime, prepareAudio, decodeGameAudio } from './audio';
@@ -35,6 +35,7 @@ if (process.env.CHUNI_USER_DATA_DIR) {
 const progress = (text: string) => win?.webContents.send('progress', text);
 const cacheFile = (source: string, extension = '.wav') => path.join(app.getPath('userData'), 'cache', createHash('sha256').update(source).digest('hex').slice(0, 24) + extension);
 const recoveryFile = () => path.join(app.getPath('userData'), 'recovery.json');
+const recentFile = () => path.join(app.getPath('userData'), 'recent-projects.json');
 // The renderer may only read files the main process handed out (dialogs, projects, library scans) or that live under trusted roots.
 const readableFiles = new Set<string>(), readableRoots = new Set<string>();
 const pathKey = (file: string) => { const resolved = path.resolve(file); return process.platform === 'win32' ? resolved.toLowerCase() : resolved; };
@@ -48,6 +49,11 @@ function assertReadable(file: string): string {
   throw new Error('渲染进程请求的文件不在已授权的位置。');
 }
 const allowProjectAssets = (p: Project) => { allowRead(p.audio.path); allowRead(p.coverPath); };
+// Saving in place deletes replaced assets, so it is limited to folders this session opened, created or recovered.
+const projectFolders = new Set<string>();
+async function selectDirectory(title: string): Promise<string | null> {
+  const r = await dialog.showOpenDialog(win, { title, properties: ['openDirectory', 'createDirectory'] }); return r.canceled ? null : r.filePaths[0];
+}
 const difficultyId = (p: Project) => ['BASIC', 'ADVANCED', 'EXPERT', 'MASTER', 'ULTIMA', 'WORLD’S END'].indexOf(p.metadata.difficulty);
 function exportChart(p: Project, allowQuantization: boolean): string {
   const errors = validateChart(p.chart).filter(issue => issue.severity === 'error');
@@ -58,25 +64,43 @@ async function selectFile(title: string, extensions: string[]): Promise<string |
   const r = await dialog.showOpenDialog(win, { title, properties: ['openFile'], filters: [{ name: title, extensions }] }); return r.canceled ? null : r.filePaths[0];
 }
 async function previewAudio(file: string): Promise<Buffer> {
-  const ext = path.extname(file).toLowerCase();
-  if (['.wav', '.mp3', '.ogg', '.flac', '.m4a', '.aac'].includes(ext)) return readFile(file);
-  const target = cacheFile(file); await mkdir(path.dirname(target), { recursive: true });
-  await prepareAudio(file, target); return readFile(target);
+  if (path.extname(file).toLowerCase() === '.wav') return readFile(file);
+  // Compressed music is decoded by the same FFmpeg step as export. A browser decoder may skip a different amount of
+  // encoder padding, which would make the offset aligned in the editor wrong in the exported audio.
+  const info = await stat(file), target = cacheFile(`${path.resolve(file)}\n${info.size}\n${info.mtimeMs}`);
+  try { await access(target); }
+  catch { const temporary = `${target}.${process.pid}.${Date.now()}.wav`; try { await prepareAudio(file, temporary); await rename(temporary, target); } finally { await rm(temporary, { force: true }); } }
+  return readFile(target);
 }
 function attachHandlers() {
   ipcMain.handle('resources:load', () => loadBundledGameResources(bundledAssetRoot(), { imageUrl: bundledAssetUrl }));
-  ipcMain.handle('project:open', async () => { const file = await selectFile('打开工程', ['json']); if (!file) return null; const project = await readProject(file); allowProjectAssets(project); return { project, path: file }; });
+  ipcMain.handle('project:recent', () => listRecentProjects(recentFile()));
+  ipcMain.handle('project:open', async (_, recent?: string) => {
+    if (recent !== undefined && !(await listRecentProjects(recentFile())).some(item => item.path === recent)) throw new Error('该项目不在最近打开的列表中。');
+    const directory = recent ?? await selectDirectory('打开项目文件夹'); if (!directory) return null;
+    const { project, warnings } = await openProject(directory);
+    allowProjectAssets(project); projectFolders.add(pathKey(directory)); await rememberRecentProject(recentFile(), directory, project);
+    return { project, path: directory, warnings };
+  });
   ipcMain.handle('chart:import', async () => {
     const file = await selectFile('导入原生 C2S 谱面', ['c2s']); if (!file) return null;
     const p = createProject(); p.metadata.title = path.basename(file, '.c2s'); p.chart = parseC2S(await readFile(file, 'utf8'));
     const creator = p.chart.headerRecords.find(r => r.tag === 'CREATOR'); if (creator) p.metadata.designer = creator.raw.split(/\t/).slice(1).join(' ').trim();
     return { project: p, path: null };
   });
-  ipcMain.handle('project:save', async (_, project: Project, filename: string | null, saveAs: boolean) => {
+  ipcMain.handle('project:save', async (_, project: Project, directory: string | null, saveAs: boolean) => {
     validateProjectDocument(project);
     if (project.audio.path) assertReadable(project.audio.path); if (project.coverPath) assertReadable(project.coverPath);
-    if (!filename || saveAs) { const r = await dialog.showSaveDialog(win, { title: '保存工程', defaultPath: `${project.metadata.title.replace(/[<>:"/\\|?*]/g, '_')}.chuni.json`, filters: [{ name: 'Chuni Studio 工程', extensions: ['chuni.json'] }] }); if (r.canceled || !r.filePath) return null; filename = r.filePath; }
-    const saved = await saveProject(filename, project); allowProjectAssets(saved); await rm(recoveryFile(), { force: true }); return { project: saved, path: filename };
+    let removed: string[] = [];
+    if (!directory || saveAs) {
+      const parent = await selectDirectory('选择保存位置（将在其中新建以曲名命名的项目文件夹）'); if (!parent) return null;
+      ({ directory, project } = await createProjectFolder(parent, project));
+    } else {
+      if (!projectFolders.has(pathKey(directory))) throw new Error('项目文件夹不是由本程序打开的。');
+      ({ project, removed } = await saveProject(directory, project));
+    }
+    allowProjectAssets(project); projectFolders.add(pathKey(directory)); await rememberRecentProject(recentFile(), directory, project);
+    await rm(recoveryFile(), { force: true }); return { project, path: directory, removed };
   });
   ipcMain.handle('chart:export', async (_, p: Project, allowQuantization = false) => {
     validateProjectDocument(p);
@@ -132,7 +156,14 @@ function attachHandlers() {
     allowRead(result.optPath); return result;
   });
   ipcMain.handle('project:autosave', async (_, p: Project | null, filename: string | null) => { if (p) { validateProjectDocument(p); await atomicJson(recoveryFile(), { project: p, path: filename }); } else await rm(recoveryFile(), { force: true }); });
-  ipcMain.handle('project:recovery', async () => { try { const saved = JSON.parse(await readFile(recoveryFile(), 'utf8')); validateProjectDocument(saved.project); allowProjectAssets(saved.project); return saved; } catch { return null; } });
+  ipcMain.handle('project:recovery', async () => {
+    try {
+      const saved = JSON.parse(await readFile(recoveryFile(), 'utf8')); validateProjectDocument(saved.project); allowProjectAssets(saved.project);
+      // A recovered project keeps its folder only while that folder still exists; otherwise it is saved as a new one.
+      if (typeof saved.path === 'string') { try { await access(saved.path); projectFolders.add(pathKey(saved.path)); } catch { saved.path = null; } } else saved.path = null;
+      return { project: saved.project, path: saved.path };
+    } catch { return null; }
+  });
   ipcMain.handle('path:reveal', (_, filename: string) => shell.showItemInFolder(assertReadable(filename)));
 }
 app.whenReady().then(() => {

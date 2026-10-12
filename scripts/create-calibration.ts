@@ -132,7 +132,7 @@ async function filesBelow(directory: string): Promise<string[]> {
   return (await Promise.all((await readdir(directory, { withFileTypes: true })).map(async entry => entry.isDirectory() ? filesBelow(path.join(directory, entry.name)) : [path.join(directory, entry.name)]))).flat();
 }
 await mkdir(examples, { recursive: true });
-for (const name of ['calibration.chuni.json', 'sevenths.chuni.json', 'exported/AZ01']) {
+for (const name of ['calibration', 'sevenths', 'exported/AZ01']) {
   let found = false; try { await access(path.join(examples, name)); found = true; } catch { /* Fresh output only. */ }
   if (found) throw new Error(`Refusing to overwrite examples/${name}; choose a fresh workspace/output.`);
 }
@@ -153,9 +153,9 @@ try {
   for (const [project, stem] of [[calibration, 'calibration'], [sevenths, 'sevenths']] as const) {
     project.audio.path = path.join(temporary, `${stem}.wav`); project.coverPath = cover;
     await writeFile(project.audio.path, synthesize(project));
-    const saved = await saveProject(path.join(examples, `${stem}.chuni.json`), project);
+    const { project: saved } = await saveProject(path.join(examples, stem), project);
     Object.assign(project, saved);
-    const loaded = await readProject(path.join(examples, `${stem}.chuni.json`));
+    const loaded = await readProject(path.join(examples, stem));
     assert.deepEqual(loaded.chart, project.chart);
     assert.equal((await readFile(loaded.audio.path)).length, 44 + Math.ceil(duration * sampleRate) * 4);
   }
@@ -183,14 +183,14 @@ try {
   for (const [tick] of sections) assert.ok(tickToSeconds(calibration.chart, tick) < duration);
   await writeFile(path.join(examples, '校准说明.txt'), '\ufeff' + [
     'CHUNI STUDIO 原创校准与七等分演示', '',
-    'calibration.chuni.json：26.2秒原创合成音频及原创几何封面，WE「改」3星，120→150→90 BPM；所有原生坐标均为整数tick。',
-    'sevenths.chuni.json：全音符七等分、四分音符七等分、分数位置的BPM变化与跨变速长条。工程保留分数tick，未导出/量化这个工程。',
-    '两个工程都通过相对路径引用旁边同名.assets文件夹；移动时请连同.assets一起移动。素材由脚本独立生成，没有提取原游戏的音乐、封面或谱面。', '',
+    'calibration：26.2秒原创合成音频及原创几何封面，WE「改」3星，120→150→90 BPM；所有原生坐标均为整数tick。',
+    'sevenths：全音符七等分、四分音符七等分、分数位置的BPM变化与跨变速长条。工程保留分数tick，未导出/量化这个工程。',
+    '两个示例都是项目文件夹，内含 project.chuni.json、audio.wav 和 cover.png；在程序中点击“打开”并选择该文件夹，移动时整个文件夹一起移动。素材由脚本独立生成，没有提取原游戏的音乐、封面或谱面。', '',
     '校准时间表（以音频0秒起，播放器速度1×、音频偏移0）', ...sections.map(([, text]) => text), '',
     '声音规则：每四分拍有短节拍；音符起点和长条终点有合成提示音；DAMAGE使用低音。连续AIR/地面同刻可能叠音。音频依据tickToSeconds生成，采样率48kHz，双声道PCM16。', '',
     '原游戏验收',
     '源码目录中，独立测试包位于 examples/exported/AZ01；Music ID和cueFile ID均为7000。生成时已检查现有资源冲突。安装方法见 examples/exported/AZ01-安装说明.txt。',
-    '交付版中，便携程序目录包含两个示例工程、各自.assets和本说明；同级的“校准OPT”目录另存AZ01测试包及AZ01-安装说明.txt。校准OPT不放在便携程序包内。',
+    '交付版中，便携程序目录包含两个示例项目文件夹和本说明；同级的“校准OPT”目录另存AZ01测试包及AZ01-安装说明.txt。校准OPT不放在便携程序包内。',
     '先确认曲目出现、封面和WE「改」3星正确，再逐段确认试听、BPM同步、AIR接续、停止、逆走与分组超车。未自动复制到游戏目录，也没有启动游戏。',
     '已通过：工程回读、合法AIR父音符/长条接续检查、C2S整数精度及回读、分组超车数值检查、HCA编码/解码与ACB/AWB结构校验、DDS解码。',
     '这些检查不等于已经通过原游戏验收。校准谱采用SFL=0，不含STP。旧版STP目前仅按区间停滚近似预览，其精确视觉公式仍需原游戏比较；本校准包不能验证STP。', '',

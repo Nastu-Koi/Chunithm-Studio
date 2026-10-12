@@ -23,6 +23,8 @@ export interface AppContext {
   load(loaded: LoadedProject): Promise<void>;
   loadCover(): Promise<void>;
   discardAllowed(): boolean;
+  /** Ask for a project folder, or open the given recent one, and load it. */
+  openProject(directory?: string): Promise<void>;
   switchView(view: 'edit' | 'player'): void;
   playbackDuration(): number;
   /** Move the shared cursor and audio position to a tick and show it in the editor. */

@@ -358,3 +358,20 @@ test('sound groups play again across a loop and rate change', async () => {
     assert.equal(fake.oscillators.length, 3);
   } finally { transport.destroy(); fake.restore(); }
 });
+
+test('metronome clicks once per beat from the play position and stays silent when disabled', async () => {
+  const fake = fakeAudio(), transport = new Transport();
+  try {
+    transport.setChart(createProject().chart);
+    const silent = transport.play(); fake.resumes[0].resolve(); await silent;
+    assert.equal(fake.oscillators.length, 0);
+    transport.pause(); transport.metronome = true; transport.seek(0);
+    const playing = transport.play(); fake.resumes[1].resolve(); await playing;
+    // 120 BPM: beats at 0 s and 0.5 s. Only the first is within the 100 ms scheduling horizon.
+    assert.equal(fake.oscillators.length, 1);
+    const tick = [...fake.timers.values()][0].callback;
+    fake.context.currentTime = 0.2; tick(); assert.equal(fake.oscillators.length, 1);
+    fake.context.currentTime = 0.45; tick(); tick(); assert.equal(fake.oscillators.length, 2);
+    transport.seek(0.75); await Promise.resolve();
+  } finally { transport.destroy(); fake.restore(); }
+});

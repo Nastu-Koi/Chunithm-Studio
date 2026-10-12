@@ -45,6 +45,10 @@
 .editor-track-controls { display: inline-flex; align-items: center; gap: 4px; }
 .editor-track-controls input { width: 72px; }
 .editor-track-controls output { min-width: 31px; text-align: right; font-variant-numeric: tabular-nums; }
+.editor-align-controls { display: inline-flex; align-items: center; gap: 3px; }
+.editor-align-controls[hidden] { display: none; }
+.editor-align-controls button { min-width: 30px; padding-inline: 4px; }
+.editor-align-controls output { min-width: 74px; text-align: center; font: 11px Consolas, monospace; color: #8fc0ff; }
 .editor-toolbar-divider { width: 1px; height: 18px; background: #565656; margin: 0 3px; flex: none; }
 .editor-toolbar-spacer { flex: 1; }
 .editor-advanced-controls { position: relative; z-index: 5; }

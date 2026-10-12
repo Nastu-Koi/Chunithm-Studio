@@ -8,11 +8,15 @@ export interface LibraryEntry {
   musicXmlPath?: string; cueXmlPath?: string;
   notesDesigner?: string;
 }
-export interface LoadedProject { project: Project; path: string | null; warnings?: string[] }
+/** `path` is the project folder, or null for a project that has never been saved. `removed` lists replaced assets a save deleted. */
+export interface LoadedProject { project: Project; path: string | null; warnings?: string[]; removed?: string[] }
+export interface RecentProject { path: string; title: string; artist: string; modified: number }
 export interface ExportResult { optPath: string; files: string[]; warnings: string[]; structuralVerified: boolean }
 export interface StudioBridge {
   loadGameResources(): Promise<{ textures: GameTextures; sounds: GameHitSounds }>;
-  openProject(): Promise<LoadedProject | null>;
+  /** Open a recent project folder, or ask for one when no folder is given. */
+  openProject(directory?: string): Promise<LoadedProject | null>;
+  listRecentProjects(): Promise<RecentProject[]>;
   importC2s(): Promise<LoadedProject | null>;
   saveProject(project: Project, path: string | null, saveAs?: boolean): Promise<LoadedProject | null>;
   exportC2s(project: Project, allowQuantization?: boolean): Promise<string | null>;

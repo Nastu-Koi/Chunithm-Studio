@@ -13,6 +13,7 @@ export const browserBridge: StudioBridge = {
   platform: 'browser',
   loadGameResources: async () => desktopOnly(),
   async openProject() { const f = await pick('.json'); if (!f) return null; const project = JSON.parse(await f.text()); if (project.format !== 'chunithm-studio') throw new Error('不是 Chuni Studio 工程'); return { project, path: f.name }; },
+  listRecentProjects: async () => [],
   async importC2s() { const f = await pick('.c2s'); if (!f) return null; const project = createProject(); project.metadata.title = f.name.replace(/\.c2s$/i, ''); project.chart = parseC2S(await f.text()); return { project, path: null }; },
   async saveProject(project) { download(JSON.stringify(project, null, 2), `${project.metadata.title}.chuni.json`); return { project, path: `${project.metadata.title}.chuni.json` }; },
   async exportC2s(project, allowQuantization) {

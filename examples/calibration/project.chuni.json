@@ -10,12 +10,12 @@
     "level": "0"
   },
   "audio": {
-    "path": "calibration.assets/audio.wav",
+    "path": "audio.wav",
     "offset": 0,
     "previewStart": 8,
     "previewEnd": 14.4
   },
-  "coverPath": "calibration.assets/cover.png",
+  "coverPath": "cover.png",
   "exportSettings": {
     "optId": "AZ01",
     "musicId": 7000,

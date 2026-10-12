@@ -160,6 +160,23 @@ export function getMeasureLines(chart: Chart, startTick: number, endTick: number
   }
   return output;
 }
+export interface BeatLine { tick: number; downbeat: boolean }
+/** Metronome beats with startTick <= tick < endTick: one per meter denominator, the first of each visible measure a downbeat. */
+export function getBeatLines(chart: Chart, startTick: number, endTick: number): BeatLine[] {
+  const output: BeatLine[] = [];
+  if (!(endTick > startTick)) return output;
+  for (const segment of measureSegments(chart)) {
+    if (segment.tick >= endTick) break;
+    if (segment.endTick <= startTick) continue;
+    const beat = chart.resolution / segment.denominator;
+    const last = Math.min(segment.count - 1, measureOffsetAt(endTick, segment.tick, segment.span));
+    for (let index = Math.max(0, measureOffsetAt(startTick, segment.tick, segment.span)); index <= last; index++) {
+      const measure = segment.tick + index * segment.span, limit = Math.min(measure + segment.span, segment.endTick, endTick);
+      for (let step = 0, tick = measure; tick < limit - 1e-9; tick = measure + ++step * beat) if (tick >= startTick) output.push({ tick, downbeat: step === 0 });
+    }
+  }
+  return output;
+}
 export interface GridLine { tick: number; major: boolean; measure: number; beat: number }
 export function getGrid(chart: Chart, startTick: number, endTick: number, division = 16): GridLine[] {
   const step = chart.resolution / Math.max(1, division);

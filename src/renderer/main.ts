@@ -18,6 +18,7 @@ import { openSettings } from './dialogs/settings';
 import { showResources, showJudgements, showValidation } from './dialogs/info';
 import { showMeasureNavigation, showLoop } from './dialogs/navigation';
 import { showLibrary } from './dialogs/library';
+import { showRecentProjects } from './dialogs/recent';
 import { showExport } from './dialogs/export';
 import { createDemoProject } from './demo-project';
 
@@ -29,7 +30,7 @@ let project = createProject(), projectPath: string | null = null, dirty = false,
 let view: 'edit' | 'player' = 'edit', cursor = 0, gamePath = localStorage.getItem('chuni-game-path') || (bridge.platform === 'win32' ? 'D:\\chunithm' : '/mnt/d/chunithm');
 let history: Project[] = [], future: Project[] = [], autosaveTimer: ReturnType<typeof setTimeout> | undefined;
 let library: LibraryEntry[] = [], audioGeneration = 0, peaks: Float32Array = new Float32Array(), coverUrl = '';
-const editor = new ChartEditor($('#editor-view'), { onChange: (chart, label) => commit({ ...project, chart }, label), onCursor: tick => { cursor = tick; transport.seek(tickToSeconds(project.chart, tick)); }, onUndo: undo, onRedo: redo });
+const editor = new ChartEditor($('#editor-view'), { onChange: (chart, label) => commit({ ...project, chart }, label), onCursor: tick => { cursor = tick; transport.seek(tickToSeconds(project.chart, tick)); }, onUndo: undo, onRedo: redo, onOffset: (offset, label) => commit({ ...project, audio: { ...project.audio, offset } }, label) });
 const player = new ChartPlayer($('#player-canvas-host'));
 /** The player's per-chart indexes (sorted notes, UV spans, effect events) are rebuilt only when the player view is shown. */
 let pendingPlayerChart: Chart | undefined;
@@ -60,7 +61,7 @@ function showModal(title: string, content: string): void { $('#modal-title').tex
 function message(text: string, error = false): void { $('#status').textContent = text; const t = $('#toast'); t.textContent = text; t.className = error ? 'show error' : 'show'; setTimeout(() => t.classList.remove('show'), error ? 7000 : 3500); }
 async function run(action: () => Promise<void>): Promise<void> { if (busy) return; busy = true; document.body.classList.add('busy'); try { await action(); } catch (e) { message(e instanceof Error ? e.message : String(e), true); } finally { busy = false; document.body.classList.remove('busy'); } }
 function sync(): void {
-  editor.setChart(project.chart); editor.setCursor(cursor); editor.setWaveform(peaks, transport.duration, project.audio.offset);
+  editor.setChart(project.chart); editor.setCursor(cursor); editor.setWaveform(peaks, transport.duration, project.audio.offset, transport.musicSamples);
   pendingPlayerChart = project.chart; if (view === 'player') syncPlayerChart();
   $('#judgement-status').textContent = `${buildJudgementTimeline(project.chart).total} 判定`;
   player.title = project.metadata.title; player.difficulty = project.metadata.difficulty;
@@ -93,14 +94,14 @@ async function load(p: LoadedProject): Promise<void> {
 }
 async function loadAudio(): Promise<void> {
   const generation = ++audioGeneration;
-  if (!project.audio.path) { transport.clearAudio(); peaks = new Float32Array(); $('#audio-label').textContent = '尚未载入音乐'; return; }
+  if (!project.audio.path) { transport.clearAudio(); peaks = new Float32Array(); editor.setWaveform(peaks, 0, project.audio.offset, null); $('#audio-label').textContent = '尚未载入音乐'; return; }
   $('#audio-label').textContent = '正在读取音乐…';
   try {
     const bytes = await bridge.readAudio(project.audio.path); if (generation !== audioGeneration) return;
     const result = await transport.load(new Uint8Array(bytes).buffer); if (generation !== audioGeneration) return;
-    peaks = result.peaks; transport.setOffset(project.audio.offset); editor.setWaveform(peaks, result.duration, project.audio.offset);
+    peaks = result.peaks; transport.setOffset(project.audio.offset); editor.setWaveform(peaks, result.duration, project.audio.offset, transport.musicSamples);
     $('#audio-label').textContent = project.audio.path.split(/[\\/]/).pop() || '音乐已载入';
-  } catch (e) { transport.clearAudio(); $('#audio-label').textContent = '音乐未载入'; message(`读取音乐失败：${e instanceof Error ? e.message : e}`, true); }
+  } catch (e) { transport.clearAudio(); peaks = new Float32Array(); editor.setWaveform(peaks, 0, project.audio.offset, null); $('#audio-label').textContent = '音乐未载入'; message(`读取音乐失败：${e instanceof Error ? e.message : e}`, true); }
 }
 let coverGeneration = 0;
 async function loadCover(): Promise<void> {
@@ -121,14 +122,30 @@ const ctx: AppContext = {
   get library() { return library; }, set library(value) { library = value; },
   get coverUrl() { return coverUrl; },
   get resources() { return { description: resourceDescription, warnings: resourceWarnings }; },
-  commit, showModal, message, run, load, loadCover, discardAllowed, switchView, playbackDuration, syncPlayerChart,
+  commit, showModal, message, run, load, loadCover, discardAllowed, openProject, switchView, playbackDuration, syncPlayerChart,
   seekTick(tick) { cursor = tick; transport.seek(tickToSeconds(project.chart, tick)); editor.setCursor(cursor, true); },
 };
-async function save(saveAs = false): Promise<void> { const result = await bridge.saveProject(project, projectPath, saveAs); if (!result) return; project = result.project; projectPath = result.path; dirty = false; clearTimeout(autosaveTimer); sync(); message('工程已保存'); }
+async function save(saveAs = false): Promise<void> {
+  const before = project, result = await bridge.saveProject(project, projectPath, saveAs); if (!result) return;
+  // Saving moves assets into the project folder and deletes replaced ones. Undo steps follow the saved copies,
+  // so an undo neither reloads the same music from its old place nor points at a deleted file.
+  const removed = new Set(result.removed ?? []), saved = result.project;
+  const follow = (p: Project): Project => {
+    const audioPath = p.audio.path === before.audio.path || removed.has(p.audio.path) ? saved.audio.path : p.audio.path;
+    const coverPath = p.coverPath === before.coverPath || removed.has(p.coverPath) ? saved.coverPath : p.coverPath;
+    return audioPath === p.audio.path && coverPath === p.coverPath ? p : { ...p, audio: { ...p.audio, path: audioPath }, coverPath };
+  };
+  history = history.map(follow); future = future.map(follow);
+  project = saved; projectPath = result.path; dirty = false; clearTimeout(autosaveTimer); sync(); message(`项目已保存到 ${result.path}`);
+}
+async function openProject(directory?: string): Promise<void> {
+  const loaded = await bridge.openProject(directory); if (!loaded) return;
+  await load(loaded); if (loaded.warnings?.length) message(loaded.warnings.join(' '), true);
+}
 function playbackDuration(): number { return Math.max(8, chartDuration(project.chart) + 2, transport.duration + project.audio.offset); }
 const actions: Record<string, () => void | Promise<void>> = {
   new: async () => { if (discardAllowed()) { await load({ project: createProject(), path: null }); openSettings(ctx); } },
-  open: async () => { if (!discardAllowed()) return; const loaded = await bridge.openProject(); if (loaded) await load(loaded); },
+  open: async () => { if (!discardAllowed()) return; const recent = await bridge.listRecentProjects(); if (recent.length) showRecentProjects(ctx, recent); else await openProject(); },
   import: async () => { if (!discardAllowed()) return; const loaded = await bridge.importC2s(); if (loaded) await load(loaded); },
   save: () => save(), undo, redo, settings: () => openSettings(ctx), xml: () => openXmlSettings(project, { showModal, commit, close: () => modal.close(), error: text => message(text, true) }), edit: () => switchView('edit'), player: () => switchView('player'),
   audio: async () => { const file = await bridge.pickAudio(); if (file) { commit({ ...project, audio: { ...project.audio, path: file } }, '导入音乐'); await loadAudio(); } },
@@ -144,6 +161,12 @@ $<HTMLInputElement>('#seek').oninput = event => { transport.seek(Number((event.t
 $<HTMLSelectElement>('#playback-rate').onchange = event => transport.setRate(Number((event.target as HTMLSelectElement).value));
 $<HTMLInputElement>('#volume').oninput = event => transport.setVolume(Number((event.target as HTMLInputElement).value));
 $<HTMLInputElement>('#sfx').onchange = event => { transport.effects = (event.target as HTMLInputElement).checked; };
+// The metronome is a personal monitoring preference, so it lives with this machine's settings, not in the project.
+const metronomeToggle = $<HTMLInputElement>('#metronome'), metronomeVolume = $<HTMLInputElement>('#metronome-volume'), storedMetronomeVolume = Number(localStorage.getItem('chuni-metronome-volume') ?? 0.5);
+metronomeToggle.checked = transport.metronome = localStorage.getItem('chuni-metronome') === '1';
+metronomeVolume.value = String(transport.metronomeVolume = Number.isFinite(storedMetronomeVolume) ? Math.max(0, Math.min(1, storedMetronomeVolume)) : 0.5);
+metronomeToggle.onchange = () => { transport.metronome = metronomeToggle.checked; localStorage.setItem('chuni-metronome', metronomeToggle.checked ? '1' : '0'); };
+metronomeVolume.oninput = () => { transport.metronomeVolume = Number(metronomeVolume.value); localStorage.setItem('chuni-metronome-volume', metronomeVolume.value); };
 $<HTMLInputElement>('#scroll-speed').oninput = event => { player.speed = Number((event.target as HTMLInputElement).value); $('#scroll-speed-label').textContent = player.speed.toFixed(1); };
 document.addEventListener('keydown', event => {
   if (event.defaultPrevented || modal.open || (event.target as HTMLElement)?.closest('input,select,textarea,[contenteditable="true"]')) return;

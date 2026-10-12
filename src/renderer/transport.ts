@@ -1,5 +1,5 @@
 import type { Chart, NoteType } from '../core/model';
-import { tickToSeconds } from '../core/timing';
+import { tickToSeconds, secondsToTick, getBeatLines } from '../core/timing';
 import { getPlayerPlaybackPoints } from './playback-points';
 import type { GameHitSoundId, GameHitSounds } from '../core/game-sounds';
 import { buildJudgementTimeline } from '../core/judgement';
@@ -44,6 +44,11 @@ export class Transport {
   private source: AudioBufferSourceNode | null = null;
   private musicGain: GainNode | null = null;
   private effectsGain: GainNode | null = null;
+  private metronomeGain: GainNode | null = null;
+  private chart: Chart | null = null;
+  private metronomeTick = 0;
+  private metronomeEnabled = false;
+  private metronomeLevel = 0.5;
   private activeEffects = new Set<AudioScheduledSourceNode>();
   private anchorSeconds = 0;
   private anchorClock = 0;
@@ -66,6 +71,13 @@ export class Transport {
     if (this.effectsGain) this.effectsGain.gain.value = enabled ? 0.23 : 0;
     if (!enabled) this.stopEffects();
   }
+  /** Editing aid only: clicks on the chart's beats, never part of an export. */
+  get metronome(): boolean { return this.metronomeEnabled; }
+  set metronome(enabled: boolean) { this.metronomeEnabled = enabled; this.resetScheduler(); }
+  get metronomeVolume(): number { return this.metronomeLevel; }
+  set metronomeVolume(value: number) { this.metronomeLevel = value; if (this.metronomeGain) this.metronomeGain.gain.value = value; }
+  /** First channel of the loaded music, for drawing a waveform finer than the overview peaks. */
+  get musicSamples(): { data: Float32Array; sampleRate: number } | null { return this.buffer ? { data: this.buffer.getChannelData(0), sampleRate: this.buffer.sampleRate } : null; }
   loop: { start: number; end: number } | null = null;
   onLoop?: () => void;
   get duration(): number { return this.buffer?.duration ?? 0; }
@@ -115,12 +127,13 @@ export class Transport {
     if (generation !== this.effectsGeneration) return { loaded: 0, failed: [] };
     this.samples = next; return { loaded: next.size, failed };
   }
-  setChart(chart: Chart): void { this.hits = getChartHits(chart); this.resetScheduler(); }
+  setChart(chart: Chart): void { this.chart = chart; this.hits = getChartHits(chart); this.resetScheduler(); }
   private resetScheduler(): void {
     const time = this.seconds - 0.0001;
     let lo = 0, hi = this.hits.length;
     while (lo < hi) { const mid = (lo + hi) >>> 1; if (this.hits[mid].time < time) lo = mid + 1; else hi = mid; }
     this.scheduledIndex = lo;
+    if (this.chart) this.metronomeTick = secondsToTick(this.chart, Math.max(0, time));
   }
   async play(): Promise<void> {
     if (this.playing) return;
@@ -163,6 +176,7 @@ export class Transport {
     const now = this.seconds;
     if (this.loop && this.loop.end > this.loop.start && now >= this.loop.end) { this.seek(this.loop.start); this.onLoop?.(); return; }
     const horizon = now + 0.10 * this.rate;
+    this.scheduleMetronome(Math.min(horizon, this.loop && this.loop.end > this.loop.start ? this.loop.end : Infinity));
     const played = new Set<GameHitSoundId | SoundLayers>();
     let groupTime: number | undefined;
     while (this.scheduledIndex < this.hits.length && this.hits[this.scheduledIndex].time < horizon) {
@@ -176,6 +190,21 @@ export class Transport {
       played.add(sound);
       if (this.effects && hit.time >= now - 0.03 && (!this.loop || hit.time < this.loop.end)) this.scheduleEffect(hit, this.anchorClock + (hit.time - this.anchorSeconds) / this.rate);
     }
+  }
+  private scheduleMetronome(horizon: number): void {
+    if (!this.chart || !this.context) return;
+    const until = secondsToTick(this.chart, horizon);
+    if (!(until > this.metronomeTick)) return;
+    if (this.metronomeEnabled && !this.metronomeGain) { this.metronomeGain = this.context.createGain(); this.metronomeGain.gain.value = this.metronomeLevel; this.metronomeGain.connect(this.context.destination); }
+    if (this.metronomeEnabled && this.metronomeGain) for (const beat of getBeatLines(this.chart, this.metronomeTick, until)) {
+      const when = Math.max(this.context.currentTime, this.anchorClock + (tickToSeconds(this.chart, beat.tick) - this.anchorSeconds) / this.rate);
+      const oscillator = this.context.createOscillator(), gain = this.context.createGain();
+      oscillator.type = 'square'; oscillator.frequency.value = beat.downbeat ? 1760 : 1175;
+      gain.gain.setValueAtTime(beat.downbeat ? 0.5 : 0.32, when); gain.gain.exponentialRampToValueAtTime(0.001, when + 0.03);
+      oscillator.connect(gain); gain.connect(this.metronomeGain); oscillator.start(when); oscillator.stop(when + 0.04);
+      this.activeEffects.add(oscillator); oscillator.onended = () => { this.activeEffects.delete(oscillator); oscillator.disconnect(); gain.disconnect(); };
+    }
+    this.metronomeTick = until;
   }
   private scheduleEffect(hit: Hit, when: number): void {
     const context = this.context!, destination = this.effectsGain!;

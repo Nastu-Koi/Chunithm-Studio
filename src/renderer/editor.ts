@@ -9,7 +9,8 @@ import { LONG, AIR, CHAIN, clamp, endLane, endWidth, endTick, sameTick, formatTi
   appendEditorNote, attachEditorAir, boundEditorParent, copyEditorSelection, curveEditorSlide, flipEditorSelection, inferEditorParent, mirrorEditorSelection, moveEditorSelection, parseEditorFraction, scaleEditorSelection, selectionWithBoundAir, setEditorAirHeight, setEditorNodeKind, splitEditorNote, syncEditorAirBindings, type Clipboard, type EditorNodeKind } from './editor-operations';
 export { appendEditorNote, attachEditorAir, boundEditorParent, copyEditorSelection, curveEditorSlide, flipEditorSelection, inferEditorParent, mirrorEditorSelection, moveEditorSelection, parseEditorFraction, scaleEditorSelection, selectionWithBoundAir, setEditorAirHeight, setEditorNodeKind, splitEditorNote, syncEditorAirBindings, type EditorNodeKind } from './editor-operations';
 
-type Callbacks = { onChange(chart: Chart, label: string): void; onCursor(tick: number): void; onUndo(): void; onRedo(): void };
+type Callbacks = { onChange(chart: Chart, label: string): void; onCursor(tick: number): void; onUndo(): void; onRedo(): void; onOffset(seconds: number, label: string): void };
+type AudioSamples = { data: Float32Array; sampleRate: number };
 type Position = { x: number; y: number; tick: number; lane: number };
 type DragKind = 'move' | 'end' | 'width' | 'widthLeft' | 'endWidth' | 'height' | 'endHeight' | 'box' | 'draw' | 'seek' | 'pan';
 type Tool = NoteType | 'select' | 'erase';
@@ -86,6 +87,10 @@ export class ChartEditor {
   private peaks: Float32Array = new Float32Array();
   private audioDuration = 0;
   private audioOffset = 0;
+  private samples?: AudioSamples;
+  /** Alignment mode: clicks set the cursor or the music offset and never edit notes. */
+  private aligning = false;
+  private readonly alignWidth = 120;
   private pendingDraw = 0;
   private inspectorKey = '';
   private bodyTextures: Partial<Record<NoteType, HTMLImageElement>> = {};
@@ -169,10 +174,14 @@ export class ChartEditor {
     }
     this.draw();
   }
-  setWaveform(peaks: Float32Array, duration: number, offset: number): void {
+  /** `samples` is the decoded first channel; alignment mode draws it at pixel precision. */
+  setWaveform(peaks: Float32Array, duration: number, offset: number, samples?: AudioSamples | null): void {
     this.peaks = peaks;
     this.audioDuration = duration;
     this.audioOffset = offset;
+    this.samples = samples ?? undefined;
+    if (this.aligning && !this.samples) this.setAligning(false);
+    this.host.querySelector('[data-align-offset]')!.textContent = `${(offset * 1000).toFixed(1)} ms`;
     this.updateNavigation();
     this.draw();
   }
@@ -348,6 +357,8 @@ export class ChartEditor {
         this.setHint(this.continuing ? '点击下一节点的时间与轨道；Esc 取消接续' : '已取消接续'); this.draw(); break;
       }
       case 'split': this.splitAtCursor(); break;
+      case 'align': this.setAligning(!this.aligning); break;
+      case 'nudge': this.setOffset(this.audioOffset + Number(button.dataset.ms) / 1000, '微调音乐偏移'); break;
       case 'event': this.addEvent(button.dataset.event as EventType); break;
       case 'applyRaw': this.applyRawAttributes(); break;
       case 'seek': this.emitCursor(Number(button.dataset.tick)); this.setCursor(this.cursor, true); break;
@@ -364,7 +375,34 @@ export class ChartEditor {
     if (result === this.chart) { this.setHint('把播放光标放在长条内部，再插入节点；也可双击长条'); return; }
     this.commit(result, '插入长条节点');
   }
+  private setAligning(on: boolean): void {
+    if (on && !this.samples) { this.setHint('请先导入音乐，再对齐'); return; }
+    this.aligning = on; this.continuing = false; this.cancelDrag();
+    this.host.querySelector('[data-action="align"]')!.classList.toggle('editor-active', on);
+    this.host.querySelector('[data-action="connect"]')?.classList.remove('editor-active');
+    this.host.querySelector<HTMLElement>('.editor-align-controls')!.hidden = !on;
+    if (!on && this.zoom > 5) { this.zoom = 5; this.host.querySelector<HTMLInputElement>('[data-option="zoom"]')!.value = '5'; this.updateNavigation(); }
+    this.viewport.style.cursor = on ? 'crosshair' : this.tool === 'select' ? 'default' : this.tool === 'erase' ? 'cell' : 'crosshair';
+    this.setHint(on ? '对齐音乐：点击小节栏或轨道把光标放到目标线，再点击波形上的起音 · Ctrl+滚轮放大 · Esc 退出' : '已退出对齐音乐');
+    this.draw();
+  }
+  private setOffset(seconds: number, label: string): void {
+    // 0.1 ms is finer than one sample period at 48 kHz allows the ear to tell apart, and keeps the stored value readable.
+    const offset = Math.round(seconds * 1e4) / 1e4;
+    if (!Number.isFinite(offset) || Math.abs(offset) > 600) { this.setHint('音乐偏移超出支持范围'); return; }
+    if (offset !== this.audioOffset) this.callbacks.onOffset(offset, label);
+  }
+  private inAlignWaveform(point: Position): boolean { return point.x >= this.waveformLeft && point.x <= this.waveformLeft + this.alignWidth && point.y <= this.canvasHeight - this.bottom; }
+  /** Move the music so that the clicked audio moment lands on the cursor. */
+  private alignAt(point: Position): void {
+    const tick = this.scroll + (this.canvasHeight - this.bottom - point.y) / this.zoom;
+    const audioSeconds = tickToSeconds(this.chart, tick) - this.audioOffset;
+    if (audioSeconds < 0 || audioSeconds > this.audioDuration) { this.setHint('这里没有音乐；请点击波形上的起音'); return; }
+    this.setOffset(tickToSeconds(this.chart, this.cursor) - audioSeconds, '对齐音乐');
+    this.setHint(`已把该起音对齐到光标（${formatTick(this.cursor)} tick）；可用 ±1 / ±10 ms 微调，或重新点击`);
+  }
   private setTool(tool: Tool): void {
+    if (this.aligning) this.setAligning(false);
     this.tool = tool; this.continuing = false;
     if (tool !== 'select' && tool !== 'erase') this.penTool = tool;
     this.host.querySelectorAll<HTMLButtonElement>('[data-tool]').forEach(button => button.classList.toggle('editor-active', button.dataset.tool === tool));
@@ -527,6 +565,11 @@ export class ChartEditor {
     if (event.button !== 0 && event.button !== 1 && event.button !== 2) return;
     this.viewport.focus({ preventScroll: true });
     const point = this.position(event);
+    if (this.aligning && event.button !== 1) {
+      event.preventDefault();
+      if (event.button === 0) { if (this.inAlignWaveform(point)) this.alignAt(point); else this.emitCursor(point.tick); }
+      return;
+    }
     // Space to the right of a narrowed track is not an extra editable lane.
     if (point.x > this.trackRight && event.button !== 1) return;
     let hit = this.hit(point);
@@ -596,6 +639,7 @@ export class ChartEditor {
   private pointerMove(event: PointerEvent): void {
     const point = this.position(event); this.hover = point;
     const drag = this.drag;
+    if (this.aligning && !drag) { this.canvas.style.cursor = ''; this.draw(); return; }
     if (!drag) {
       const hit = this.hit(point);
       this.canvas.style.cursor = hit?.kind === 'width' || hit?.kind === 'widthLeft' || hit?.kind === 'endWidth' || hit?.kind === 'height' || hit?.kind === 'endHeight' ? 'ew-resize' : hit?.kind === 'end' ? 'ns-resize' : hit ? 'grab' : this.tool === 'select' ? 'default' : this.tool === 'erase' ? 'cell' : 'crosshair';
@@ -684,7 +728,7 @@ export class ChartEditor {
     } else if (event.ctrlKey || event.metaKey) {
       const point = this.position(event);
       const old = this.zoom;
-      this.zoom = clamp(this.zoom * Math.exp(-event.deltaY * .002), .2, 5);
+      this.zoom = clamp(this.zoom * Math.exp(-event.deltaY * .002), .2, this.aligning ? 20 : 5);
       this.scroll = Math.max(0, point.tick - (point.tick - this.scroll) * old / this.zoom);
       this.host.querySelector<HTMLInputElement>('[data-option="zoom"]')!.value = String(this.zoom);
     } else this.scroll = Math.max(0, this.scroll - event.deltaY / this.zoom);
@@ -703,6 +747,7 @@ export class ChartEditor {
       if (key === 'a') event.shiftKey ? this.clearSelection() : this.selectAll();
       if (key === 'c') this.copySelection(); if (key === 'v') this.pasteSelection(event.shiftKey); if (key === 'x') { this.copySelection(); this.deleteSelection(); } return;
     }
+    if (key === 'escape' && this.aligning) { this.setAligning(false); return; }
     if (key === 'escape') { this.cancelDrag(); this.continuing = false; this.selection.clear(); this.setTool('select'); this.refreshSelection(); return; }
     if (key === 'delete' || key === 'backspace') { event.preventDefault(); this.deleteSelection(); return; }
     // Margrete's default single-key commands.
@@ -885,7 +930,7 @@ export class ChartEditor {
     }
     ctx.save(); ctx.beginPath(); ctx.rect(this.left, 0, right - this.left, h - this.bottom); ctx.clip();
     const ghostTool = this.noteTool;
-    if (this.hover && !this.drag && ghostTool && !this.continuing && this.inTrack(this.hover.x)) {
+    if (this.hover && !this.drag && ghostTool && !this.continuing && !this.aligning && this.inTrack(this.hover.x)) {
       const note = createNote(ghostTool, this.hover.tick, limitLane(this.chart, this.hover.lane, this.width), this.width);
       if (note.type === 'AIR') note.attributes.direction = this.airDirection;
       ctx.globalAlpha = .45; this.paintNote(ctx, note, false); ctx.globalAlpha = 1;
@@ -898,6 +943,7 @@ export class ChartEditor {
       }
     }
     ctx.restore();
+    if (this.aligning) this.paintAlignWaveform(ctx, lo);
     const cursorY = this.y(this.cursor);
     if (cursorY >= 0 && cursorY <= h - this.bottom) {
       ctx.strokeStyle = '#d23838'; ctx.lineWidth = 1; ctx.beginPath(); ctx.moveTo(0, cursorY); ctx.lineTo(right + 8, cursorY); ctx.stroke();
@@ -968,6 +1014,31 @@ export class ChartEditor {
       ctx.moveTo(mid - amplitude * half, y); ctx.lineTo(mid + amplitude * half, y);
     }
     ctx.stroke();
+  }
+
+  /** Alignment mode widens the waveform over the track and reads min/max straight from the samples under each pixel row. */
+  private paintAlignWaveform(ctx: CanvasRenderingContext2D, lo: number): void {
+    const samples = this.samples; if (!samples) return;
+    const left = this.waveformLeft, width = this.alignWidth, height = this.canvasHeight - this.bottom, mid = left + width / 2, half = width / 2 - 5;
+    ctx.fillStyle = '#000000f0'; ctx.fillRect(left, 0, width, height);
+    ctx.strokeStyle = '#303030'; ctx.lineWidth = 1; ctx.beginPath(); ctx.moveTo(mid + .5, 0); ctx.lineTo(mid + .5, height); ctx.stroke();
+    const { data, sampleRate } = samples;
+    const sampleAt = (y: number) => (tickToSeconds(this.chart, lo + (height - y) / this.zoom) - this.audioOffset) * sampleRate;
+    ctx.strokeStyle = '#8fc0ff'; ctx.beginPath();
+    let previous = sampleAt(height);
+    for (let y = height - 1; y >= 0; y--) {
+      const next = sampleAt(y), first = Math.max(0, Math.floor(previous)), last = Math.min(data.length, Math.max(Math.ceil(next), Math.floor(previous) + 1));
+      previous = next;
+      if (last <= first) continue;
+      let low = 1, high = -1;
+      for (let index = first, stride = Math.max(1, Math.floor((last - first) / 256)); index < last; index += stride) { const value = data[index]; if (value < low) low = value; if (value > high) high = value; }
+      ctx.moveTo(mid + clamp(low, -1, 1) * half, y + .5); ctx.lineTo(mid + clamp(high, -1, 1) * half + 1, y + .5);
+    }
+    ctx.stroke();
+    ctx.strokeStyle = '#619ef2'; ctx.strokeRect(left + .5, .5, width - 1, height - 1);
+    if (this.hover && !this.drag && this.inAlignWaveform(this.hover)) {
+      ctx.strokeStyle = '#ffffff'; ctx.beginPath(); ctx.moveTo(left, this.hover.y + .5); ctx.lineTo(left + width, this.hover.y + .5); ctx.stroke();
+    }
   }
 
   private paintNote(ctx: CanvasRenderingContext2D, note: Note, body: boolean): void {

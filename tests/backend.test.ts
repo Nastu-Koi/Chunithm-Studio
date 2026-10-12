@@ -4,7 +4,7 @@ import { mkdtemp, mkdir, writeFile, readFile, rename, readdir, rm } from 'node:f
 import { tmpdir } from 'node:os';
 import path from 'node:path';
 import { scanLibrary, readLibraryXmlMetadata, librarySignature, resourceRoots } from '../src/backend/library';
-import { readProject, saveProject } from '../src/backend/projects';
+import { readProject, openProject, saveProject, createProjectFolder, projectFolderName, projectFile, listRecentProjects, rememberRecentProject, PROJECT_FILE } from '../src/backend/projects';
 import { decodeDDS } from '../src/backend/dds-preview';
 import { createProject, createNote } from '../src/core/model';
 import { getXmlMetadata } from '../src/core/xml-metadata';
@@ -93,40 +93,84 @@ test('project saves bundle relative assets, preserve fractional chart data, and 
   getXmlMetadata(project).sourceCue = { futureCue: 'retained' };
   project.chart.notes = [createNote('TAP', 384 / 7)];
   const original = structuredClone(project);
-  const directory = path.join(root, 'bundle'); const filename = path.join(directory, 'song.chuni.json');
-  const saved = await saveProject(filename, project);
-  assert.deepEqual(project, original);
-  assert.equal(path.isAbsolute(saved.audio.path), true);
+  const directory = path.join(root, 'bundle'), filename = projectFile(directory);
+  const { project: saved, removed: none } = await saveProject(directory, project);
+  assert.deepEqual(project, original); assert.deepEqual(none, []);
+  assert.equal(saved.audio.path, path.join(directory, 'audio.wav'));
   const disk = JSON.parse(await readFile(filename, 'utf8'));
-  assert.equal(disk.audio.path, path.join('song.assets', 'audio.wav'));
-  assert.equal(disk.coverPath, path.join('song.assets', 'cover.png'));
+  assert.equal(disk.audio.path, 'audio.wav'); assert.equal(disk.coverPath, 'cover.png');
   assert.deepEqual(await readFile(saved.audio.path), audioBytes);
   assert.deepEqual(await readFile(saved.coverPath), coverBytes);
-  saved.metadata.title = 'Second save'; await saveProject(filename, saved);
+  saved.metadata.title = 'Second save'; await saveProject(directory, saved);
   const backup = JSON.parse(await readFile(`${filename}.bak`, 'utf8'));
   assert.equal(backup.metadata.title, 'First save');
   assert.ok(!(await readdir(directory)).some(name => name.endsWith('.tmp')));
   const moved = path.join(root, 'moved bundle'); await rename(directory, moved);
-  const loaded = await readProject(path.join(moved, 'song.chuni.json'));
+  const { project: loaded, warnings } = await openProject(moved);
+  assert.deepEqual(warnings, []);
   assert.equal(loaded.metadata.title, 'Second save');
   assert.equal(loaded.chart.notes[0].tick, 384 / 7); assert.equal(loaded.chart.allowOutOfLane, true);
   assert.deepEqual(loaded.xmlMetadata, project.xmlMetadata);
-  assert.equal(loaded.audio.path, path.join(moved, 'song.assets', 'audio.wav'));
+  assert.equal(loaded.audio.path, path.join(moved, 'audio.wav'));
   assert.deepEqual(await readFile(loaded.audio.path), audioBytes);
   assert.deepEqual(await readFile(loaded.coverPath), coverBytes);
-  const previous = await readProject(path.join(moved, 'song.chuni.json.bak'));
-  assert.equal(previous.metadata.title, 'First save'); assert.deepEqual(await readFile(previous.audio.path), audioBytes);
+});
+
+test('replacing music is copied in on save, the old asset is removed, and a missing asset still opens', async t => {
+  const root = await mkdtemp(path.join(tmpdir(), 'chuni-project-assets-')); t.after(() => rm(root, { recursive: true, force: true }));
+  const first = path.join(root, 'in', 'a.OGG'), second = path.join(root, 'in', 'b.mp3'), cover = path.join(root, 'in', 'c.png');
+  await put(first, Buffer.from([1])); await put(second, Buffer.from([2])); await put(cover, Buffer.from([3]));
+  const project = createProject(); project.metadata.title = 'A: B?'; project.audio.path = first; project.coverPath = cover;
+  assert.equal(projectFolderName(project.metadata.title), 'A_ B_'); assert.equal(projectFolderName(' ..'), '未命名项目');
+  const created = await createProjectFolder(root, project), directory = created.directory;
+  assert.equal(directory, path.join(root, 'A_ B_')); assert.equal(created.project.audio.path, path.join(directory, 'audio.ogg'));
+  await assert.rejects(createProjectFolder(root, project), /已存在/);
+  assert.deepEqual(await readFile(path.join(directory, 'audio.ogg')), Buffer.from([1]));
+  // Importing new music only changes the path; the folder is untouched until the save.
+  const edited = structuredClone(created.project); edited.audio.path = second;
+  assert.deepEqual((await readdir(directory)).sort(), ['audio.ogg', 'cover.png', PROJECT_FILE]);
+  const { project: saved, removed } = await saveProject(directory, edited);
+  assert.deepEqual(removed, [path.join(directory, 'audio.ogg')]);
+  assert.deepEqual((await readdir(directory)).sort(), ['audio.mp3', 'cover.png', PROJECT_FILE, `${PROJECT_FILE}.bak`]);
+  assert.deepEqual(await readFile(saved.audio.path), Buffer.from([2]));
+  // Save As writes a complete new folder without the backup and leaves the original alone.
+  const copyParent = path.join(root, 'elsewhere'); await mkdir(copyParent);
+  const copy = await createProjectFolder(copyParent, saved);
+  assert.deepEqual((await readdir(copy.directory)).sort(), ['audio.mp3', 'cover.png', PROJECT_FILE]);
+  assert.deepEqual((await readdir(directory)).sort(), ['audio.mp3', 'cover.png', PROJECT_FILE, `${PROJECT_FILE}.bak`]);
+  await rm(path.join(directory, 'audio.mp3'));
+  const reopened = await openProject(directory);
+  assert.equal(reopened.project.audio.path, ''); assert.equal(reopened.project.coverPath, path.join(directory, 'cover.png'));
+  assert.match(reopened.warnings.join(), /音乐文件 audio\.mp3 已丢失/);
+  await assert.rejects(openProject(path.join(root, 'in')), /不是 Chuni Studio 项目文件夹/);
+  // A failed first save leaves no half-made folder behind.
+  const broken = structuredClone(saved); broken.metadata.title = 'Broken'; broken.audio.path = path.join(root, 'gone.wav');
+  await assert.rejects(createProjectFolder(root, broken)); await assert.rejects(readdir(path.join(root, 'Broken')), { code: 'ENOENT' });
+});
+
+test('recent projects are newest first, deduplicated and drop folders that no longer exist', async t => {
+  const root = await mkdtemp(path.join(tmpdir(), 'chuni-recent-')); t.after(() => rm(root, { recursive: true, force: true }));
+  const list = path.join(root, 'data', 'recent.json'), make = async (title: string) => { const p = createProject(); p.metadata.title = title; return (await createProjectFolder(root, p)); };
+  assert.deepEqual(await listRecentProjects(list), []);
+  const a = await make('A'), b = await make('B');
+  await rememberRecentProject(list, a.directory, a.project); await rememberRecentProject(list, b.directory, b.project); await rememberRecentProject(list, a.directory, a.project);
+  const recent = await listRecentProjects(list);
+  assert.deepEqual(recent.map(item => [item.path, item.title]), [[a.directory, 'A'], [b.directory, 'B']]); assert.ok(recent[0].modified > 0);
+  await rm(a.directory, { recursive: true });
+  assert.deepEqual((await listRecentProjects(list)).map(item => item.title), ['B']);
+  for (let index = 0; index < 12; index++) { const p = await make(`N${index}`); await rememberRecentProject(list, p.directory, p.project); }
+  assert.equal((await listRecentProjects(list)).length, 10);
 });
 
 test('reading an old project migrates XML defaults and invalid XML edits cannot be saved', async t => {
   const root = await mkdtemp(path.join(tmpdir(), 'chuni-project-xml-')); t.after(() => rm(root, { recursive: true, force: true }));
   const project = createProject(); delete project.xmlMetadata;
-  const filename = path.join(root, 'old.chuni.json'); await writeFile(filename, JSON.stringify(project));
-  const loaded = await readProject(filename); assert.equal(loaded.xmlMetadata?.version, 1);
+  await writeFile(projectFile(root), JSON.stringify(project));
+  const loaded = await readProject(root); assert.equal(loaded.xmlMetadata?.version, 1);
   getXmlMetadata(loaded).music.releaseDate = '20250230';
-  const invalid = path.join(root, 'invalid.chuni.json');
+  const invalid = path.join(root, 'invalid');
   await assert.rejects(saveProject(invalid, loaded), /releaseDate/);
-  await assert.rejects(readFile(invalid), { code: 'ENOENT' });
+  await assert.rejects(readdir(invalid), { code: 'ENOENT' });
 });
 
 function dxt1(width = 4, height = 4): Buffer {
