@@ -6,8 +6,8 @@ import { getSlideUvSpans, slideUvProgress } from './slide-timing';
 import { getNativeNoteTag } from '../core/c2s';
 import { editorTemplate, COLOR, LABEL } from './editor-template';
 import { LONG, AIR, CHAIN, clamp, endLane, endWidth, endTick, sameTick, formatTick, long, copyNote, hasNodeKind, limitLane, limitWidth, selectionWithAssignments, alignAssignments,
-  appendEditorNote, copyEditorSelection, curveEditorSlide, flipEditorSelection, inferEditorParent, mirrorEditorSelection, moveEditorSelection, parseEditorFraction, scaleEditorSelection, setEditorAirHeight, setEditorNodeKind, splitEditorNote, type Clipboard, type EditorNodeKind } from './editor-operations';
-export { appendEditorNote, copyEditorSelection, curveEditorSlide, flipEditorSelection, inferEditorParent, mirrorEditorSelection, moveEditorSelection, parseEditorFraction, scaleEditorSelection, setEditorAirHeight, setEditorNodeKind, splitEditorNote, type EditorNodeKind } from './editor-operations';
+  appendEditorNote, attachEditorAir, boundEditorParent, copyEditorSelection, curveEditorSlide, flipEditorSelection, inferEditorParent, mirrorEditorSelection, moveEditorSelection, parseEditorFraction, scaleEditorSelection, selectionWithBoundAir, setEditorAirHeight, setEditorNodeKind, splitEditorNote, syncEditorAirBindings, type Clipboard, type EditorNodeKind } from './editor-operations';
+export { appendEditorNote, attachEditorAir, boundEditorParent, copyEditorSelection, curveEditorSlide, flipEditorSelection, inferEditorParent, mirrorEditorSelection, moveEditorSelection, parseEditorFraction, scaleEditorSelection, selectionWithBoundAir, setEditorAirHeight, setEditorNodeKind, splitEditorNote, syncEditorAirBindings, type EditorNodeKind } from './editor-operations';
 
 type Callbacks = { onChange(chart: Chart, label: string): void; onCursor(tick: number): void; onUndo(): void; onRedo(): void };
 type Position = { x: number; y: number; tick: number; lane: number };
@@ -233,7 +233,7 @@ export class ChartEditor {
   }
   deleteSelection(): void {
     if (!this.selection.size) return;
-    const ids = selectionWithAssignments(this.chart, this.selection);
+    const ids = selectionWithAssignments(this.chart, selectionWithBoundAir(this.chart, this.selection, false));
     const count = ids.size;
     const chart = { ...this.chart, notes: this.chart.notes.filter(note => !ids.has(note.id)), events: this.chart.events.filter(event => !ids.has(event.id)) };
     this.selection.clear(); this.commit(chart, `删除 ${count} 项`);
@@ -289,6 +289,7 @@ export class ChartEditor {
   private setHint(text: string): void { this.host.querySelector('.editor-hint')!.textContent = text; }
   private commit(chart: Chart, label: string): void {
     this.preview = undefined;
+    chart = syncEditorAirBindings(this.chart, chart);
     this.callbacks.onChange(chart, label);
     this.setChart(chart);
     this.inspectorKey = '';
@@ -406,6 +407,7 @@ export class ChartEditor {
     if (note) {
       if (property === 'nodeKind') { this.commit(setEditorNodeKind(this.chart, note.id, value as EditorNodeKind), '修改段末节点类型'); return; }
       if (property === 'height' || property === 'endHeight') { this.commit(setEditorAirHeight(this.chart, note.id, property, Math.max(0, number)), '修改 AIR 高度'); return; }
+      if (['tick', 'lane', 'width'].includes(property) && boundEditorParent(this.chart, note.id)) { this.setHint('AIR 绑定在地面音符的尾端，位置与宽度跟随父音符；请修改父音符'); this.inspectorKey = ''; this.renderInspector(); return; }
       let next: Note = { ...copyNote(note) };
       if (property.startsWith('attr.')) { (next.attributes as Record<string, Scalar>)[property.slice(5)] = property === 'attr.interval' ? Math.max(0, number) : value; }
       else if (property === 'type') {
@@ -537,6 +539,9 @@ export class ChartEditor {
     const tool = this.noteTool;
     if (event.altKey || tool && AIR.has(tool) && hitNote && !AIR.has(hitNote.type)) hit = undefined;
     if (this.tool === 'erase' && event.button === 0 && hit) { this.selection = new Set([hit.id]); this.deleteSelection(); return; }
+    // A bound AIR covers its parent's tail; its width handles edit the parent, which the AIR follows.
+    const covered = hit && (hit.kind === 'width' || hit.kind === 'widthLeft') ? boundEditorParent(this.chart, hit.id) : undefined;
+    if (hit && covered) hit = !long(covered) ? { id: covered.id, kind: hit.kind } : covered.type === 'SLIDE' && hit.kind === 'width' ? { id: covered.id, kind: 'endWidth' } : { id: hit.id, kind: 'move' };
     if (this.continuing && event.button === 0 && this.inTrack(point.x)) { this.appendSegment(point); return; }
     const before = new Set(this.selection);
     let kind: DragKind = 'box', id: string | undefined;
@@ -550,13 +555,17 @@ export class ChartEditor {
       } else if (!this.selection.has(id)) this.selection = new Set([id]);
       this.refreshSelection();
     } else if (tool && this.inTrack(point.x)) {
-      const parent = AIR.has(tool) && hitNote && !AIR.has(hitNote.type) && Math.abs(point.tick - endTick(hitNote)) <= this.step ? hitNote : undefined;
-      const note = createNote(tool, parent ? endTick(parent) : point.tick, parent ? endLane(parent) : limitLane(this.chart, point.lane, this.width), parent ? endWidth(parent) : this.width);
+      const note = createNote(tool, point.tick, limitLane(this.chart, point.lane, this.width), this.width);
       if (long(note)) note.duration = this.chart.resolution / 4;
       if (hasNodeKind(note)) note.attributes.visible = this.nodeKind === 'inherit' ? this.selectedNote()?.attributes.visible !== false : this.nodeKind === 'normal';
-      if (note.type === 'AIR') note.attributes = { direction: this.airDirection, parent: this.inferParent(note.tick, note.lane, note.width), color: 'DEF' };
-      else if (note.type === 'AIR_HOLD' || note.type === 'AIR_SLIDE') note.attributes.parent = this.inferParent(note.tick, note.lane, note.width);
-      this.preview = { ...this.chart, notes: [...this.chart.notes, note] };
+      if (note.type === 'AIR') note.attributes = { direction: this.airDirection, color: 'DEF' };
+      if (tool === 'AIR_CRUSH' || !AIR.has(tool)) this.preview = { ...this.chart, notes: [...this.chart.notes, note] };
+      else {
+        // The game reads AIR as an attachment of a ground note's tail, never as a free note.
+        const parent = hitNote && !AIR.has(hitNote.type) ? hitNote : this.groundTailAt(point);
+        this.preview = parent && attachEditorAir(this.chart, note, parent.id);
+        if (!this.preview) { this.setHint(parent ? '这个地面音符已带有 AIR；每个地面音符（整条 SLIDE）只能绑定一个' : `${LABEL[tool]} 必须绑定在地面音符上：请点击 TAP / ExTAP / FLICK，或 HOLD / SLIDE 的终点`); return; }
+      }
       this.selection = new Set([note.id]); id = note.id; kind = 'draw';
       this.emitCursor(point.tick);
     } else {
@@ -567,8 +576,11 @@ export class ChartEditor {
     this.canvas.setPointerCapture(event.pointerId); this.draw();
   }
 
-  private inferParent(tick: number, lane: number, width: number): string {
-    return inferEditorParent(this.chart, tick, lane, width);
+  /** The ground note whose tail is nearest the pointer, within one snap step or the head hit distance. */
+  private groundTailAt(point: Position): Note | undefined {
+    const reach = Math.max(this.step, 10 / this.zoom);
+    return this.chart.notes.filter(note => !AIR.has(note.type) && Math.abs(endTick(note) - point.tick) <= reach && point.lane >= endLane(note) && point.lane < endLane(note) + endWidth(note))
+      .sort((a, b) => Math.abs(endTick(a) - point.tick) - Math.abs(endTick(b) - point.tick))[0];
   }
 
   private appendSegment(point: Position): void {
@@ -635,7 +647,7 @@ export class ChartEditor {
       const incomingIds = new Set(drag.kind === 'width' || drag.kind === 'widthLeft' ? drag.chart.notes.filter(item => item.id !== note.id && CHAIN.has(note.type) && item.type === note.type && sameTick(endTick(item), note.tick) && endLane(item) === note.lane && endWidth(item) === note.width).map(item => item.id) : []);
       const latestEnd = outgoing.length ? Math.min(...outgoing.map(endTick)) - this.step : Infinity;
       if (endTick(next) > latestEnd) next.duration = Math.max(this.step, latestEnd - next.tick);
-      this.preview = { ...drag.chart, events: alignAssignments(drag.chart, note, next), notes: drag.chart.notes.map(item => item.id === next.id ? next : outgoingIds.has(item.id) ? { ...item, tick: endTick(next), duration: Math.max(this.step, endTick(item) - endTick(next)), lane: endLane(next), width: endWidth(next) } : incomingIds.has(item.id) ? { ...item, endLane: next.lane, endWidth: next.width } : item) };
+      this.preview = syncEditorAirBindings(drag.chart, { ...drag.chart, events: alignAssignments(drag.chart, note, next), notes: drag.chart.notes.map(item => item.id === next.id ? next : outgoingIds.has(item.id) ? { ...item, tick: endTick(next), duration: Math.max(this.step, endTick(item) - endTick(next)), lane: endLane(next), width: endWidth(next) } : incomingIds.has(item.id) ? { ...item, endLane: next.lane, endWidth: next.width } : item) });
     }
     this.draw();
   }
@@ -764,6 +776,7 @@ export class ChartEditor {
       if (note.type === 'AIR') content += `<label class="editor-field"><span>AIR 方向</span><select data-property="attr.direction">${[['IR', '↑ 上'], ['UL', '↖ 左上'], ['UR', '↗ 右上'], ['DW', '↓ 下'], ['DL', '↙ 左下'], ['DR', '↘ 右下']].map(([value, label]) => `<option value="${value}" ${value === (note.attributes.direction ?? 'IR') ? 'selected' : ''}>${label}</option>`).join('')}</select></label>`;
       if (note.type === 'FLICK') content += this.textInput('方向', 'attr.direction', note.attributes.direction ?? '', 'direction');
       if (AIR.has(note.type) || note.type === 'SLIDE') content += this.textInput('关联音符', 'attr.parent', note.attributes.parent ?? (note.type === 'SLIDE' ? 'SLD' : 'TAP'), 'parent');
+      if (note.type !== 'AIR_CRUSH' && AIR.has(note.type) && !['AHD', 'AHX', 'ASD', 'ASC'].includes(String(note.attributes.parent))) content += `<p class="editor-help">${boundEditorParent(this.chart, note.id) ? '已绑定在地面音符的尾端：位置与宽度跟随父音符，移动或删除父音符时一并处理。' : '未绑定地面音符：原游戏读谱时找不到父音符会失败。请删除后在地面音符上重新放置。'}</p>`;
       if (AIR.has(note.type)) content += this.textInput('颜色', 'attr.color', note.attributes.color ?? 'DEF', 'color');
       if (note.type === 'EXTAP' || note.type === 'HOLD' || note.type === 'SLIDE' || note.type === 'AIR_CRUSH') content += this.textInput('特效', 'attr.effect', note.attributes.effect ?? (note.type === 'AIR_CRUSH' ? 'DEF' : 'UP'), 'effect');
       if (note.type === 'HOLD' || note.type === 'SLIDE') content += this.checkbox('EX 音符', 'attr.ex', Boolean(note.attributes.ex));

@@ -49,10 +49,12 @@ test('all standard native note variants survive independent construction and rep
   chart.notes = ['TAP', 'EXTAP', 'FLICK', 'HOLD', 'SLIDE', 'AIR', 'AIR_HOLD', 'AIR_SLIDE', 'AIR_CRUSH', 'DAMAGE'].map((type, index) => createNote(type as Parameters<typeof createNote>[0], index * 96, 2, 4));
   chart.notes[3].attributes.ex = true;
   chart.notes[4].attributes.visible = false;
+  // The game only reads AIR records bound to a ground tail: seat them on the TAP, EXTAP and FLICK.
+  for (const [index, parent] of [[5, 'TAP'], [6, 'CHR'], [7, 'FLK']] as const) { chart.notes[index].tick = (index - 5) * 96; chart.notes[index].attributes.parent = parent; }
   const again = parseC2S(serializeC2S(chart));
-  assert.deepEqual(again.notes.map(note => note.type), chart.notes.map(note => note.type));
-  assert.equal(again.notes[3].native?.tag, 'HXD');
-  assert.equal(again.notes[4].native?.tag, 'SLC');
+  assert.deepEqual(again.notes.map(note => note.type), [...chart.notes].sort((a, b) => a.tick - b.tick).map(note => note.type));
+  assert.equal(again.notes.find(note => note.type === 'HOLD')!.native?.tag, 'HXD');
+  assert.equal(again.notes.find(note => note.type === 'SLIDE')!.native?.tag, 'SLC');
   assert.deepEqual(validateChart(again).filter(issue => issue.severity === 'error'), []);
 });
 test('group movement keeps relative spacing and bounds; mirror transforms both slide ends and AIR direction', () => {
@@ -102,7 +104,7 @@ test('SLP/SLA edit and preview assign a distinct scroll timeline to the whole na
 });
 
 test('official edge forms allow hidden meter and zero-length invisible AIR control segments', () => {
-  const chart = parseC2S('BPM_DEF\t120\t120\t120\t120\nMET\t0\t0\t4\t0\nASC\t1\t0\t0\t4\tTAP\t5.0\t0\t0\t4\t5.0\tDEF');
+  const chart = parseC2S('BPM_DEF\t120\t120\t120\t120\nMET\t0\t0\t4\t0\nTAP\t1\t0\t0\t4\nASC\t1\t0\t0\t4\tTAP\t5.0\t0\t0\t4\t5.0\tDEF');
   assert.deepEqual(validateChart(chart).filter(x => x.severity === 'error'), []);
   assert.ok(getGrid(chart, 0, 768).length > 0);
 });
@@ -247,7 +249,7 @@ test('seventh-note scroll assignments retain linked segments across floating-poi
 });
 
 test('native end-of-song zero-denominator meter and zero-length AIR-HOLD endpoints remain editable', () => {
-  const text = 'BPM\t0\t0\t120\nMET\t3\t0\t0\t4\nAHD\t2\t0\t0\t8\tAHD\t0\tDEF';
+  const text = 'BPM\t0\t0\t120\nMET\t3\t0\t0\t4\nTAP\t1\t0\t0\t8\nAHD\t1\t0\t0\t8\tTAP\t384\tDEF\nAHD\t2\t0\t0\t8\tAHD\t0\tDEF';
   const chart = parseC2S(text);
   assert.equal(chart.unknownRecords.length, 0);
   assert.deepEqual(validateChart(chart).filter(item => item.severity === 'error'), []);

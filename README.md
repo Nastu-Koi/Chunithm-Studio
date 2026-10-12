@@ -54,6 +54,8 @@ HOLD / SLIDE 地面长条改用原生加法混合，并先于音符头绘制，�
 
 选中 SLIDE、AIR HOLD 或 AIR SLIDE 后，可在属性面板选择**段末节点类型**。SLIDE 的普通／控制节点分别写为 `SLD/SLC`（EX 为 `SXD/SXC`）；AIR HOLD 的动作／无动作节点为 `AHD/AHX`；AIR SLIDE 为 `ASD/ASC`。工具栏的节点选项用于新建、接续和插入：插入类型作用于新分割点，原终点类型保留在后半段。控制点仍保留长条路径；编辑器显示控制标记，播放页按节点类型显示。核查依据与原版实机校准范围见 `docs/node-semantics.md`。
 
+AIR、AIR-HOLD、AIR-SLIDE 与原游戏一样绑定在地面音符上：只能放在 TAP / ExTAP / FLICK 上或 HOLD / SLIDE 的终点，每个地面音符（整条 SLIDE）带一个；位置与宽度跟随父音符，移动、复制、删除父音符时一并处理。没有父音符的 AIR 会让原游戏读谱失败，校验将其列为错误并阻止导出。依据见 `docs/native-judgement-reader.md`。
+
 原生高度 1 是地面，5 是普通空中平面。新建 AIR SLIDE／AIR CRUSH 默认高度为 5，已有工程和导入谱面的数值保持原样。
 
 ## XML 乐曲信息

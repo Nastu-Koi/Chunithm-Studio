@@ -38,9 +38,10 @@ function headerValue(chart: Chart, tag: string): number | undefined {
   const value = row && Number(row.raw.trim().split(/\s+/)[1]);
   return value !== undefined && Number.isFinite(value) ? value : undefined;
 }
-interface NativeRoot { ground: Note[]; air: Note[] }
+/** airParent is the ground note whose tail was current when the AIR head was read. */
+interface NativeRoot { ground: Note[]; air: Note[]; airParent?: Note }
 const groundFamily = (note: Note): string | undefined => ({ TAP: 'TAP', EXTAP: 'CHR', HOLD: 'HLD', SLIDE: 'SLD', FLICK: 'FLK', DAMAGE: 'MNE' } as Partial<Record<Note['type'], string>>)[note.type];
-const parentFamily = (parent: unknown): string => ({ HXD: 'HLD', SXD: 'SLD', SLC: 'SLD', SXC: 'SLD' } as Record<string, string>)[String(parent)] ?? String(parent);
+export const nativeParentFamily = (parent: unknown): string => ({ HXD: 'HLD', SXD: 'SLD', SLC: 'SLD', SXC: 'SLD' } as Record<string, string>)[String(parent)] ?? String(parent);
 /** ScoreReader consumes records sequentially and searches GROUND roots in creation
  * order, including when an AIR continuation is attached much later. Only current
  * tails are candidates. An index preserves root order without scanning all roots.
@@ -68,7 +69,7 @@ function readNativeRoots(notes: Note[]): { roots: NativeRoot[]; orphanCount: num
     } else if (['AIR', 'AIR_HOLD', 'AIR_SLIDE'].includes(note.type)) {
       const parent = String(note.attributes.parent ?? 'TAP');
       const continuation = note.type === 'AIR_HOLD' && ['AHD', 'AHX'].includes(parent) || note.type === 'AIR_SLIDE' && ['ASD', 'ASC'].includes(parent);
-      const candidates = continuation ? airTails.get(airKey(note, false)) : groundTails.get(`${parentFamily(parent)}:${geometry(note)}`);
+      const candidates = continuation ? airTails.get(airKey(note, false)) : groundTails.get(`${nativeParentFamily(parent)}:${geometry(note)}`);
       const match = candidates?.findIndex(i => continuation || !roots[i].air.length) ?? -1;
       let index: number;
       if (match < 0) {
@@ -76,11 +77,38 @@ function readNativeRoots(notes: Note[]): { roots: NativeRoot[]; orphanCount: num
         // expose the missing native parent instead of asserting compatibility.
         index = roots.length; roots.push({ ground: [], air: [] }); orphanCount++;
       } else index = continuation ? candidates!.splice(match, 1)[0] : candidates![match];
+      if (match >= 0 && !continuation) roots[index].airParent = roots[index].ground.at(-1);
       roots[index].air.push(note);
       if (note.type !== 'AIR') insert(airTails, airKey(note, true), index);
     }
   }
   return { roots, orphanCount };
+}
+export interface NativeAirBindings {
+  /** AIR / AIR-HOLD / AIR-SLIDE record id → the ground note whose tail carries its root. */
+  parentOf: ReadonlyMap<string, Note>;
+  /** Ground note id → the AIR records of its root in read order, head first. */
+  airOf: ReadonlyMap<string, readonly Note[]>;
+  /** First record of every AIR chain ScoreReader rejects with `pParent == NULL`. */
+  orphans: readonly Note[];
+}
+const bindings = new WeakMap<Chart, NativeAirBindings>();
+/** ScoreReader stores AIR as an attachment of a ground root, never as a free note:
+ * the head must match a root's parent type, current tail time, lane and width, and
+ * a root takes one AIR head. A record without such a parent fails the whole read.
+ */
+export function getNativeAirBindings(chart: Chart): NativeAirBindings {
+  const old = bindings.get(chart); if (old) return old;
+  const notes = getC2SEntityOrder(chart).entities.filter((entity): entity is Note => 'attributes' in entity);
+  const parentOf = new Map<string, Note>(), airOf = new Map<string, Note[]>(), orphans: Note[] = [];
+  for (const root of readNativeRoots(notes).roots) {
+    if (!root.air.length) continue;
+    if (!root.airParent) { orphans.push(root.air[0]); continue; }
+    airOf.set(root.airParent.id, root.air);
+    for (const air of root.air) parentOf.set(air.id, root.airParent);
+  }
+  const result = { parentOf, airOf, orphans };
+  bindings.set(chart, result); return result;
 }
 /** FIFO consumption prevents a single preceding segment from silently merging independent paths. */
 /** The same consumed-tail chains used by scoring, exposed for continuous SLIDE visuals. */
