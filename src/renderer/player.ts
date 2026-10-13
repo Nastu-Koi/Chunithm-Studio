@@ -2,15 +2,11 @@ import { getSlideUvSpans, slideUvProgress } from './slide-timing';
 import type { Chart, Note } from '../core/model';
 import { createChart } from '../core/model';
 import { isBundledImageSource, type GameModelTexture, type GameTexture, type GameTextures } from '../core/game-assets';
-import { getScrollPosition, getGrid, tickToSeconds, secondsToTick, bpmAtTick, getNoteScrollGroup } from '../core/timing';
+import { getScrollPosition, getGrid, tickToSeconds, secondsToTick, getNoteScrollGroup } from '../core/timing';
 import { getPlayerPlaybackPoints } from './playback-points';
 import { fitSceneViewport, projectTrackPoint, scrollWorldUnit, scrollDistanceAt, fieldWallDistance, TRACK_REFERENCE, SCENE_WIDTH, SCENE_HEIGHT, FIELD_FAR_Z, FIELD_FADE_START_Z, fieldFadeAlpha, FIELD_WALL_HALF_WIDTH, FIELD_WALL_HEIGHT } from './player-scene';
 import { buildJudgementTimeline, getAutoScoreAtTick, type JudgementTimeline } from '../core/judgement';
 import { drawPlayerHud, type HudSprite } from './player-hud';
-import { createClassicRingRenderer, type ClassicRingRenderer, type StagePosition } from './classic-stage';
-import { sampleStageSkinMatrices, transformStagePoint, type StageAnimation } from '../core/stage-animation';
-import { createStageModelSampler, getStageCamera } from '../core/stage-program';
-import { stageWorldToAffine, type StageCamera } from './stage-projection';
 import { GameMeshRenderer, type MeshPaint } from './game-mesh-renderer';
 import { getNativeHeadModel, projectNativeNotePoint, projectNativeScrollPoint, nativeAirBaseHeight, nativeScrollWorldUnit, AIR_LINE_HEIGHT } from './native-notes';
 import { getNativeAirSlideUvSpans, nativeAirSlideVAtTick } from './native-air-timing';
@@ -182,14 +178,6 @@ export class ChartPlayer {
   private bodySprites = new Map<string, Sprite>();
   private hudSprites = new Map<string, Sprite>();
   private sceneMaterials = new Map<string, Sprite>();
-  private classicRing?: HTMLCanvasElement;
-  private ringRenderer?: ClassicRingRenderer;
-  private ringPositions: StagePosition[] = [];
-  private stageAnimation?: StageAnimation;
-  private stageSampler?: ReturnType<typeof createStageModelSampler>;
-  private stageCamera?: StageCamera;
-  private stageMode: 'scene' | 'clip' = 'clip';
-  private stageClip = 0; private stageFps = 60; private stageOrigin = 0; private lastStageFrame = NaN;
   private cover?: HTMLImageElement; private coverGeneration = 0;
   private frameNumber = 0;
   /** 轨道流速 as the game shows it, and the FIELD WALL setting 0 to 16. */
@@ -246,49 +234,12 @@ export class ChartPlayer {
       this.nativeEffects = effects; this.hudFont = font;
       this.canvas.dataset.nativeModels = String(nativeModels.size);
       this.modelSprites = models; this.bodySprites = bodies; this.hudSprites = hud; this.sceneMaterials = materials;
-      this.ringRenderer?.dispose();
-      this.ringRenderer = undefined; this.classicRing = undefined;
-      this.ringPositions = []; this.stageAnimation = undefined;
-      this.stageSampler = undefined; this.stageCamera = undefined;
       this.canvas.dataset.stageAnimation = 'none'; this.canvas.dataset.scene = 'black';
     }
     return { loaded, failed };
   }
-  clearGameTextures(): void { this.textureGeneration++; this.nativeEffects = undefined; this.hudFont = undefined; this.ringRenderer?.dispose(); this.textureLayer?.clearTextures(); this.nativeModels.clear(); this.modelSprites.clear(); this.bodySprites.clear(); this.hudSprites.clear(); this.sceneMaterials.clear(); this.classicRing = undefined; this.ringRenderer = undefined; this.stageAnimation = undefined; this.stageSampler = undefined; this.stageCamera = undefined; this.ringPositions = []; this.canvas.dataset.stageAnimation = 'none'; this.canvas.dataset.scene = 'fallback'; }
+  clearGameTextures(): void { this.textureGeneration++; this.nativeEffects = undefined; this.hudFont = undefined; this.textureLayer?.clearTextures(); this.nativeModels.clear(); this.modelSprites.clear(); this.bodySprites.clear(); this.hudSprites.clear(); this.sceneMaterials.clear(); this.canvas.dataset.stageAnimation = 'none'; this.canvas.dataset.scene = 'fallback'; }
   getResourceDiagnostics(): string[] { return [...this.nativeDiagnostics, ...(this.nativeEffects?.diagnostics ?? [])]; }
-  resetStagePosition(): void { this.stageOrigin = 0; this.lastStageFrame = NaN; }
-  getStageOptions(): { clips: string[]; clip: number; fps: number; mode: 'scene' | 'clip'; hasProgram: boolean } {
-    return { clips: this.stageAnimation?.clips.map(clip => clip.resourceName) ?? [], clip: this.stageClip, fps: this.stageFps, mode: this.stageMode, hasProgram: !!this.stageSampler };
-  }
-  setStageOptions(clip: number, fps: number, origin: number, mode: 'scene' | 'clip' = 'clip'): void {
-    if (!Number.isInteger(clip) || !this.stageAnimation?.clips[clip] || ![30, 60].includes(fps) || !Number.isFinite(origin)) return;
-    this.stageMode = mode === 'scene' && this.stageSampler ? 'scene' : 'clip';
-    this.canvas.dataset.stageAnimation = this.stageMode === 'scene' ? 'original-scene-preview' : 'original-clip-preview';
-    this.stageClip = clip; this.stageFps = fps; this.stageOrigin = origin; this.lastStageFrame = NaN;
-  }
-  private sampleStage(seconds: number): void {
-    const animation = this.stageAnimation;
-    const time = Math.max(0, (seconds - this.stageOrigin) * this.stageFps);
-    const sample = this.stageMode === 'scene' ? this.stageSampler?.(time) : undefined;
-    // Resource 1..10 is the verified AFRC motion table, in the same order as the copied clips.
-    const clipIndex = sample ? sample.clipResource - 1 : this.stageClip, clip = animation?.clips[clipIndex];
-    if (!animation || !clip || !this.ringRenderer || animation.rig.vertexBones.length !== this.ringPositions.length) return;
-    const frame = Math.min(clip.frameCount - 1, sample?.clipFrame ?? time);
-    // World transforms keep moving across state resets, even when the local clip frame repeats.
-    const cacheTime = sample ? time : frame;
-    if (cacheTime === this.lastStageFrame) return;
-    const matrices = sampleStageSkinMatrices(animation, clipIndex, frame);
-    const positions = this.ringPositions.map((position, index) => transformStagePoint(matrices[animation.rig.vertexBones[index]], position));
-    this.classicRing = sample && this.stageCamera
-      ? this.ringRenderer.renderWorld(positions, stageWorldToAffine(sample.worldMatrix), this.stageCamera)
-      : this.ringRenderer.render(positions);
-    this.lastStageFrame = cacheTime;
-    this.canvas.dataset.stageClip = String(clipIndex); this.canvas.dataset.stageFrame = String(frame);
-    this.canvas.dataset.stageCycle = String(sample?.cycle ?? 0);
-    this.canvas.dataset.stageWorld = sample ? JSON.stringify(sample.worldMatrix) : '';
-    this.canvas.dataset.stageCamera = sample ? JSON.stringify(this.stageCamera) : '';
-    this.canvas.dataset.stagePose = positions.filter((_, i) => i % 113 === 0).map(p => p.map(v => v.toFixed(3)).join(',')).join(';');
-  }
   async setCover(dataUrl: string): Promise<void> {
     const generation = ++this.coverGeneration; this.cover = undefined;
     this.canvas.dataset.cover = 'false';

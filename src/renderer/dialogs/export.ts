@@ -1,9 +1,10 @@
+import { ICON } from '../icons';
 import { analyzeC2SQuantization } from '../../core/quantization';
 import type { AppContext } from '../app-context';
 import { $, escape } from '../dom';
 
 export function showExport(ctx: AppContext): void {
-  const { bridge, modal, showModal, message, run, commit } = ctx;
+  const { bridge, showModal, message, run, commit } = ctx;
   const e = ctx.project.exportSettings;
   showModal('导出完整 OPT 追加包', `<form id="export-form"><p class="modal-description">生成谱面、音乐、试听片段、封面与曲目登记文件。输出到你选择的独立目录。</p><label>游戏资源目录<input name="ctx.gamePath" value="${escape(ctx.gamePath)}" required></label><div class="form-row"><label>OPT 包名<input name="optId" value="${escape(e.optId)}" pattern="A[A-Z0-9]{3}" required></label><label>Music ID<input name="musicId" type="number" min="1" max="9999" value="${e.musicId}" required></label><label>Cue ID<input name="cueId" type="number" min="1" max="9999" value="${e.cueId}" required></label></div><p class="modal-description">导出时会检查既有 ID、资源引用及音频结构。完成后按输出目录内的安装说明安装并验证。</p><div id="export-progress" class="export-progress" role="status"></div><div class="form-footer"><button type="button" id="export-c2s">仅导出 C2S</button><button type="submit" class="primary" id="export-go">选择位置并导出</button></div></form>`);
   const quantization = analyzeC2SQuantization(ctx.project.chart);
@@ -21,7 +22,7 @@ export function showExport(ctx: AppContext): void {
     event.preventDefault(); if (!canQuantize()) { message('请先查看并接受原生格式的时间精度对齐。', true); return; } const data = new FormData(event.currentTarget as HTMLFormElement); ctx.gamePath = String(data.get('ctx.gamePath')).trim(); localStorage.setItem('chuni-game-path', ctx.gamePath);
     commit({ ...ctx.project, exportSettings: { ...ctx.project.exportSettings, optId: String(data.get('optId')), musicId: Number(data.get('musicId')), cueId: Number(data.get('cueId')) } }, '更新导出设置');
     void run(async () => { const button = $<HTMLButtonElement>('#export-go'); button.disabled = true; $('#export-progress').textContent = '正在准备导出…';
-      try { const result = await bridge.exportOpt(ctx.project, ctx.gamePath, quantization.required); if (result) { showModal('OPT 追加包已生成', `<div class="export-success">✓</div><p>${escape(result.optPath)}</p><p class="modal-description">已生成 ${result.files.length} 个文件并完成结构回读检查。下一步：按输出目录内的安装说明安装到游戏，检查选曲、音乐同步和特殊谱面效果。</p>${result.warnings.map(w => `<p class="notice">${escape(w)}</p>`).join('')}<div class="form-footer"><span></span><button id="reveal-export" class="primary">打开输出位置</button></div>`); $('#reveal-export').onclick = () => void bridge.revealPath(result.optPath); } else $('#export-progress').textContent = '已取消导出'; }
+      try { const result = await bridge.exportOpt(ctx.project, ctx.gamePath, quantization.required); if (result) { showModal('OPT 追加包已生成', `<div class="export-success">${ICON.done}</div><p>${escape(result.optPath)}</p><p class="modal-description">已生成 ${result.files.length} 个文件并完成结构回读检查。下一步：按输出目录内的安装说明安装到游戏，检查选曲、音乐同步和特殊谱面效果。</p>${result.warnings.map(w => `<p class="notice">${escape(w)}</p>`).join('')}<div class="form-footer"><span></span><button id="reveal-export" class="primary">打开输出位置</button></div>`); $('#reveal-export').onclick = () => void bridge.revealPath(result.optPath); } else $('#export-progress').textContent = '已取消导出'; }
       finally { if (document.contains(button)) button.disabled = false; }
     });
   };

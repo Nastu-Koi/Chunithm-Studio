@@ -3,7 +3,7 @@ import assert from 'node:assert/strict';
 import { chromium } from '@playwright/test';
 
 // Margrete-style tools and default keys on the real canvas. Run against Vite, with CHUNI_BROWSER when using installed Edge.
-test('editor follows Margrete tools and keys: eraser, flip, time scale, curve, left-edge width, mirrored paste and note keys', { skip: !process.env.CHUNI_UI_URL, timeout: 60_000 }, async () => {
+test('editor follows Margrete tools and keys: eraser, flip, curve, left-edge width, mirrored paste and note keys', { skip: !process.env.CHUNI_UI_URL, timeout: 60_000 }, async () => {
   const browser = await chromium.launch({ headless: true, ...(process.env.CHUNI_BROWSER ? { executablePath: process.env.CHUNI_BROWSER } : {}), args: ['--no-sandbox'] });
   try {
     const page = await browser.newPage({ viewport: { width: 1280, height: 900 } });
@@ -45,14 +45,12 @@ test('editor follows Margrete tools and keys: eraser, flip, time scale, curve, l
     await page.keyboard.press('e'); await drag(point(24, 1.2), point(168, 12.8));
     assert.deepEqual(await notes(), []);
 
-    // Front-back flip, time scale and left-right mirror act on the selection.
+    // Front-back flip and left-right mirror act on the selection.
     await page.keyboard.press('1'); await click(48, 0.5); await click(144, 4.5);
     await page.keyboard.press('s'); await page.keyboard.press('Control+a'); await page.keyboard.press('v');
     assert.deepEqual((await notes()).map(n => [n.lane, n.tick]), [[0, 144], [4, 48]]);
-    await page.locator('[data-option="scale"]').fill('2'); await page.locator('[data-action="scale"]').click();
-    assert.deepEqual((await notes()).map(n => [n.lane, n.tick]), [[0, 240], [4, 48]]);
     await page.locator('.editor-viewport').focus(); await page.keyboard.press('h');
-    assert.deepEqual((await notes()).map(n => [n.lane, n.tick]), [[14, 240], [10, 48]]);
+    assert.deepEqual((await notes()).map(n => [n.lane, n.tick]), [[14, 144], [10, 48]]);
     // The left edge resizes against a fixed right edge.
     await page.keyboard.press('Control+Shift+a'); await frame(); assert.doesNotMatch(String(await status()), /已选/);
     const edge = point(48, 10); await drag({ x: edge.x + 1, y: edge.y }, { x: point(48, 8).x, y: edge.y });

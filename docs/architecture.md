@@ -44,6 +44,7 @@ Chuni Studio 是 Electron 桌面程序：主进程负责文件、游戏资源与
 
 - `main.ts`：应用壳。只保留工程状态、撤销重做、各部件之间的同步和快捷键。
 - `app-template.ts`：页面模板。
+- `icons.ts`：界面图标。从 `lucide` 取图标数据拼成内联 SVG 字符串，模板与各对话框只经 `ICON` 取用。
 - `app-context.ts`：`AppContext`，对话框访问工程、播放器和应用壳操作的唯一入口。
 - `dialogs/`：设置、曲库、最近项目、导出、小节定位、信息类对话框。
 - `editor.ts`：俯视编辑器的交互与绘制。纯谱面变换在 `editor-operations.ts`，工具栏与画布标记在 `editor-template.ts`。

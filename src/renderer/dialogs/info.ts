@@ -1,3 +1,4 @@
+import { ICON } from '../icons';
 import { validateProject } from '../../core/validation';
 import type { AppContext } from '../app-context';
 import { escape } from '../dom';
@@ -9,7 +10,7 @@ export function showResources(ctx: AppContext): void {
 
 }
 export function showJudgements(ctx: AppContext): void {
-  const { player, modal, showModal, syncPlayerChart } = ctx;
+  const { player, showModal, syncPlayerChart } = ctx;
   syncPlayerChart();
   const result = player.getJudgements();
   const labels = { TAP: 'TAP / EX / 长条起头', HLD: 'HOLD 持续', SLD: 'SLIDE', AIR: 'AIR 系列', FLK: 'FLICK', ALL: '总判定' };
@@ -24,6 +25,6 @@ export function showJudgements(ctx: AppContext): void {
 export function showValidation(ctx: AppContext): void {
   const { modal, showModal, switchView } = ctx;
   const issues = validateProject(ctx.project);
-  showModal('谱面检查', `<p class="modal-description">${issues.length ? `共 ${issues.length} 项。点击带位置的条目可回到编辑处。` : '没有发现谱面结构错误。原游戏兼容性还需通过导出包的实际加载验证。'}</p><div class="issue-list">${issues.map((i, index) => `<button class="issue ${i.severity}" data-issue="${index}"><b>${i.severity === 'error' ? '错误' : '提示'}</b><span>${escape(i.message)}</span>${i.tick !== undefined ? `<small>${(i.tick / ctx.project.chart.resolution + 1).toFixed(2)} 小节 ↗</small>` : ''}</button>`).join('')}</div>`);
+  showModal('谱面检查', `<p class="modal-description">${issues.length ? `共 ${issues.length} 项。点击带位置的条目可回到编辑处。` : '没有发现谱面结构错误。原游戏兼容性还需通过导出包的实际加载验证。'}</p><div class="issue-list">${issues.map((i, index) => `<button class="issue ${i.severity}" data-issue="${index}"><b>${i.severity === 'error' ? '错误' : '提示'}</b><span>${escape(i.message)}</span>${i.tick !== undefined ? `<small>${(i.tick / ctx.project.chart.resolution + 1).toFixed(2)} 小节 ${ICON.open}</small>` : ''}</button>`).join('')}</div>`);
   document.querySelectorAll<HTMLElement>('[data-issue]').forEach(button => button.onclick = () => { const issue = issues[Number(button.dataset.issue)]; if (issue.tick !== undefined) { ctx.seekTick(issue.tick); switchView('edit'); modal.close(); } });
 }

@@ -1,6 +1,5 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { readFile } from 'node:fs/promises';
 import { decodeRfz } from '../src/backend/game-font';
 import { loadBundledGameResources } from '../src/backend/bundled-assets';
 import { displayGameLevel } from '../src/renderer/player-hud';

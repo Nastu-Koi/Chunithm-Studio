@@ -203,16 +203,6 @@ export function flipEditorSelection(chart: Chart, ids: Set<string>): Chart {
   return { ...chart, events, notes: chart.notes.map(note => flipped.get(note.id) ?? note) };
 }
 
-/** Stretch or compress the selected notes and events in time about the earliest selected tick. */
-export function scaleEditorSelection(chart: Chart, ids: Set<string>, factor: number): Chart {
-  ids = selectionWithAssignments(chart, selectionWithBoundAir(chart, ids));
-  const notes = chart.notes.filter(note => ids.has(note.id)), events = chart.events.filter(event => ids.has(event.id));
-  if (!(factor > 0) || !Number.isFinite(factor) || !notes.length && !events.length) return chart;
-  const origin = Math.min(...notes.map(note => note.tick), ...events.map(event => event.tick));
-  const scale = <T extends { tick: number; duration?: number }>(item: T): T => ({ ...item, tick: origin + (item.tick - origin) * factor, ...(item.duration !== undefined ? { duration: item.duration * factor } : {}) });
-  return { ...chart, notes: chart.notes.map(note => ids.has(note.id) ? scale(note) : note), events: chart.events.map(event => ids.has(event.id) ? scale(event) : event) };
-}
-
 export type SlideShape = 'zigzag' | 'wave' | 'curve';
 export interface SlideShapeOptions {
   shape: SlideShape;

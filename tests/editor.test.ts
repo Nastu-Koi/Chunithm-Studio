@@ -2,7 +2,7 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import { createChart, createNote, type Note } from '../src/core/model';
 import { parseC2S, serializeC2S } from '../src/core/c2s';
-import { mirrorEditorSelection, moveEditorSelection, parseEditorFraction, splitEditorNote, appendEditorNote, copyEditorSelection, flipEditorSelection, scaleEditorSelection, shapeEditorSlide, removeEditorJoint, mergeEditorExTaps, editorChain, attachEditorAir, boundEditorParent, setEditorEx } from '../src/renderer/editor';
+import { mirrorEditorSelection, moveEditorSelection, parseEditorFraction, splitEditorNote, appendEditorNote, copyEditorSelection, flipEditorSelection, shapeEditorSlide, removeEditorJoint, mergeEditorExTaps, editorChain, attachEditorAir, boundEditorParent, setEditorEx } from '../src/renderer/editor';
 import { getNoteScrollGroup } from '../src/core/timing';
 import { getNativeAirBindings } from '../src/core/judgement';
 
@@ -209,21 +209,6 @@ test('front-back flip reverses notes inside the selection span and keeps the nod
   // Flipping twice restores every position.
   const twice = flipEditorSelection(flipped, new Set([early.id, late.id, first.id, second.id, air.id]));
   for (const note of chart.notes) assert.deepEqual([get(note.id).duration, twice.notes.find(item => item.id === note.id)!.tick, twice.notes.find(item => item.id === note.id)!.lane], [note.duration, note.tick, note.lane]);
-});
-
-test('time scaling keeps the first selected tick and scales intervals, durations and selected events', () => {
-  const chart = createChart();
-  const a = createNote('TAP', 96, 0, 2), b = createNote('TAP', 144, 2, 2), hold = { ...createNote('HOLD', 192, 4, 2), duration: 96 }, outside = createNote('TAP', 24, 0, 2);
-  chart.notes = [outside, a, b, hold];
-  chart.events = [{ id: 'bpm', type: 'BPM', tick: 192, value: 180 }, { id: 'scroll', type: 'SCROLL', tick: 288, value: 2, duration: 96 }];
-  const half = scaleEditorSelection(chart, new Set([a.id, b.id, hold.id, 'scroll']), 1 / 2);
-  assert.deepEqual(half.notes.map(note => [note.tick, note.duration]), [[24, undefined], [96, undefined], [120, undefined], [144, 48]]);
-  assert.deepEqual(half.events.map(event => [event.tick, event.duration]), [[192, undefined], [192, 48]]);
-  // Seven notes written as eighths become an exact 7-in-the-space-of-6 group.
-  const tuplet = createChart(); tuplet.notes = Array.from({ length: 7 }, (_, index) => createNote('TAP', 384 + index * 48, 0, 2));
-  const scaled = scaleEditorSelection(tuplet, new Set(tuplet.notes.map(note => note.id)), 6 / 7);
-  assert.ok(scaled.notes.every((note, index) => Math.abs(note.tick - (384 + index * 288 / 7)) < 1e-9));
-  for (const factor of [0, -1, Number.NaN, Infinity]) assert.equal(scaleEditorSelection(chart, new Set([a.id]), factor), chart);
 });
 
 test('SLIDE shapes replace one segment by a connected path that keeps the start width and the chain', () => {

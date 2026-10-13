@@ -1,10 +1,10 @@
 import './style.css';
 import './editor.css';
-import { createProject, createNote, makeId, type Project, type Chart, type Difficulty } from '../core/model';
-import { chartDuration, secondsToTick, tickToSeconds, bpmAtTick, getMeasureStartTick, getMeasureNumberAtTick, MAX_MEASURE_NUMBER } from '../core/timing';
+import { ICON } from './icons';
+import { createProject, type Project, type Chart } from '../core/model';
+import { chartDuration, secondsToTick, tickToSeconds, bpmAtTick, getMeasureNumberAtTick } from '../core/timing';
 import { validateProject } from '../core/validation';
 import { buildJudgementTimeline } from '../core/judgement';
-import { analyzeC2SQuantization } from '../core/quantization';
 import { ChartEditor } from './editor';
 import { ChartPlayer } from './player';
 import { NOTE_SPEEDS } from './player-scene';
@@ -74,7 +74,7 @@ function sync(): void {
   $('#dirty-indicator').textContent = dirty ? '· 未保存' : '';
   document.title = `${dirty ? '● ' : ''}${project.metadata.title} — Chuni Studio`;
   const issues = validateProject(project), errors = issues.filter(i => i.severity === 'error').length;
-  $('#validation-button').textContent = errors ? `! ${errors} 项待修正` : issues.length ? `△ ${issues.length} 项提示` : '✓ 检查谱面';
+  $('#validation-button').innerHTML = errors ? `${ICON.error} ${errors} 项待修正` : issues.length ? `${ICON.warning} ${issues.length} 项提示` : `${ICON.ok} 检查谱面`;
   $('#validation-button').classList.toggle('has-error', errors > 0);
   $<HTMLButtonElement>('[data-action="undo"]').disabled = history.length === 0;
   $<HTMLButtonElement>('[data-action="redo"]').disabled = future.length === 0;
@@ -91,7 +91,7 @@ function redo(): void { const next = future.pop(); if (!next) return; history.pu
 function discardAllowed(): boolean { return !dirty || window.confirm('当前工程尚未保存。继续会关闭当前工程，是否继续？'); }
 async function load(p: LoadedProject): Promise<void> {
   transport.pause(); transport.loop = null; $('#loop-button').classList.remove('active'); project = p.project; projectPath = p.path; cursor = 0; history = []; future = []; dirty = false; peaks = new Float32Array();
-  transport.clearAudio(); transport.seek(0); player.resetStagePosition(); sync(); await Promise.all([loadAudio(), loadCover()]);
+  transport.clearAudio(); transport.seek(0); sync(); await Promise.all([loadAudio(), loadCover()]);
 }
 async function loadAudio(): Promise<void> {
   const generation = ++audioGeneration;
@@ -107,7 +107,7 @@ async function loadAudio(): Promise<void> {
 let coverGeneration = 0;
 async function loadCover(): Promise<void> {
   const generation = ++coverGeneration;
-  $('#jacket-mini').textContent = '♫'; coverUrl = ''; void player.setCover('');
+  $('#jacket-mini').innerHTML = ICON.music; coverUrl = ''; void player.setCover('');
   if (!project.coverPath) return;
   try {
     const url = await bridge.readCover(project.coverPath); if (generation !== coverGeneration) return;
@@ -151,8 +151,8 @@ const actions: Record<string, () => void | Promise<void>> = {
   save: () => save(), undo, redo, settings: () => openSettings(ctx), xml: () => openXmlSettings(project, { showModal, commit, close: () => modal.close(), error: text => message(text, true) }), edit: () => switchView('edit'), player: () => switchView('player'),
   audio: async () => { const file = await bridge.pickAudio(); if (file) { commit({ ...project, audio: { ...project.audio, path: file } }, '导入音乐'); await loadAudio(); } },
   toggle: async () => { if (transport.playing) transport.pause(); else await transport.play(); },
-  restart: () => { player.resetStagePosition(); transport.seek(0); cursor = 0; editor.setCursor(0, true); },
-  stop: () => { transport.pause(); player.resetStagePosition(); transport.seek(0); cursor = 0; editor.setCursor(0, true); },
+  restart: () => { transport.seek(0); cursor = 0; editor.setCursor(0, true); },
+  stop: () => { transport.pause(); transport.seek(0); cursor = 0; editor.setCursor(0, true); },
   loop: () => showLoop(ctx), validate: () => showValidation(ctx), library: () => showLibrary(ctx), export: () => showExport(ctx), resources: () => showResources(ctx), judgements: () => showJudgements(ctx), measure: () => showMeasureNavigation(ctx),
   fullscreen: async () => { if (document.fullscreenElement) await document.exitFullscreen(); else await $('#player-view').requestFullscreen(); },
 };
@@ -208,7 +208,7 @@ function frame(): void {
   cursor = secondsToTick(project.chart, seconds);
   if (view === 'edit') editor.setCursor(cursor, transport.playing); else player.render(seconds);
   setText(frameElements.current, formatTime(seconds)); setText(frameElements.total, `/ ${formatTime(duration)}`);
-  setText(frameElements.play, transport.playing ? 'Ⅱ' : '▶');
+  if (frameElements.play.dataset.playing !== String(transport.playing)) { frameElements.play.dataset.playing = String(transport.playing); frameElements.play.ariaLabel = transport.playing ? '暂停' : '播放'; frameElements.play.innerHTML = transport.playing ? ICON.pause : ICON.play; }
   const seek = frameElements.seek, max = String(duration), value = String(seconds);
   if (seek.max !== max) seek.max = max;
   if (seek.value !== value) { seek.value = value; seek.style.setProperty('--progress', `${Math.min(100, seconds / duration * 100)}%`); }

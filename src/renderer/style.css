@@ -40,3 +40,4 @@ label{color:#ccc}kbd{background:#303030;border-color:#505050;color:#bbb;border-r
 .judgement-table { width: 100%; border-collapse: collapse; margin: 16px 0; font-variant-numeric: tabular-nums; }
 .judgement-table th, .judgement-table td { padding: 9px 12px; border-bottom: 1px solid #41464d; text-align: right; }
 .judgement-table th:first-child { text-align: left; }
+.icon{flex:none;vertical-align:-.22em}

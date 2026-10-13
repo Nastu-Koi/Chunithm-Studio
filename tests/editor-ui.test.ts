@@ -103,7 +103,7 @@ test('real canvas editor: mouse editing, keyboard history, connected nodes and n
     await page.locator('[data-tool="SLIDE"]').click(); await drag(384 / 7, 0, 384 * 4 / 7, 8);
     await page.locator('[data-property="durationFraction"]').fill('1/7'); await page.locator('[data-property="durationFraction"]').press('Tab');
     assert.ok(Math.abs((await state()).notes.find((note: any) => note.type === 'SLIDE').duration - 384 / 7) < 1e-9);
-    await page.locator('[data-option="snap-base"]').selectOption('beat');
+    await page.locator('[data-option="snap"]').fill('28'); await page.locator('[data-option="snap"]').press('Tab');
     await page.locator('[data-tool="TAP"]').click(); await click(384 * 5 / 28, 12);
     assert.ok(Math.abs((await state()).notes.at(-1).tick - 384 * 5 / 28) < 1e-9);
     await page.screenshot({ path: '/tmp/chuni-editor-sevenths.png' });
@@ -112,7 +112,6 @@ test('real canvas editor: mouse editing, keyboard history, connected nodes and n
       test.state.chart=test.createChart(); test.editor.setChart(test.state.chart);
     });
     await page.locator('[data-option="snap"]').fill('16'); await page.locator('[data-option="snap"]').press('Tab');
-    await page.locator('[data-option="snap-base"]').selectOption('whole');
     const types = ['TAP', 'EXTAP', 'FLICK', 'HOLD', 'SLIDE', 'AIR', 'AIR_HOLD', 'AIR_SLIDE', 'AIR_CRUSH', 'DAMAGE'];
     for (let i = 0; i < types.length; i++) {
       await page.locator(`[data-tool="${types[i]}"]`).first().click();
@@ -130,7 +129,10 @@ test('real canvas editor: mouse editing, keyboard history, connected nodes and n
     const offstagePoint = async (tick: number, lane: number) => {
       const start = Number(await page.locator('[data-option="view-start"]').inputValue());
       const end = Number(await page.locator('[data-option="view-end"]').inputValue());
-      return { x: box.x + trackLeft + (lane - start + .5) * (box.width - trackLeft - 18) / (end - start), y: box.y + box.height - 30 - tick * zoom };
+      const wideLane = Number(await canvas.evaluate(element => element.dataset.laneWidth));
+      // Lanes outside the stage extend the track; the lane width only shrinks when the canvas runs out of room.
+      assert.equal(wideLane, Math.min(15, (box.width - trackLeft - 18) / (end - start)));
+      return { x: box.x + trackLeft + (lane - start + .5) * wideLane, y: box.y + box.height - 30 - tick * zoom };
     };
     await page.locator('[data-tool="TAP"]').click();
     let outside = await offstagePoint(96, -1); await page.mouse.click(outside.x, outside.y);

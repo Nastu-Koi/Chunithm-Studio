@@ -14,7 +14,6 @@
 .editor-options select { padding: 2px 3px; width: 69px; height: 23px; font-size: 11px; }
 .editor-options input[type="number"] { width: 40px; height: 23px; padding: 2px 3px; font-size: 11px; }
 .editor-options .editor-quantize input[data-option="snap"] { width: 57px; min-width: 57px; padding-left: 5px; }
-.editor-options .editor-quantize select { width: 67px; }
 .editor-toolrow .editor-node-kind { display: inline-flex; align-items: center; gap: 4px; white-space: nowrap; color: #bbb; font-size: 10px; margin: 0 3px; }
 .editor-toolrow .editor-node-kind select { width: 140px; height: 23px; padding: 2px 3px; font-size: 11px; }
 .editor-toolrow > button { height: 23px; font-size: 10px; padding: 2px 5px; }
@@ -28,7 +27,7 @@
 .editor-air-side button { height: 21px; min-width: 22px; font-size: 10px; padding: 1px 4px; }
 .editor-options button { height: 23px; font-size: 10px; padding: 2px 5px; }
 .editor-command-group { display: inline-flex; gap: 2px; align-items: center; }
-.editor-command-group [data-action="copy"], .editor-command-group [data-action="paste"] { font-size: 15px; line-height: 16px; width: 24px; }
+.editor-command-group [data-action="copy"], .editor-command-group [data-action="paste"] { width: 24px; }
 .editor-toolrow { display: flex; align-items: center; gap: 2px; flex-wrap: wrap; padding-top: 3px; border-top: 1px solid #414141; }
 .editor-toolbar-label { font-size: 10px; color: #aaa; margin: 0 5px 0 2px; }
 .editor-toolrow .editor-tool { display: inline-flex; align-items: center; justify-content: center; gap: 5px; height: 25px; font-size: 10px; padding: 2px 6px; color: #ddd; border-color: transparent; background: transparent; }
@@ -47,10 +46,6 @@
 .editor-icon-air-down { background-position-y:-112px; transform:scaleY(-1); }
 
 .editor-zoom input { width: 58px; }
-.editor-options .editor-scale input { width: 44px; height: 23px; padding: 2px 4px; font-size: 11px; }
-.editor-track-controls { display: inline-flex; align-items: center; gap: 4px; }
-.editor-track-controls input { width: 72px; }
-.editor-track-controls output { min-width: 31px; text-align: right; font-variant-numeric: tabular-nums; }
 .editor-align-controls { display: inline-flex; align-items: center; gap: 3px; }
 .editor-align-controls[hidden] { display: none; }
 .editor-align-controls button { min-width: 30px; padding-inline: 4px; }
@@ -59,6 +54,8 @@
 .editor-toolbar-spacer { flex: 1; }
 .editor-advanced-controls { position: relative; z-index: 5; }
 .editor-advanced-controls > summary { padding: 2px 6px; height: 23px; border: 1px solid #555; border-radius: 2px; background: #303030; color: #ccc; cursor: pointer; }
+.editor-advanced-controls > summary { list-style: none; display: inline-flex; align-items: center; gap: 4px; }
+.editor-advanced-controls > summary::-webkit-details-marker { display: none; }
 .editor-advanced-controls[open] > summary { color: #fff; border-color: #999; }
 .editor-advanced-panel { position: absolute; top: calc(100% + 4px); right: 0; width: 306px; padding: 11px; background: #262626; border: 1px solid #777; border-radius: 2px; box-shadow: 0 5px 18px #0008; }
 .editor-advanced-panel p { font-size: 10px; line-height: 1.7; color: #aaa; margin: 7px 0 11px; }
@@ -80,10 +77,6 @@
 .editor-root kbd { font: 9px "Segoe UI", sans-serif; background: #303030; border: 1px solid #555; border-radius: 1px; padding: 0 3px; color: #ccc; }
 .editor-navigation { height: 23px; flex: none; display: flex; align-items: center; gap: 8px; padding: 0 9px; background: #252525; color: #aaa; font-size: 9px; border-top: 1px solid #454545; }
 .editor-navigation input { flex: 1; }
-.editor-track-navigation { display: flex; align-items: center; gap: 8px; height: 23px; flex: none; padding: 0 18px 0 var(--editor-track-left, 250px); border-top: 1px solid #454545; background: #252525; color: #aaa; font-size: 9px; }
-.editor-track-navigation[hidden] { display: none; }
-.editor-track-navigation span { flex: none; }
-.editor-track-navigation input { flex: 1; min-width: 20px; }
 .editor-inspector { flex: none; width: 213px; overflow-y: auto; overflow-x: hidden; padding: 9px 10px 16px; background: #262626; border-left: 1px solid var(--editor-border); scrollbar-width: thin; scrollbar-color: #666 transparent; }
 .editor-inspector-hidden .editor-inspector { display: none; }
 .editor-inspector-title { display: flex; align-items: center; justify-content: space-between; margin-bottom: 11px; font-size: 11px; font-weight: 500; }

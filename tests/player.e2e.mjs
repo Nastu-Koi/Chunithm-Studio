@@ -30,7 +30,7 @@ try {
   const paused = Number(await page.locator('#seek').inputValue());
   assert(paused >= 2.7);
   await page.locator('#playback-rate').selectOption('0.5');
-  await page.getByRole('button', { name: '↻ 循环' }).click();
+  await page.getByRole('button', { name: '循环', exact: true }).click();
   await page.locator('[name="start"]').fill('2'); await page.locator('[name="end"]').fill('2.3');
   await page.getByRole('button', { name: '启用循环' }).click();
   await page.locator('#play-button').click();
@@ -43,7 +43,7 @@ try {
   wav.write('RIFF', 0); wav.writeUInt32LE(wav.length - 8, 4); wav.write('WAVEfmt ', 8); wav.writeUInt32LE(16, 16); wav.writeUInt16LE(1, 20); wav.writeUInt16LE(2, 22); wav.writeUInt32LE(sampleRate, 24); wav.writeUInt32LE(sampleRate * 4, 28); wav.writeUInt16LE(4, 32); wav.writeUInt16LE(16, 34); wav.write('data', 36); wav.writeUInt32LE(frames * 4, 40);
   for (let i = 0; i < frames; i++) { const n = Math.round(Math.sin(i / sampleRate * 440 * 2 * Math.PI) * 4000); wav.writeInt16LE(n, 44 + i * 4); wav.writeInt16LE(n, 46 + i * 4); }
   await writeFile('out/calibration.wav', wav);
-  const chooser = page.waitForEvent('filechooser'); await page.getByRole('button', { name: '♫ 导入音乐' }).click(); await (await chooser).setFiles('out/calibration.wav');
+  const chooser = page.waitForEvent('filechooser'); await page.getByRole('button', { name: '导入音乐' }).click(); await (await chooser).setFiles('out/calibration.wav');
   await page.waitForFunction(() => document.querySelector('#audio-label')?.textContent.includes('calibration.wav'));
   await page.getByRole('button', { name: '乐曲设置', exact: true }).click();
   await page.locator('[name="title"]').fill('节拍与播放器验证'); await page.locator('[name="bpm"]').fill('137.5'); await page.locator('[name="previewEnd"]').fill('3');

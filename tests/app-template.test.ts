@@ -13,7 +13,7 @@ test('the status bar holds only the status text and the shortcut hints', () => {
 });
 
 test('undo and redo are offered once, next to save in the header', () => {
-  const header = appTemplate.slice(0, appTemplate.indexOf('</header>')), shell = appTemplate + editorTemplate({ zoom: 1, trackScale: 1 });
+  const header = appTemplate.slice(0, appTemplate.indexOf('</header>')), shell = appTemplate + editorTemplate({ zoom: 1 });
   assert.ok(header.indexOf('data-action="save"') < header.indexOf('data-action="undo"') && header.indexOf('data-action="undo"') < header.indexOf('data-action="redo"'));
   assert.equal(shell.match(/aria-label="撤销"|title="撤销/g)?.length, 1);
   assert.equal(shell.match(/aria-label="重做"|title="重做/g)?.length, 1);
@@ -24,4 +24,23 @@ test('the loop button sits directly to the right of measure navigation', () => {
   const options = appTemplate.slice(appTemplate.indexOf('<div class="transport-options">'), appTemplate.indexOf('</section>', appTemplate.indexOf('<div class="transport-options">')));
   assert.deepEqual([...options.matchAll(/<(?:button|select|input) id="([^"]+)"/g)].map(match => match[1]),
     ['measure-button', 'loop-button', 'playback-rate', 'sfx', 'sfx-volume', 'metronome', 'metronome-volume', 'volume']);
+});
+
+test('the editor toolbar keeps one zoom control, a fixed track width and the shape button in the node row', () => {
+  const editor = editorTemplate({ zoom: 1 }), row = editor.slice(editor.indexOf('<div class="editor-toolrow"'), editor.indexOf('<div class="editor-body">'));
+  assert.equal(editor.match(/缩放 ?</g)?.length, 1, 'only the zoom slider is labelled 缩放');
+  assert.ok(editor.includes('data-option="zoom"') && !editor.includes('data-action="scale"') && !editor.includes('data-option="scale"'), 'time scaling is gone');
+  assert.ok(!editor.includes('data-action="delete"'), 'no delete button in the toolbar');
+  assert.ok(!editor.includes('track-width') && !editor.includes('轨道宽度') && !editor.includes('track-pan'));
+  assert.ok(editor.includes('音符间隔 1/') && !editor.includes('量化'));
+  assert.ok(!editor.includes('snap-base') && !editor.includes('四分拍'), 'the interval is always a fraction of a whole note');
+  assert.ok(!editor.includes('新节点'));
+  const order = ['SLIDE 控制', 'data-action="shape"', 'data-action="connect"', 'data-action="split"'].map(text => row.indexOf(text));
+  assert.ok(order.every((index, i) => index >= 0 && (i === 0 || index > order[i - 1])), `node row order: ${order}`);
+});
+
+test('buttons use Lucide icons instead of symbol characters', () => {
+  const shell = appTemplate.replace(/<span class="brand-mark">.*?<\/span><\/span>/, '') + editorTemplate({ zoom: 1 });
+  assert.deepEqual(shell.match(/[↶↷↻■▥▶▷◀♫⛶✓↔↕↖↗↑∿⌁⌖⌫▣▱◇☷⧉＋]/g), null);
+  assert.ok((shell.match(/<svg class="icon"/g)?.length ?? 0) >= 25);
 });

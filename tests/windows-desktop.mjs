@@ -366,7 +366,7 @@ try {
   await page.locator('#measure-locate').click();
   await page.waitForFunction(() => document.querySelector('#position-label').textContent.startsWith('第 005 小节'));
   assert.equal(await page.locator('#time-current').textContent(), '00:06.500');
-  assert.equal(await page.locator('#play-button').textContent(), '▶');
+  assert.equal(await page.locator('#play-button').getAttribute('data-playing'), 'false');
   await page.evaluate(() => new Promise(resolve => requestAnimationFrame(() => requestAnimationFrame(resolve))));
   const measureShot = path.join(screenshots, 'windows-measures-editor.png'); await page.screenshot({ path: measureShot }); evidence.screenshots.push(measureShot);
   await page.locator('#measure-button').click(); await page.locator('#start-measure').fill('200000'); await page.locator('#measure-play').click();
@@ -376,7 +376,7 @@ try {
   await page.locator('#loop-button').click(); await page.locator('[name="start"]').fill('0'); await page.locator('[name="end"]').fill('1'); await page.locator('#loop-form button.primary').click();
   await page.locator('#playback-rate').selectOption('0.25');
   await page.locator('#measure-button').click(); await page.locator('#start-measure').fill('6'); await page.locator('#measure-play').click();
-  await page.waitForFunction(() => !document.querySelector('#player-view').hidden && document.querySelector('#play-button').textContent === 'Ⅱ');
+  await page.waitForFunction(() => !document.querySelector('#player-view').hidden && document.querySelector('#play-button').dataset.playing === 'true');
   assert.equal(await page.locator('#loop-button').evaluate(button => button.classList.contains('active')), false);
   const startSeconds = Number(await page.locator('#seek').inputValue()); assert.ok(startSeconds >= 7.666 && startSeconds < 8.1);
   evidence.measureNavigation = { fifthMeasureSeconds: 6.5, sixthMeasureStart: startSeconds, rates: [] };
@@ -385,7 +385,7 @@ try {
     const result = await page.evaluate(() => new Promise(resolve => requestAnimationFrame(() => requestAnimationFrame(() => {
       const start = performance.now(), position = Number(document.querySelector('#seek').value);
       const sample = () => { const now = performance.now(); if (now - start < 450) { requestAnimationFrame(sample); return; }
-        resolve({ measured: (Number(document.querySelector('#seek').value) - position) / ((now - start) / 1000), playing: document.querySelector('#play-button').textContent === 'Ⅱ' }); };
+        resolve({ measured: (Number(document.querySelector('#seek').value) - position) / ((now - start) / 1000), playing: document.querySelector('#play-button').dataset.playing === 'true' }); };
       requestAnimationFrame(sample);
     }))));
     assert.equal(result.playing, true); assert.ok(Math.abs(result.measured - Number(rate)) < .08, `${rate}x measured ${result.measured}`);
