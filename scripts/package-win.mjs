@@ -2,6 +2,7 @@ import packager from '@electron/packager';
 import { access, cp, mkdir, readFile, readdir, rm } from 'node:fs/promises';
 import { execFileSync } from 'node:child_process';
 import path from 'node:path';
+import { isPackagedPath } from './package-files.mjs';
 
 const root = process.cwd();
 const { version } = JSON.parse(await readFile(path.join(root, 'package.json'), 'utf8'));
@@ -19,7 +20,7 @@ const paths = await packager({
   dir: root, out: path.join(root, 'release', version), name: 'Chuni Studio', platform: 'win32', arch: 'x64',
   download: { checksums: electronChecksums },
   overwrite: true, asar: false, prune: true,
-  ignore: [/^\/tests/, /^\/docs/, /^\/examples(\/|$)/, /^\/src/, /^\/scripts/, /^\/\.cache/, /^\/out/, /^\/test-results/, /^\/native\/(VGAudio|bin|obj)(\/|$)/],
+  ignore: file => !isPackagedPath(file),
   executableName: 'ChuniStudio',
 });
 for (const packagePath of paths) {
@@ -32,6 +33,10 @@ for (const packagePath of paths) {
   // Cross-packaging from Linux must never leave Linux native modules as the only runtime option.
   for (const name of await readdir(path.join(modules, '@img'))) if (/^(sharp|sharp-libvips)-(linux|linuxmusl|darwin)-/.test(name)) await rm(path.join(modules, '@img', name), { recursive: true, force: true });
   await rm(path.join(modules, 'ffmpeg-static/ffmpeg'), { force: true });
+  // Pruning leaves the emptied folders of development packages behind, and nothing in the package may be a link.
+  execFileSync('find', [modules, '-type', 'd', '-empty', '-delete']);
+  const links = execFileSync('find', [packagePath, '-type', 'l'], { encoding: 'utf8' }).trim();
+  if (links) throw new Error(`打包结果中有符号链接：\n${links}`);
   await access(path.join(windowsSharp, 'lib/sharp-win32-x64.node'));
   await access(path.join(packagePath, 'resources/app/native/win-x64/ChunithmAudio.exe'));
   await access(path.join(packagePath, 'resources/app/assets/game/manifest.json'));
