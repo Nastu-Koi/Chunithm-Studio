@@ -315,8 +315,9 @@ export function shapeEditorSlide(chart: Chart, id: string, options: SlideShapeOp
   const notes = chart.notes.flatMap(item => item.id === id ? segments : outgoingIds.has(item.id)
     ? [{ ...item, tick: endTick(tail), duration: endTick(item) - endTick(tail), lane: endLane(tail), width: endWidth(tail), attributes: { ...item.attributes, parent: continuationParent(tail) } }]
     : incomingIds.has(item.id) ? [{ ...item, endLane: head.lane, endWidth: head.width }] : [item]);
-  // An AIR bound to this segment's tail now belongs to the tail of the path.
-  const before = { ...chart, notes: chart.notes.map(item => item.id === id ? { ...item, id: tail.id } : item) };
+  // An AIR bound to a SLIDE segment's tail now belongs to the tail of the path. An AIR SLIDE is itself the bound AIR:
+  // its head keeps the segment's id and stays on the parent.
+  const before = note.type === 'SLIDE' ? { ...chart, notes: chart.notes.map(item => item.id === id ? { ...item, id: tail.id } : item) } : chart;
   return { chart: syncEditorAirBindings(before, { ...chart, notes, events: moved ? alignAssignments(chart, note, { ...head, duration: note.duration }) : chart.events }), ids: segments.map(item => item.id), move, length };
 }
 

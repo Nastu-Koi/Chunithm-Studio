@@ -4,6 +4,7 @@ import { createChart, createNote, type Note } from '../src/core/model';
 import { parseC2S, serializeC2S } from '../src/core/c2s';
 import { mirrorEditorSelection, moveEditorSelection, parseEditorFraction, splitEditorNote, appendEditorNote, copyEditorSelection, flipEditorSelection, scaleEditorSelection, shapeEditorSlide, removeEditorJoint, mergeEditorExTaps, editorChain, attachEditorAir, boundEditorParent, setEditorEx } from '../src/renderer/editor';
 import { getNoteScrollGroup } from '../src/core/timing';
+import { getNativeAirBindings } from '../src/core/judgement';
 
 test('moving a mixed selection clamps the whole group without changing spacing or source records', () => {
   const chart = createChart();
@@ -283,6 +284,23 @@ test('SLIDE shapes replace one segment by a connected path that keeps the start 
   assert.deepEqual(lifted.map(note => [note.height, note.endHeight]), [[1, 3], [3, 5]]);
   assert.equal(shapeEditorSlide(chart, tap.id, { shape: 'curve', length: 96, move: 4, count: 1, step: 24, kind: 'control' }), undefined);
   assert.equal(shapeEditorSlide(chart, slide.id, { shape: 'curve', length: 0, move: 4, count: 1, step: 24, kind: 'control' }), undefined);
+});
+
+test('shaping a bound AIR SLIDE head keeps one chain on its parent that still ends on the original node', () => {
+  const chart = createChart(), tap = createNote('TAP', 0, 2, 4);
+  const air = { ...createNote('AIR_SLIDE', 0, 2, 4), duration: 96, height: 1, endHeight: 5, attributes: { parent: 'TAP' } };
+  const next = { ...createNote('AIR_SLIDE', 96, 2, 4), duration: 96, attributes: { parent: 'ASD' } };
+  for (const shape of ['curve', 'zigzag', 'wave'] as const) for (const notes of [[tap, air], [tap, air, next]]) {
+    const result = shapeEditorSlide({ ...chart, notes }, air.id, { shape, length: 96, move: 4, count: 1, step: 24, kind: 'control' })!;
+    const { airOf, orphans } = getNativeAirBindings(result.chart), chain = airOf.get(tap.id)!;
+    assert.deepEqual(orphans, []);
+    assert.deepEqual(chain.map(note => note.id), [...result.ids, ...notes.slice(2).map(note => note.id)]);
+    assert.ok(chain.every((note, index) => index === 0 || note.tick === chain[index - 1].tick + chain[index - 1].duration! && note.lane === chain[index - 1].endLane && note.height === chain[index - 1].endHeight));
+    assert.deepEqual([chain[0].tick, chain[0].lane, chain[0].attributes.parent], [0, 2, 'TAP']);
+    // The path's last node is the segment's own end: still a normal node, at the original time and height.
+    const tail = result.chart.notes.find(note => note.id === result.ids.at(-1))!;
+    assert.deepEqual([tail.tick + tail.duration!, tail.endHeight, tail.attributes.visible !== false], [96, 5, true]);
+  }
 });
 
 test('EX is set on a whole HOLD or SLIDE chain and exports as HXD / SXD / SXC', () => {
