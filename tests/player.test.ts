@@ -2,7 +2,7 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import { createChart, createNote, type Chart, type Note } from '../src/core/model';
 import { getScrollPosition } from '../src/core/timing';
-import { getPlayerRibbonSegments, getPlayerHeadTextureKey, getPlayerBodyTextureKey, getPlayerTextureRectangle, getPlayerCrushTickIndex, getPlayerCrushMarkerTicks } from '../src/renderer/player';
+import { getPlayerRibbonSegments, getPlayerPastRibbonSegments, getPlayerHeadTextureKey, getPlayerBodyTextureKey, getPlayerTextureRectangle, getPlayerCrushTickIndex, getPlayerCrushMarkerTicks } from '../src/renderer/player';
 import { buildJudgementTimeline } from '../src/core/judgement';
 
 function reversingChart(): { chart: Chart; note: Note } {
@@ -139,4 +139,32 @@ test('dense CRUSH marker selection uses binary range lookup and returns at most 
   assert.ok(reads < 650, `expected binary lookups plus bounded selection, got ${reads} reads`);
   assert.equal(getPlayerCrushMarkerTicks(ticks, ranges, 5).length, 5);
   assert.deepEqual(getPlayerCrushMarkerTicks(ticks, ranges, 0), []);
+});
+
+test('the part of an AIR SLIDE behind the judgement line keeps its own shape', () => {
+  const chart = createChart(), note = createNote('AIR_SLIDE', 384, 0, 4);
+  note.duration = 768; note.endLane = 12;
+  chart.notes = [note];
+  const near = getScrollPosition(chart, 384, 768, note) * .75;
+  assert.deepEqual(getPlayerPastRibbonSegments(chart, note, 384, near), [], 'nothing has passed at the head');
+  const held = getPlayerPastRibbonSegments(chart, note, 768, near);
+  assert.ok(held.length > 0);
+  assert.ok(held[0].startTick > note.tick && held[0].startTick < 768, 'the oldest part is clipped at the near limit, not at the current tick');
+  assert.ok(Math.abs(held[0].startDistance - near) < 1e-9);
+  assert.equal(held.at(-1)!.endTick, 768); assert.ok(Math.abs(held.at(-1)!.endDistance) < 1e-12);
+  for (const segment of held) {
+    assert.ok(segment.startTick < segment.endTick && segment.endTick <= 768);
+    assert.ok(Math.abs(segment.startDistance - getScrollPosition(chart, segment.startTick, 768, note)) < 1e-9);
+    assert.ok(Math.abs(segment.endDistance - getScrollPosition(chart, segment.endTick, 768, note)) < 1e-9);
+  }
+  const end = note.tick + note.duration!, justEnded = getPlayerPastRibbonSegments(chart, note, end + 96, near);
+  assert.ok(justEnded.length > 0 && justEnded.at(-1)!.endTick === end && justEnded.at(-1)!.endDistance < 0, 'an ended note still scrolls out');
+  assert.deepEqual(getPlayerPastRibbonSegments(chart, note, end + 768, near), []);
+  assert.deepEqual(getPlayerPastRibbonSegments(chart, createNote('AIR', 0), 96, near), []);
+});
+
+test('reversed scrolling does not bring elapsed AIR SLIDE parts back in front of the judgement line', () => {
+  const { chart, note } = reversingChart();
+  for (const tick of [4000, 4800, 5700, 7000]) for (const segment of getPlayerPastRibbonSegments(chart, note, tick, -5))
+    assert.ok(segment.startDistance <= 1e-12 && segment.endDistance <= 1e-12 && segment.endTick <= tick);
 });

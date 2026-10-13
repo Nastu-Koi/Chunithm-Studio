@@ -23,6 +23,13 @@ export const JUDGE_LINE_Z = -65;
 export const FIELD_WALL_Z: readonly number[] = [-460, -437, -414, -391, -368, -345, -322, -299, -276, -253, -230, -207, -179.4, -151.8, -110.4, -64.4, -55.2];
 /** Far end of the track mesh, which runs over source Z -470 to 0. */
 export const FIELD_FAR_Z = -470;
+/** Preview adaptation, not a game value: the far end of the track darkens to black from this source Z, by this much at
+ * FIELD_FAR_Z, so the notes field texture's own spot pattern does not pile up into blotches under perspective. */
+export const FIELD_FADE_START_Z = -180;
+export const FIELD_FADE_ALPHA = .85;
+export function fieldFadeAlpha(z: number): number {
+  return FIELD_FADE_ALPHA * Math.max(0, Math.min(1, (FIELD_FADE_START_Z - z) / (FIELD_FADE_START_Z - FIELD_FAR_Z)));
+}
 /** Scroll distance in seconds from the judgement line to a source Z; negative on the near side of the line. */
 export function scrollDistanceAt(z: number, speed: number): number { return (JUDGE_LINE_Z - z) / scrollWorldUnit(speed); }
 /** The FIELD WALL is an upright quad of this half width and height in source units (0xd66560), as wide as the track with its side bands. */

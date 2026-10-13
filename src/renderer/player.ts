@@ -4,7 +4,7 @@ import { createChart } from '../core/model';
 import { isBundledImageSource, type GameModelTexture, type GameTexture, type GameTextures } from '../core/game-assets';
 import { getScrollPosition, getGrid, tickToSeconds, secondsToTick, bpmAtTick, getNoteScrollGroup } from '../core/timing';
 import { getPlayerPlaybackPoints } from './playback-points';
-import { fitSceneViewport, projectTrackPoint, scrollWorldUnit, scrollDistanceAt, fieldWallDistance, TRACK_REFERENCE, SCENE_WIDTH, SCENE_HEIGHT, FIELD_FAR_Z, FIELD_WALL_HALF_WIDTH, FIELD_WALL_HEIGHT } from './player-scene';
+import { fitSceneViewport, projectTrackPoint, scrollWorldUnit, scrollDistanceAt, fieldWallDistance, TRACK_REFERENCE, SCENE_WIDTH, SCENE_HEIGHT, FIELD_FAR_Z, FIELD_FADE_START_Z, fieldFadeAlpha, FIELD_WALL_HALF_WIDTH, FIELD_WALL_HEIGHT } from './player-scene';
 import { buildJudgementTimeline, getAutoScoreAtTick, type JudgementTimeline } from '../core/judgement';
 import { drawPlayerHud, type HudSprite } from './player-hud';
 import { createClassicRingRenderer, type ClassicRingRenderer, type StagePosition } from './classic-stage';
@@ -115,7 +115,14 @@ export function getPlayerCrushMarkerTicks(ticks: readonly number[], ribbon: read
 /** Break at every tempo/motion boundary before clipping. Endpoints alone cannot cull a reversing ribbon. */
 export function getPlayerRibbonSegments(chart: Chart, note: Note, currentTick: number, far = 12, near = -.18, piece = .75): PlayerRibbonSegment[] {
   if (!(note.duration && note.duration > 0)) return [];
-  const firstTick = Math.max(note.tick, currentTick), lastTick = note.tick + note.duration;
+  return ribbonSegments(chart, note, currentTick, Math.max(note.tick, currentTick), note.tick + note.duration, far, near, piece);
+}
+/** The elapsed part of a long note, from the near limit up to the judgement line: what has scrolled past keeps the note's own shape. */
+export function getPlayerPastRibbonSegments(chart: Chart, note: Note, currentTick: number, near: number, piece = .75): PlayerRibbonSegment[] {
+  if (!(note.duration && note.duration > 0)) return [];
+  return ribbonSegments(chart, note, currentTick, note.tick, Math.min(currentTick, note.tick + note.duration), 0, near, piece);
+}
+function ribbonSegments(chart: Chart, note: Note, currentTick: number, firstTick: number, lastTick: number, far: number, near: number, piece: number): PlayerRibbonSegment[] {
   if (firstTick >= lastTick) return [];
   const cuts = cutsFor(chart, note), ticks = [firstTick];
   for (let index = upperBound(cuts, firstTick); index < cuts.length && cuts[index] < lastTick; index++) ticks.push(cuts[index]);
@@ -464,11 +471,21 @@ export class ChartPlayer {
     }
     // Distances are seconds of scroll; the track's own lengths are in source units, so they follow the speed.
     const unit = scrollWorldUnit(this.speed), far = fieldWallDistance(this.speed, this.wall), fieldFar = scrollDistanceAt(FIELD_FAR_Z, this.speed);
-    const near = -40 / unit, fieldNear = -12 / unit;
+    const near = -40 / unit, fieldNear = -12 / unit, airNear = -AIR_HOLD_NEAR_Z / unit;
     const ground = this.sceneMaterials.get('notesField');
     const groundQuad: [Point, Point, Point, Point] = [this.point(0, fieldFar), this.point(16, fieldFar), this.point(16, fieldNear), this.point(0, fieldNear)];
     this.polygon(groundQuad, '#131313');
     if (ground) this.texturedQuad(ground, groundQuad);
+    // Far-end fade over the main surface only; the lane and bar lines drawn after it keep their brightness.
+    const fadeStart = scrollDistanceAt(FIELD_FADE_START_Z, this.speed), fadeQuad = [groundQuad[0], groundQuad[1], this.point(16, fadeStart), this.point(0, fadeStart)];
+    if (this.textureLayer?.active) {
+      const dark = [0, 0, 0, fieldFadeAlpha(FIELD_FAR_Z)], clear = [0, 0, 0, 0];
+      this.textureLayer.mesh(fadeQuad.map((point, index) => ({ ...point, uv: [0, 0], color: index < 2 ? dark : clear })), [0, 1, 3, 1, 2, 3]);
+    } else {
+      const gradient = c.createLinearGradient(0, fadeQuad[0].y, 0, fadeQuad[3].y);
+      gradient.addColorStop(0, `rgba(0,0,0,${fieldFadeAlpha(FIELD_FAR_Z)})`); gradient.addColorStop(1, 'rgba(0,0,0,0)');
+      c.beginPath(); fadeQuad.forEach((point, index) => index ? c.lineTo(point.x, point.y) : c.moveTo(point.x, point.y)); c.closePath(); c.fillStyle = gradient; c.fill();
+    }
     const side = this.sceneMaterials.get('fieldSide');
     for (const [left, right] of [[-1, 0], [16, 17]]) {
       const points: [Point, Point, Point, Point] = [this.point(left, fieldFar), this.point(right, fieldFar), this.point(right, fieldNear), this.point(left, fieldNear)];
@@ -498,7 +515,10 @@ export class ChartPlayer {
     const primitives: { depth: number; layer: number; draw(): void }[] = [];
     let crushMarkerBudget = 512;
     for (const { note, start, end } of this.sorted) {
-      if (end < seconds - 0.32) continue;
+      const live = end >= seconds;
+      // An AIR SLIDE keeps scrolling towards the camera with the shape it had, also after its end.
+      const past = note.type === 'AIR_SLIDE' && tick > note.tick ? getPlayerPastRibbonSegments(this.chart, note, tick, airNear, 170 / unit) : [];
+      if (end < seconds - 0.32 && !past.length) continue;
       const points = note.type === 'AIR_CRUSH' ? [] : getPlayerPlaybackPoints(this.chart, note);
       const headPoint = points.find(point => point.position === 'head'), endPoint = points.find(point => point.position === 'end');
       if (note.type === 'SLIDE' && note.duration && start <= seconds && end > seconds) {
@@ -506,17 +526,18 @@ export class ChartPlayer {
         keeps.push({ event: { note, time: start, kind: 'Slide', lane: note.lane + ((note.endLane ?? note.lane) - note.lane) * t,
           width: note.width + ((note.endWidth ?? note.width) - note.width) * t, y: 0, seed: 1 }, age: seconds - start });
       }
-      if (end < seconds) continue;
+      if (!live && !past.length) continue;
       const head = getScrollPosition(this.chart, note.tick, tick, note);
       const tail = getScrollPosition(this.chart, note.tick + (note.duration ?? 0), tick, note);
-      const ribbon = getPlayerRibbonSegments(this.chart, note, tick, far, near, 170 / unit);
-      // A held AIR HOLD or AIR SLIDE does not end in mid-air above the judgement line: its line runs straight on, out of the bottom of the screen.
-      if ((note.type === 'AIR_HOLD' || note.type === 'AIR_SLIDE') && tick > note.tick && ribbon.length && Math.abs(ribbon[0].startTick - tick) < 1e-7) {
-        ribbon.unshift({ startTick: tick, endTick: tick, startDistance: -AIR_HOLD_NEAR_Z / nativeScrollWorldUnit(this.speed), endDistance: ribbon[0].startDistance });
+      const ribbon = live ? getPlayerRibbonSegments(this.chart, note, tick, far, near, 170 / unit) : [];
+      // A held AIR HOLD does not end in mid-air above the judgement line: its line runs straight on, out of the bottom of the screen.
+      if (note.type === 'AIR_HOLD' && tick > note.tick && ribbon.length && Math.abs(ribbon[0].startTick - tick) < 1e-7) {
+        ribbon.unshift({ startTick: tick, endTick: tick, startDistance: airNear, endDistance: ribbon[0].startDistance });
       }
+      ribbon.unshift(...past);
       const airExtent: [number, number] | undefined = note.type === 'AIR_HOLD' && ribbon.length
         ? [Math.min(...ribbon.flatMap(s => [s.startDistance, s.endDistance])), Math.max(...ribbon.flatMap(s => [s.startDistance, s.endDistance]))] : undefined;
-      const headVisible = head >= near && head <= far, tailVisible = tail >= near && tail <= far;
+      const headVisible = live && head >= near && head <= far, tailVisible = live && tail >= near && tail <= far;
       if (!headVisible && !tailVisible && !ribbon.length) continue;
       const airborne = note.type.startsWith('AIR'), height = airborne ? note.height ?? (note.type === 'AIR' ? 0.48 : 0.8) : 0;
       const color = noteColor(note);

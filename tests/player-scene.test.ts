@@ -58,3 +58,13 @@ test('track speed and FIELD WALL follow the game\'s play option tables', async (
   assert.ok(scrollDistanceAt(FIELD_FAR_Z, 6) > fieldWallDistance(6, 0));
   assert.ok(projectTrackPoint(0, fieldWallDistance(6, 1), 6).y > TRACK_REFERENCE.topY, 'the first wall step shows below the HUD');
 });
+
+test('the far end of the track fades to black over the notes field pattern', async () => {
+  const { fieldFadeAlpha, FIELD_FADE_START_Z, FIELD_FADE_ALPHA, FIELD_FAR_Z } = await import('../src/renderer/player-scene');
+  assert.equal(fieldFadeAlpha(FIELD_FAR_Z), FIELD_FADE_ALPHA);
+  assert.equal(fieldFadeAlpha(FIELD_FAR_Z - 50), FIELD_FADE_ALPHA);
+  assert.equal(fieldFadeAlpha(FIELD_FADE_START_Z), 0);
+  assert.equal(fieldFadeAlpha(-65), 0, 'the judgement line stays untouched');
+  assert.ok(Math.abs(fieldFadeAlpha((FIELD_FAR_Z + FIELD_FADE_START_Z) / 2) - FIELD_FADE_ALPHA / 2) < 1e-12);
+  assert.ok(FIELD_FADE_ALPHA > .5 && FIELD_FADE_ALPHA < 1 && FIELD_FADE_START_Z > FIELD_FAR_Z && FIELD_FADE_START_Z < -65);
+});
