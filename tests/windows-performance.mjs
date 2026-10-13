@@ -30,7 +30,7 @@ try {
     await app.evaluate(({ dialog }, filename) => { dialog.showOpenDialog = async () => ({ canceled: false, filePaths: [filename] }); }, file);
     await page.locator('[data-action="open"]').click();
     await page.waitForFunction(() => document.querySelector('#audio-label')?.textContent.endsWith('.wav'), { timeout: 60000 });
-  } else await page.locator('[data-action="demo"]').click();
+  } else throw new Error(`Unknown --scenario=${scenario}`);
   await page.locator('#play-tab').click();
   await page.evaluate(mode => {
     const proto = CanvasRenderingContext2D.prototype, records = new WeakMap(); let serial = 0;

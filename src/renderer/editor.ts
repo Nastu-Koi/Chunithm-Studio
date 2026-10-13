@@ -419,8 +419,6 @@ export class ChartEditor {
     if (button.dataset.air) { this.setAir(button.dataset.air as 'IR' | 'DW', this.airLean); return; }
     if (button.dataset.tool) { this.setTool(button.dataset.tool as Tool); return; }
     switch (button.dataset.action) {
-      case 'editor-undo': this.callbacks.onUndo(); break;
-      case 'editor-redo': this.callbacks.onRedo(); break;
       case 'delete': this.deleteSelection(); break;
       case 'mirror': this.mirrorSelection(); break;
       case 'flip': this.flipSelection(); break;

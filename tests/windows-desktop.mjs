@@ -84,7 +84,7 @@ try {
     return { path: filename, sampledColors: colors.size, visiblePixels: bright };
   };
   await page.waitForSelector('#project-title', { timeout: 30000 });
-  evidence.runtime = await page.evaluate(() => ({ bridge: window.studio?.platform, url: location.href, runtimeLabel: document.querySelector('#runtime-label')?.textContent }));
+  evidence.runtime = await page.evaluate(() => ({ bridge: window.studio?.platform, url: location.href }));
   assert.equal(evidence.runtime.bridge, 'win32', 'The desktop must use its real preload bridge.');
   assert.ok(evidence.runtime.url.startsWith('file:'), 'Load the packaged renderer, not a Vite development server.');
   evidence.userData = await app.evaluate(({ app }) => app.getPath('userData'));

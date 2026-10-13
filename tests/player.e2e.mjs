@@ -1,13 +1,23 @@
 import { chromium } from 'playwright';
 import { mkdir, readFile, writeFile } from 'node:fs/promises';
 import assert from 'node:assert/strict';
+import { createProject, createNote } from '../src/core/model.ts';
 await mkdir('out/screenshots', { recursive: true });
+const project = createProject();
+project.metadata = { title: '星轨 / First Steps', artist: 'Chuni Studio', designer: 'You', difficulty: 'MASTER', level: '10' };
+for (let i = 0; i < 32; i++) project.chart.notes.push(createNote(i % 7 === 0 ? 'EXTAP' : i % 5 === 0 ? 'FLICK' : 'TAP', 384 + i * 96, (i * 3) % 13, 3));
+project.chart.notes.push({ ...createNote('HOLD', 768, 1, 3), duration: 384 }, { ...createNote('SLIDE', 1536, 0, 3), duration: 384, endLane: 11 }, { ...createNote('SLIDE', 1920, 11, 3), duration: 384, endLane: 3 });
+// AIR is bound to a ground tail: the arrow sits on the SLIDE's end, the AIR-HOLD on the HOLD's end.
+project.chart.notes.push({ ...createNote('AIR', 2304, 3, 3), attributes: { direction: 'IR', parent: 'SLD' } }, { ...createNote('AIR_HOLD', 1152, 1, 3), duration: 384, attributes: { parent: 'HLD' } });
+project.chart.events.push({ id: 'bpm', type: 'BPM', tick: 0, value: 120 });
+await writeFile('out/first-steps.chuni.json', JSON.stringify(project));
 const browser = await chromium.launch({ headless: true, args: ['--no-sandbox'] });
 const page = await browser.newPage({ viewport: { width: 1480, height: 960 } });
 const errors = []; page.on('pageerror', error => errors.push(error.message));
 try {
   await page.goto('http://127.0.0.1:5173/');
-  await page.getByRole('button', { name: '打开示例谱面' }).click();
+  const opened = page.waitForEvent('filechooser');
+  await page.locator('[data-action="open"]').click(); await (await opened).setFiles('out/first-steps.chuni.json');
   await page.waitForFunction(() => document.querySelector('#project-title')?.textContent.includes('First Steps'));
   await page.screenshot({ path: 'out/screenshots/editor.png' });
   await page.locator('#play-tab').click();

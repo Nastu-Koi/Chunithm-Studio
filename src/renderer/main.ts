@@ -22,7 +22,6 @@ import { showMeasureNavigation, showLoop } from './dialogs/navigation';
 import { showLibrary } from './dialogs/library';
 import { showRecentProjects } from './dialogs/recent';
 import { showExport } from './dialogs/export';
-import { createDemoProject } from './demo-project';
 
 const bridge = window.studio ?? browserBridge;
 const app = document.querySelector<HTMLDivElement>('#app')!;
@@ -156,7 +155,6 @@ const actions: Record<string, () => void | Promise<void>> = {
   stop: () => { transport.pause(); player.resetStagePosition(); transport.seek(0); cursor = 0; editor.setCursor(0, true); },
   loop: () => showLoop(ctx), validate: () => showValidation(ctx), library: () => showLibrary(ctx), export: () => showExport(ctx), resources: () => showResources(ctx), judgements: () => showJudgements(ctx), measure: () => showMeasureNavigation(ctx),
   fullscreen: async () => { if (document.fullscreenElement) await document.exitFullscreen(); else await $('#player-view').requestFullscreen(); },
-  demo: async () => { if (discardAllowed()) { await load({ project: createDemoProject(), path: null }); dirty = true; sync(); message('示例谱面已载入，可以编辑并播放打击音。'); } },
 };
 document.querySelectorAll<HTMLElement>('[data-action]').forEach(button => button.onclick = () => { const action = actions[button.dataset.action!]; void run(async () => { await action?.(); }); });
 $<HTMLInputElement>('#seek').oninput = event => { transport.seek(Number((event.target as HTMLInputElement).value)); cursor = secondsToTick(project.chart, transport.seconds); editor.setCursor(cursor, true); };
@@ -202,7 +200,6 @@ document.addEventListener('keydown', event => {
 });
 window.addEventListener('beforeunload', event => { if (dirty && bridge.platform !== 'browser') { event.preventDefault(); event.returnValue = ''; } });
 bridge.onProgress(text => { $('#status').textContent = text; for (const output of document.querySelectorAll('#export-progress, #library-results[data-scanning]')) output.textContent = text; });
-$('#runtime-label').textContent = bridge.platform === 'browser' ? '浏览器开发预览' : '本地桌面 · 离线';
 const frameElements = { current: $('#time-current'), total: $('#time-total'), play: $('#play-button'), seek: $<HTMLInputElement>('#seek'), position: $('#position-label') };
 const setText = (element: HTMLElement, text: string) => { if (element.textContent !== text) element.textContent = text; };
 function frame(): void {
