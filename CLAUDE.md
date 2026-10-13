@@ -14,5 +14,5 @@
 
 - 前三条与 `.github/workflows/ci.yml` 一致，收尾时全部运行。
 - 项目没有配置 lint。
-- 单元测试中有 5 项按环境跳过属正常：设置 `CHUNI_UI_URL` 启用编辑器交互测试，设置 `CHUNI_GAME_ROOT` 启用全库原生往返测试。
+- 单元测试中有 6 项按环境跳过属正常：设置 `CHUNI_UI_URL` 启用编辑器交互测试，设置 `CHUNI_GAME_ROOT` 启用全库原生往返测试。
 - Windows 桌面流程与实机验收无法在 WSL 内完成，做法与历史结果见 `docs/verification.md`；涉及这部分的验收标准要注明需在 Windows 上人工执行。

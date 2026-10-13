@@ -218,9 +218,9 @@ export interface SlideShapeOptions {
   shape: SlideShape;
   /** Length of the generated path in ticks. */
   length: number;
-  /** Signed lane distance: the far side of a zigzag or wave, the far end of a curve's arc. */
+  /** Signed lane distance: the far side of a zigzag, the first swing of a wave to either side of its start, the far end of a curve's arc. */
   move: number;
-  /** Zigzag: number of straight pieces. Wave: number of there-and-back swings. Unused by a curve. */
+  /** Zigzag: number of teeth, each out to the far side and back. Wave: number of full swings to both sides. Unused by a curve. */
   count: number;
   /** Curve only: lane and width the path starts from; the segment's own when absent or when its start is bound. */
   start?: number;
@@ -231,9 +231,9 @@ export interface SlideShapeOptions {
   symmetryH?: boolean;
   /** Curve only: the arc leaves straight ahead and ends sideways instead of the reverse. */
   flipV?: boolean;
-  /** Sampling interval of a wave, normally the quantize step. */
+  /** Shortest length left to the segment that follows the path, normally the quantize step. */
   step: number;
-  /** Node kind of the zigzag corners; wave and curve nodes are always control points. */
+  /** Node kind of the zigzag and wave corners; curve nodes are always control points. */
   kind: EditorNodeKind;
 }
 export interface SlideShapeResult { chart: Chart; ids: string[]; /** `move` after fitting the lanes. */ move: number; /** `length` after fitting the next segment. */ length: number }
@@ -253,7 +253,7 @@ function arcNodes(reach: number, gap: number): [number, number][] {
 }
 /**
  * Replace one SLIDE / AIR SLIDE segment by a preset path, after Margrete's zigzag, meandering and curve generators.
- * A zigzag or wave starts at the segment's start and keeps its width; a curve may also name its start lane and width.
+ * A zigzag or wave starts and ends on the segment's start lane and keeps its width; a curve may also name its start lane and width.
  * The segments chained before and after it are re-attached to the new ends.
  */
 export function shapeEditorSlide(chart: Chart, id: string, options: SlideShapeOptions): SlideShapeResult | undefined {
@@ -267,19 +267,17 @@ export function shapeEditorSlide(chart: Chart, id: string, options: SlideShapeOp
   const free = options.shape === 'curve' && !boundEditorParent(chart, id);
   const width = free && Number.isFinite(options.width) ? clamp(Math.round(options.width!), 1, chart.allowOutOfLane ? 128 : LANES) : note.width;
   const limits = laneLimits(chart, width), start = free && Number.isFinite(options.start) ? clamp(Math.round(options.start!), limits.min, limits.max) : note.lane;
-  const move = clamp(Math.round(options.move), limits.min - start, limits.max - start);
+  // A wave swings to both sides of the start, so its reach must fit on each of them.
+  const wanted = Math.round(options.move), move = options.shape === 'wave' ? Math.sign(wanted) * Math.min(Math.abs(wanted), start - limits.min, limits.max - start) : clamp(wanted, limits.min - start, limits.max - start);
   const points: { at: number; lane: number; width: number; corner: boolean }[] = [{ at: 0, lane: start, width, corner: false }];
   if (options.shape === 'zigzag') {
-    const count = clamp(Math.round(options.count), 1, 256);
-    for (let index = 1; index <= count; index++) points.push({ at: index / count, lane: start + (index % 2 ? move : 0), width, corner: true });
+    const pieces = clamp(Math.round(options.count), 1, 128) * 2;
+    for (let index = 1; index <= pieces; index++) points.push({ at: index / pieces, lane: start + (index % 2 ? move : 0), width, corner: true });
   } else if (options.shape === 'wave') {
-    const samples = clamp(Math.floor(length / options.step + 1e-9), 1, 512), swings = clamp(Math.round(options.count), 1, 64);
-    for (let index = 1; index <= samples; index++) points.push({ at: index / samples, lane: Math.round(start + move * (1 - Math.cos(2 * Math.PI * swings * index / samples)) / 2), width, corner: false });
-    // A sample lying on the straight line between its neighbours adds a note without changing the path.
-    for (let index = points.length - 2; index > 0; index--) {
-      const before = points[index - 1], here = points[index], after = points[index + 1];
-      if (Math.abs((here.lane - before.lane) * (after.at - before.at) - (after.lane - before.lane) * (here.at - before.at)) < 1e-9) points.splice(index, 1);
-    }
+    const quarters = clamp(Math.round(options.count), 1, 64) * 4;
+    for (let index = 1; index <= quarters; index++) points.push({ at: index / quarters, lane: start + move * [0, 1, 0, -1][index % 4], width, corner: true });
+    // The crossings of the start lane lie on the straight line between two corners and add nothing to the path.
+    for (let index = points.length - 2; index > 0; index--) if (index % 2 === 0) points.splice(index, 1);
   } else {
     const reach = Math.abs(move), halves = options.symmetryV ? 2 : 1;
     let nodes = arcNodes(reach, Math.max(1 / 60, halves / length));
@@ -304,7 +302,7 @@ export function shapeEditorSlide(chart: Chart, id: string, options: SlideShapeOp
   const segments: Note[] = [];
   for (let index = 0; index + 1 < points.length; index++) {
     const from = points[index], to = points[index + 1], last = index + 2 === points.length;
-    // Only the original end keeps its node kind; corners follow the caller, samples are control points.
+    // Only the original end keeps its node kind; corners follow the caller, curve nodes are control points.
     const segment: Note = { ...copyNote(note), id: index ? makeId('note') : note.id, tick: note.tick + offset(from.at), lane: from.lane, width: from.width, duration: offset(to.at) - offset(from.at), endLane: to.lane, endWidth: to.width,
       ...(height !== undefined ? { height: height + (endHeight! - height) * from.at, endHeight: height + (endHeight! - height) * to.at } : {}),
       attributes: { ...note.attributes, ...(last ? {} : { visible: to.corner && options.kind === 'normal' }), ...(index ? { parent: continuationParent(segments[index - 1]) } : {}) } };
@@ -334,6 +332,27 @@ export function setEditorEx(chart: Chart, id: string, ex?: boolean): Chart {
     if (value) attributes.ex = true; else { delete attributes.ex; delete attributes.effect; }
     return { ...item, attributes };
   }) };
+}
+
+/**
+ * An ExTAP lying exactly on the head of a HOLD / SLIDE (same tick, lane and width) becomes that long note's EX and is
+ * removed, as if it had been placed there. Only the ExTAPs in `ids` are considered; one carrying an AIR stays, because
+ * the AIR is bound to it.
+ */
+export function mergeEditorExTaps(chart: Chart, ids: Set<string>): { chart: Chart; merged: string[] } {
+  const merged: string[] = [];
+  for (const id of ids) {
+    const tap = chart.notes.find(note => note.id === id);
+    if (!tap || tap.type !== 'EXTAP' || chart.notes.some(note => AIR.has(note.type) && boundEditorParent(chart, note.id)?.id === id)) continue;
+    const chains = getNativeSlideChains(chart);
+    const head = chart.notes.find(note => (note.type === 'HOLD' || note.type === 'SLIDE') && sameTick(note.tick, tap.tick) && note.lane === tap.lane && note.width === tap.width
+      && (note.type === 'HOLD' || (chains.find(items => items.some(item => item.id === note.id)) ?? [note])[0].id === note.id));
+    if (!head) continue;
+    const ex = setEditorEx({ ...chart, notes: chart.notes.filter(note => note.id !== id) }, head.id, true), effect = tap.attributes.effect;
+    chart = effect === undefined ? ex : { ...ex, notes: ex.notes.map(note => note.attributes.ex && !chart.notes.find(item => item.id === note.id)?.attributes.ex ? { ...note, attributes: { ...note.attributes, effect } } : note) };
+    merged.push(head.id);
+  }
+  return { chart, merged };
 }
 
 /** The segment that continues from this segment's end: same type, time, lane, width and, in the air, height. */

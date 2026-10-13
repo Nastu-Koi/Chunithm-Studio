@@ -2,6 +2,14 @@
 
 本记录区分程序测试、资源结构验证和原游戏实机验收。资源目录为用户提供的 `D:\chunithm`，检查期间不写入原游戏文件。
 
+## 0.1.19 之后（形状、流速、挡板、叠放选择与界面设置）
+
+- 程序测试：`npm run check` 通过；`npm test` 288 项，282 通过、6 项按环境跳过、失败 0；`npx vite build` 通过。新增 `tests/ui-settings.test.ts`，`tests/player-scene.test.ts` 增加流速表与挡板表的断言，`tests/editor.test.ts` 增加新锯齿、震荡和 ExTAP 并入长条头的断言。
+- 编辑器交互（WSL，Playwright 自带 Chromium，`CHUNI_UI_URL` 指向 `npx vite`）：`editor-ui.test.ts`、`editor-margrete-ui.test.ts`、`editor-width-ui.test.ts` 与新增的 `editor-stack-ui.test.ts` 通过。后者覆盖叠放处连续单击轮换、拖动不触发轮换、ExTAP 拖到 SLIDE 头并入。
+- 浏览器开发预览人工检查：挡板 0、8、14 的截图；改动 11 项界面设置后关闭并重开页面，读回的值与所设一致。
+- 挡板改用原游戏的默认贴图 `CHU_UI_Fieldwall_0001.dds`（资源副本增至 275 张 PNG），按原程序 `0xd66560` 的顶点（72×54）绘制；流速去掉 SONIC，共 61 档。挡板与音符同一坐标系、音符从挡板 0 后面露出两点已由反汇编确认。
+- 未做：没有启动原游戏；Windows 桌面流程未跑，挡板贴图在桌面程序里的实际显示没有看过（WSL 的浏览器开发预览不加载资源副本）。实机对照表与做法见 `docs/native-scroll-speed.md`，需在 Windows 上人工执行。
+
 ## 0.1.12 第二轮整理
 
 曲库扫描改为三阶段批量并行并按文件夹指纹缓存：本机 8205 张谱面经 WSL 挂载的 `D:\chunithm` 全量扫描从 112 秒降到 19 秒，缓存命中 2 秒；`tests/backend.test.ts` 覆盖缓存命中、新增曲目文件夹失效和强制重扫。应用壳拆分为模板、上下文与五个对话框模块；`Note.attributes` 改为显式接口。主进程 IPC 增加读取路径白名单。对 `out/performance/final-0.1.10.cpuprofile` 的分析显示 GC 总计 21.8 ms、最长连续 4.8 ms，唯一的 62 ms 空档落在 `(program)`，因此没有做对象池优化。单元测试 244 项（239 通过、5 项按环境跳过）；Windows 桌面流程与三项浏览器画布测试在 0.1.12 打包结果上通过。桌面测试在 AIR 高度拖动前增加了等待属性面板就绪的条件。

@@ -49,6 +49,7 @@ Chuni Studio 是 Electron 桌面程序：主进程负责文件、游戏资源与
 - `editor.ts`：俯视编辑器的交互与绘制。纯谱面变换在 `editor-operations.ts`，工具栏与画布标记在 `editor-template.ts`。
 - `player.ts`：透视播放器。HUD 在 `player-hud.ts`，原生模型绘制在 `game-mesh-renderer.ts`、`native-notes.ts`、`native-air-geometry.ts`、`native-effects.ts` 等文件。
 - `transport.ts`：音频时钟，负责音乐播放、打击音、节拍器、变速和循环。
+- `ui-settings.ts`：界面设置的读写。应用壳和编辑器的显示与监听偏好都经它存入 localStorage，不进工程，也不经过桥接接口。
 - `browser-bridge.ts`：浏览器开发预览用的 `StudioBridge` 替身。
 
 ## 进程边界
@@ -124,6 +125,7 @@ Chuni Studio 是 Electron 桌面程序：主进程负责文件、游戏资源与
 - [game-animation.md](game-animation.md)：经典圆环动画的原始数据。
 - [game-camera-decoding.md](game-camera-decoding.md)：AFNC 相机与舞台结构的解码进展。
 - [game-camera-candidate.md](game-camera-candidate.md)：相机数值候选。
+- [native-scroll-speed.md](native-scroll-speed.md)：轨道流速与 FIELD WALL 的原生数值和预览换算。
 
 **性能与验证**
 - [performance.md](performance.md)：Windows 播放卡顿与长条接缝的验证。

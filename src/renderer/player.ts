@@ -4,7 +4,7 @@ import { createChart } from '../core/model';
 import { isBundledImageSource, type GameModelTexture, type GameTexture, type GameTextures } from '../core/game-assets';
 import { getScrollPosition, getGrid, tickToSeconds, secondsToTick, bpmAtTick, getNoteScrollGroup } from '../core/timing';
 import { getPlayerPlaybackPoints } from './playback-points';
-import { fitSceneViewport, projectTrackPoint, TRACK_REFERENCE, SCENE_WIDTH, SCENE_HEIGHT } from './player-scene';
+import { fitSceneViewport, projectTrackPoint, scrollWorldUnit, scrollDistanceAt, fieldWallDistance, TRACK_REFERENCE, SCENE_WIDTH, SCENE_HEIGHT, FIELD_FAR_Z, FIELD_WALL_HALF_WIDTH, FIELD_WALL_HEIGHT } from './player-scene';
 import { buildJudgementTimeline, getAutoScoreAtTick, type JudgementTimeline } from '../core/judgement';
 import { drawPlayerHud, type HudSprite } from './player-hud';
 import { createClassicRingRenderer, type ClassicRingRenderer, type StagePosition } from './classic-stage';
@@ -113,7 +113,7 @@ export function getPlayerCrushMarkerTicks(ticks: readonly number[], ribbon: read
   return result;
 }
 /** Break at every tempo/motion boundary before clipping. Endpoints alone cannot cull a reversing ribbon. */
-export function getPlayerRibbonSegments(chart: Chart, note: Note, currentTick: number, far = 12, near = -.18): PlayerRibbonSegment[] {
+export function getPlayerRibbonSegments(chart: Chart, note: Note, currentTick: number, far = 12, near = -.18, piece = .75): PlayerRibbonSegment[] {
   if (!(note.duration && note.duration > 0)) return [];
   const firstTick = Math.max(note.tick, currentTick), lastTick = note.tick + note.duration;
   if (firstTick >= lastTick) return [];
@@ -135,7 +135,7 @@ export function getPlayerRibbonSegments(chart: Chart, note: Note, currentTick: n
         const startTick = a + (b - a) * low, endTick = a + (b - a) * high;
         const startDistance = da + delta * low, endDistance = da + delta * high;
         // Bound each painter primitive's depth span, so overtaking heads are not hidden by one huge quad.
-        const pieces = Math.max(1, Math.ceil(Math.abs(endDistance - startDistance) / .75));
+        const pieces = Math.max(1, Math.ceil(Math.abs(endDistance - startDistance) / piece));
         for (let piece = 0; piece < pieces; piece++) {
           const t0 = piece / pieces, t1 = (piece + 1) / pieces;
           result.push({ startTick: startTick + (endTick - startTick) * t0, endTick: startTick + (endTick - startTick) * t1, startDistance: startDistance + (endDistance - startDistance) * t0, endDistance: startDistance + (endDistance - startDistance) * t1 });
@@ -185,7 +185,8 @@ export class ChartPlayer {
   private stageClip = 0; private stageFps = 60; private stageOrigin = 0; private lastStageFrame = NaN;
   private cover?: HTMLImageElement; private coverGeneration = 0;
   private frameNumber = 0;
-  speed = 6;
+  /** 轨道流速 as the game shows it, and the FIELD WALL setting 0 to 16. */
+  speed = 6; wall = 0;
   title = ''; artist = ''; difficulty = 'MASTER'; level = '1'; weTag = '改'; stars = 1;
   constructor(private host: HTMLElement) {
     this.canvas.className = 'player-canvas'; this.canvas.setAttribute('aria-label', 'CHUNITHM 透视自动播放预览'); host.append(this.canvas);
@@ -446,6 +447,7 @@ export class ChartPlayer {
     const c = this.context, w = this.width, h = this.height, tick = secondsToTick(this.chart, seconds);
     const score = getAutoScoreAtTick(this.scoreTimeline, tick);
     this.canvas.dataset.frame = String(++this.frameNumber); this.canvas.dataset.score = String(score.score); this.canvas.dataset.combo = String(score.combo);
+    this.canvas.dataset.speed = String(this.speed); this.canvas.dataset.fieldWall = String(this.wall);
     this.canvas.dataset.title = this.title; this.canvas.dataset.difficulty = this.difficulty;
     const viewport = fitSceneViewport(this.hostWidth, this.hostHeight);
     // Neutral letterbox: the black 16:9 game screen stays distinct from the space around it.
@@ -460,26 +462,38 @@ export class ChartPlayer {
       this.textureLayer.polygon([{ x: 0, y: 0 }, { x: w, y: 0 }, { x: w, y: h }, { x: 0, y: h }], '#000000');
 
     }
-    const far = 12;
+    // Distances are seconds of scroll; the track's own lengths are in source units, so they follow the speed.
+    const unit = scrollWorldUnit(this.speed), far = fieldWallDistance(this.speed, this.wall), fieldFar = scrollDistanceAt(FIELD_FAR_Z, this.speed);
+    const near = -40 / unit, fieldNear = -12 / unit;
     const ground = this.sceneMaterials.get('notesField');
-    const groundQuad: [Point, Point, Point, Point] = [this.point(0, far), this.point(16, far), this.point(16, -.055), this.point(0, -.055)];
+    const groundQuad: [Point, Point, Point, Point] = [this.point(0, fieldFar), this.point(16, fieldFar), this.point(16, fieldNear), this.point(0, fieldNear)];
     this.polygon(groundQuad, '#131313');
     if (ground) this.texturedQuad(ground, groundQuad);
     const side = this.sceneMaterials.get('fieldSide');
     for (const [left, right] of [[-1, 0], [16, 17]]) {
-      const points: [Point, Point, Point, Point] = [this.point(left, far), this.point(right, far), this.point(right, -.055), this.point(left, -.055)];
+      const points: [Point, Point, Point, Point] = [this.point(left, fieldFar), this.point(right, fieldFar), this.point(right, fieldNear), this.point(left, fieldNear)];
       if (side) this.texturedQuad(side, points); else this.polygon(points, '#867437');
     }
     for (let lane = 0; lane < 16; lane++) {
       // Stage.xml chooses the Orange field lines. Quarter-lane boundaries are visible in the reference.
       if (lane % 4 !== 0) continue;
-      this.line(this.point(lane, far), this.point(lane, -.055), '#c5984670', 1.6);
+      this.line(this.point(lane, fieldFar), this.point(lane, fieldNear), '#c5984670', 1.6);
     }
     for (const line of getGrid(this.chart, Math.max(0, tick - 768), tick + 384 * 16, 4)) {
       const distance = getScrollPosition(this.chart, line.tick, tick);
       if (distance < 0 || distance > far) continue;
       this.line(this.point(0, distance), this.point(16, distance), line.major ? '#bed9ff44' : '#bed9ff18', line.major ? 1.5 : 0.7);
     }
+    // FIELD WALL: the game's upright quad across the track and its side bands, with the default wall texture.
+    // Notes behind it are left out whole; the game would still show what rises above the wall's top edge.
+    const wallCorner = (x: number, y: number): Point => { const point = projectNativeScrollPoint(8, far, [x, y, 0], this.speed); return { x: point.x, y: point.y, scale: point.scale ?? 1 }; };
+    const wallQuad: [Point, Point, Point, Point] = [wallCorner(-FIELD_WALL_HALF_WIDTH, FIELD_WALL_HEIGHT), wallCorner(FIELD_WALL_HALF_WIDTH, FIELD_WALL_HEIGHT), wallCorner(FIELD_WALL_HALF_WIDTH, 0), wallCorner(-FIELD_WALL_HALF_WIDTH, 0)];
+    if (wallQuad[3].y > TRACK_REFERENCE.topY) {
+      const wall = this.sceneMaterials.get('fieldWall');
+      this.polygon(wallQuad, '#3c3c3c');
+      if (wall) this.texturedQuad(wall, wallQuad);
+    }
+    this.canvas.dataset.fieldWallTexture = String(this.sceneMaterials.has('fieldWall'));
     const keeps: { event: NoteEffectEvent; age: number }[] = [];
     const primitives: { depth: number; layer: number; draw(): void }[] = [];
     let crushMarkerBudget = 512;
@@ -495,14 +509,14 @@ export class ChartPlayer {
       if (end < seconds) continue;
       const head = getScrollPosition(this.chart, note.tick, tick, note);
       const tail = getScrollPosition(this.chart, note.tick + (note.duration ?? 0), tick, note);
-      const ribbon = getPlayerRibbonSegments(this.chart, note, tick, far);
+      const ribbon = getPlayerRibbonSegments(this.chart, note, tick, far, near, 170 / unit);
       // A held AIR HOLD or AIR SLIDE does not end in mid-air above the judgement line: its line runs straight on, out of the bottom of the screen.
       if ((note.type === 'AIR_HOLD' || note.type === 'AIR_SLIDE') && tick > note.tick && ribbon.length && Math.abs(ribbon[0].startTick - tick) < 1e-7) {
         ribbon.unshift({ startTick: tick, endTick: tick, startDistance: -AIR_HOLD_NEAR_Z / nativeScrollWorldUnit(this.speed), endDistance: ribbon[0].startDistance });
       }
       const airExtent: [number, number] | undefined = note.type === 'AIR_HOLD' && ribbon.length
         ? [Math.min(...ribbon.flatMap(s => [s.startDistance, s.endDistance])), Math.max(...ribbon.flatMap(s => [s.startDistance, s.endDistance]))] : undefined;
-      const headVisible = head >= -.18 && head <= far, tailVisible = tail >= -.18 && tail <= far;
+      const headVisible = head >= near && head <= far, tailVisible = tail >= near && tail <= far;
       if (!headVisible && !tailVisible && !ribbon.length) continue;
       const airborne = note.type.startsWith('AIR'), height = airborne ? note.height ?? (note.type === 'AIR' ? 0.48 : 0.8) : 0;
       const color = noteColor(note);
@@ -582,7 +596,8 @@ export class ChartPlayer {
     for (const primitive of primitives) primitive.draw();
     const judgeLeft = this.point(0, 0), judgeRight = this.point(16, 0);
     const goal = this.modelSprites.get('GoalLine');
-    if (this.nativeModel('GoalLine', 8, 0)) { /* Source model includes its own line thickness and material. */ }
+    if (this.wall >= 16) { /* The last FIELD WALL position stands in front of the judgement line. */ }
+    else if (this.nativeModel('GoalLine', 8, 0)) { /* Source model includes its own line thickness and material. */ }
     else if (goal) this.texturedQuad(goal, [{ ...judgeLeft, y: judgeLeft.y - 2 }, { ...judgeRight, y: judgeRight.y - 2 }, { ...judgeRight, y: judgeLeft.y - 2 + Math.max(5, h * .008) }, { ...judgeLeft, y: judgeLeft.y - 2 + Math.max(5, h * .008) }]);
     else { c.shadowColor = '#f8d973'; c.shadowBlur = 15; c.fillStyle = '#ffdf80'; c.fillRect(judgeLeft.x, judgeLeft.y, judgeRight.x - judgeLeft.x, 3); c.shadowBlur = 0; }
     let effectPrimitives = 0;

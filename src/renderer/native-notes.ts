@@ -1,5 +1,5 @@
 import type { Chart, Note } from '../core/model';
-import { TRACK_REFERENCE, projectTrackPoint } from './player-scene';
+import { TRACK_REFERENCE, projectTrackPoint, scrollWorldUnit } from './player-scene';
 import type { MeshPoint } from './game-mesh-renderer';
 
 /** Note::height conversion at 0xb412e0; public C2S heights are already decimal values. */
@@ -8,7 +8,7 @@ export const AIR_LINE_HEIGHT = 15.574000358581543;
 const focal = 540 / Math.tan(27.5 * Math.PI / 360), cameraLength = Math.hypot(54, 190.5);
 const sine = 54 / cameraLength, cosine = 190.5 / cameraLength;
 /** Converts the preview's scroll distance to the source geometry's Z units. */
-export function nativeScrollWorldUnit(speed = 6): number { return focal / (TRACK_REFERENCE.judgeWidth / 64) * (1.8 * speed / 6) / cosine; }
+export function nativeScrollWorldUnit(speed = 6): number { return scrollWorldUnit(speed); }
 export function nativeAirBaseHeight(height = 1): number { return (height - 1) * AIR_HEIGHT_STEP; }
 /** Carries the first center through ASD/ASC connections so texture U does not jump at each record. */
 export function getNativeAirSlideRoots(chart: Chart): Map<string, number> {

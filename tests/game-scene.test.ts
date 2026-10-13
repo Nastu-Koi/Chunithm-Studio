@@ -47,6 +47,8 @@ test('copied classic scene resolves every texture locally and retains valid atla
   assert.ok(scene); assert.equal(scene.stage.id, 1); assert.equal(scene.stage.name, 'CHUNITHM');
   assert.equal(scene.geometry.designWidth, 1920); assert.equal(scene.geometry.designHeight, 1080);
   const stored = manifest.textures.scene!;
+  // The default FIELD WALL: 640×480, the 4:3 of the game's 72×54 wall quad.
+  assert.deepEqual([stored.materials.fieldWall.width, stored.materials.fieldWall.height, stored.materials.fieldWall.sourcePath], [640, 480, 'data/A000/ddsFieldWall/ddsFieldWall0001/CHU_UI_Fieldwall_0001.dds']);
   for (const item of [...Object.values(stored.materials), ...Object.values(stored.hud).map(sprite => sprite.image)]) {
     assert.equal(createHash('sha256').update(await readFile(path.join(root, item.file))).digest('hex'), hashes[item.file]);
   }

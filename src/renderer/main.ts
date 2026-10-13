@@ -7,6 +7,8 @@ import { buildJudgementTimeline } from '../core/judgement';
 import { analyzeC2SQuantization } from '../core/quantization';
 import { ChartEditor } from './editor';
 import { ChartPlayer } from './player';
+import { NOTE_SPEEDS } from './player-scene';
+import { readBoolean, readChoice, readNumber, writeSetting } from './ui-settings';
 import { Transport } from './transport';
 import { browserBridge } from './browser-bridge';
 import { openXmlSettings } from './xml-settings';
@@ -114,7 +116,7 @@ async function loadCover(): Promise<void> {
     await player.setCover(url);
   } catch (e) { if (generation === coverGeneration) message(`封面读取失败：${e instanceof Error ? e.message : e}`, true); }
 }
-function switchView(next: 'edit' | 'player'): void { view = next; $('#editor-view').hidden = view !== 'edit'; $('#player-view').hidden = view !== 'player'; $('#edit-tab').setAttribute('aria-selected', String(view === 'edit')); $('#play-tab').setAttribute('aria-selected', String(view === 'player')); if (view === 'edit') { editor.resize(); editor.setCursor(cursor, true); } else { syncPlayerChart(); player.resize(); } }
+function switchView(next: 'edit' | 'player'): void { view = next; writeSetting('view', view); $('#editor-view').hidden = view !== 'edit'; $('#player-view').hidden = view !== 'player'; $('#edit-tab').setAttribute('aria-selected', String(view === 'edit')); $('#play-tab').setAttribute('aria-selected', String(view === 'player')); if (view === 'edit') { editor.resize(); editor.setCursor(cursor, true); } else { syncPlayerChart(); player.resize(); } }
 const ctx: AppContext = {
   bridge, transport, player, editor, modal,
   get project() { return project; },
@@ -158,19 +160,32 @@ const actions: Record<string, () => void | Promise<void>> = {
 };
 document.querySelectorAll<HTMLElement>('[data-action]').forEach(button => button.onclick = () => { const action = actions[button.dataset.action!]; void run(async () => { await action?.(); }); });
 $<HTMLInputElement>('#seek').oninput = event => { transport.seek(Number((event.target as HTMLInputElement).value)); cursor = secondsToTick(project.chart, transport.seconds); editor.setCursor(cursor, true); };
-$<HTMLSelectElement>('#playback-rate').onchange = event => transport.setRate(Number((event.target as HTMLSelectElement).value));
-$<HTMLInputElement>('#volume').oninput = event => transport.setVolume(Number((event.target as HTMLInputElement).value));
-$<HTMLInputElement>('#sfx').onchange = event => { transport.effects = (event.target as HTMLInputElement).checked; };
-const effectsVolume = $<HTMLInputElement>('#sfx-volume'), storedEffectsVolume = Number(localStorage.getItem('chuni-sfx-volume') ?? 0.6);
-effectsVolume.value = String(transport.effectsVolume = Number.isFinite(storedEffectsVolume) ? storedEffectsVolume : 0.6);
-effectsVolume.oninput = () => { transport.effectsVolume = Number(effectsVolume.value); localStorage.setItem('chuni-sfx-volume', effectsVolume.value); };
-// The metronome is a personal monitoring preference, so it lives with this machine's settings, not in the project.
-const metronomeToggle = $<HTMLInputElement>('#metronome'), metronomeVolume = $<HTMLInputElement>('#metronome-volume'), storedMetronomeVolume = Number(localStorage.getItem('chuni-metronome-volume') ?? 0.5);
-metronomeToggle.checked = transport.metronome = localStorage.getItem('chuni-metronome') === '1';
-metronomeVolume.value = String(transport.metronomeVolume = Number.isFinite(storedMetronomeVolume) ? Math.max(0, Math.min(1, storedMetronomeVolume)) : 0.5);
-metronomeToggle.onchange = () => { transport.metronome = metronomeToggle.checked; localStorage.setItem('chuni-metronome', metronomeToggle.checked ? '1' : '0'); };
-metronomeVolume.oninput = () => { transport.metronomeVolume = Number(metronomeVolume.value); localStorage.setItem('chuni-metronome-volume', metronomeVolume.value); };
-$<HTMLInputElement>('#scroll-speed').oninput = event => { player.speed = Number((event.target as HTMLInputElement).value); $('#scroll-speed-label').textContent = player.speed.toFixed(1); };
+// Monitoring and display preferences belong to this machine, not to the project: each control starts from what was
+// last set and writes its change back. See ui-settings.ts.
+const playbackRate = $<HTMLSelectElement>('#playback-rate');
+playbackRate.value = String(readChoice('playback-rate', [.25, .5, .75, 1, 1.25, 1.5, 2], 1)); transport.setRate(Number(playbackRate.value));
+playbackRate.onchange = () => { transport.setRate(Number(playbackRate.value)); writeSetting('playback-rate', playbackRate.value); };
+const musicVolume = $<HTMLInputElement>('#volume');
+musicVolume.value = String(readNumber('volume', .8, 0, 1)); transport.setVolume(Number(musicVolume.value));
+musicVolume.oninput = () => { transport.setVolume(Number(musicVolume.value)); writeSetting('volume', musicVolume.value); };
+const effectsToggle = $<HTMLInputElement>('#sfx'), effectsVolume = $<HTMLInputElement>('#sfx-volume');
+effectsToggle.checked = transport.effects = readBoolean('sfx', true);
+effectsToggle.onchange = () => { transport.effects = effectsToggle.checked; writeSetting('sfx', effectsToggle.checked); };
+effectsVolume.value = String(transport.effectsVolume = readNumber('sfx-volume', .6, 0, 1));
+effectsVolume.oninput = () => { transport.effectsVolume = Number(effectsVolume.value); writeSetting('sfx-volume', effectsVolume.value); };
+const metronomeToggle = $<HTMLInputElement>('#metronome'), metronomeVolume = $<HTMLInputElement>('#metronome-volume');
+metronomeToggle.checked = transport.metronome = readBoolean('metronome', false);
+metronomeVolume.value = String(transport.metronomeVolume = readNumber('metronome-volume', .5, 0, 1));
+metronomeToggle.onchange = () => { transport.metronome = metronomeToggle.checked; writeSetting('metronome', metronomeToggle.checked); };
+metronomeVolume.oninput = () => { transport.metronomeVolume = Number(metronomeVolume.value); writeSetting('metronome-volume', metronomeVolume.value); };
+// The slider walks the rows of the game's speed table, which are not evenly spaced after 15.00.
+const scrollSpeed = $<HTMLInputElement>('#scroll-speed'), fieldWall = $<HTMLInputElement>('#field-wall');
+const showScrollSpeed = () => { player.speed = NOTE_SPEEDS[Number(scrollSpeed.value)] ?? 6; $('#scroll-speed-label').textContent = player.speed.toFixed(2); };
+const showFieldWall = () => { player.wall = Number(fieldWall.value); $('#field-wall-label').textContent = fieldWall.value; };
+scrollSpeed.value = String(NOTE_SPEEDS.indexOf(readChoice('scroll-speed', NOTE_SPEEDS, 6))); showScrollSpeed();
+fieldWall.value = String(Math.round(readNumber('field-wall', 0, 0, 16))); showFieldWall();
+scrollSpeed.oninput = () => { showScrollSpeed(); writeSetting('scroll-speed', player.speed); };
+fieldWall.oninput = () => { showFieldWall(); writeSetting('field-wall', player.wall); };
 document.addEventListener('keydown', event => {
   if (event.defaultPrevented || modal.open || (event.target as HTMLElement)?.closest('input,select,textarea,[contenteditable="true"]')) return;
   const mod = event.ctrlKey || event.metaKey;
@@ -204,6 +219,7 @@ function frame(): void {
   setText(frameElements.position, `${measure === null ? '小节线隐藏' : `第 ${String(measure).padStart(3, '0')} 小节`} · BPM ${bpmAtTick(project.chart, cursor).toFixed(1)}`);
   requestAnimationFrame(frame);
 }
-sync(); requestAnimationFrame(frame);
+sync(); if (readChoice('view', ['edit', 'player'] as const, 'edit') === 'player') switchView('player');
+requestAnimationFrame(frame);
 void loadGameResources();
 void bridge.getRecovery().then(recovery => { if (!recovery) return; showModal('发现自动保存的工程', `<p>上次未保存的工程：<strong>${escape(recovery.project.metadata.title)}</strong></p><div class="form-footer"><button id="recovery-discard">放弃恢复</button><button id="recovery-restore" class="primary">恢复工程</button></div>`); $('#recovery-discard').onclick = () => { void bridge.autosave(null, null); modal.close(); }; $('#recovery-restore').onclick = () => void run(async () => { await load(recovery); dirty = true; sync(); modal.close(); }); }).catch(e => message(e.message, true));

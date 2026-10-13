@@ -178,6 +178,9 @@ export async function loadGameSceneAssets(gameRoot: string): Promise<GameSceneAs
       scene.materials[role] = await image(entry.data, source, sourceName, entry.offset);
     }
   }
+  // The FIELD WALL every player owns (DDSFieldWall.xml: defaultHave); the other designs are unlocked items.
+  const wallSource = path.join(data, 'A000/ddsFieldWall/ddsFieldWall0001/CHU_UI_Fieldwall_0001.dds');
+  scene.materials.fieldWall = await image(await boundedRead(wallSource), wallSource, 'CHU_UI_Fieldwall_0001.dds', 0);
   scene.animation = await loadClassicStageAnimation(gameRoot);
   scene.warnings.push(...scene.animation.warnings);
   await loadHud(scene, data);

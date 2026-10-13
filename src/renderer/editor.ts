@@ -5,9 +5,10 @@ import { isBundledImageSource, type GameTexture } from '../core/game-assets';
 import { getNativeNoteTag } from '../core/c2s';
 import { getSlideUvSpans, slideUvProgress } from './slide-timing';
 import { editorTemplate, COLOR, LABEL, noteColor } from './editor-template';
+import { readChoice, readNumber, writeSetting } from './ui-settings';
 import { LONG, AIR, CHAIN, clamp, endLane, endWidth, endTick, sameTick, formatTick, long, copyNote, hasNodeKind, limitLane, limitWidth, selectionWithAssignments, alignAssignments,
-  appendEditorNote, attachEditorAir, editorChain, nextEditorSegment, removeEditorJoint, boundEditorParent, copyEditorSelection, flipEditorSelection, inferEditorParent, mirrorEditorSelection, moveEditorSelection, parseEditorFraction, scaleEditorSelection, selectionWithBoundAir, setEditorAirHeight, setEditorEx, setEditorNodeKind, shapeEditorSlide, splitEditorNote, syncEditorAirBindings, type Clipboard, type EditorNodeKind, type SlideShape, type SlideShapeResult } from './editor-operations';
-export { appendEditorNote, attachEditorAir, editorChain, nextEditorSegment, removeEditorJoint, boundEditorParent, copyEditorSelection, flipEditorSelection, inferEditorParent, mirrorEditorSelection, moveEditorSelection, parseEditorFraction, scaleEditorSelection, selectionWithBoundAir, setEditorAirHeight, setEditorEx, setEditorNodeKind, shapeEditorSlide, splitEditorNote, syncEditorAirBindings, type EditorNodeKind, type SlideShape, type SlideShapeResult } from './editor-operations';
+  appendEditorNote, attachEditorAir, editorChain, nextEditorSegment, removeEditorJoint, mergeEditorExTaps, boundEditorParent, copyEditorSelection, flipEditorSelection, inferEditorParent, mirrorEditorSelection, moveEditorSelection, parseEditorFraction, scaleEditorSelection, selectionWithBoundAir, setEditorAirHeight, setEditorEx, setEditorNodeKind, shapeEditorSlide, splitEditorNote, syncEditorAirBindings, type Clipboard, type EditorNodeKind, type SlideShape, type SlideShapeResult } from './editor-operations';
+export { appendEditorNote, attachEditorAir, editorChain, nextEditorSegment, removeEditorJoint, mergeEditorExTaps, boundEditorParent, copyEditorSelection, flipEditorSelection, inferEditorParent, mirrorEditorSelection, moveEditorSelection, parseEditorFraction, scaleEditorSelection, selectionWithBoundAir, setEditorAirHeight, setEditorEx, setEditorNodeKind, shapeEditorSlide, splitEditorNote, syncEditorAirBindings, type EditorNodeKind, type SlideShape, type SlideShapeResult } from './editor-operations';
 
 type Callbacks = { onChange(chart: Chart, label: string): void; onCursor(tick: number): void; onUndo(): void; onRedo(): void; onOffset(seconds: number, label: string): void };
 type AudioSamples = { data: Float32Array; sampleRate: number };
@@ -17,7 +18,7 @@ type DragKind = 'move' | 'end' | 'width' | 'widthLeft' | 'endWidth' | 'height' |
 type Tool = NoteType | 'select' | 'erase';
 type Drag = { kind: DragKind; start: Position; current: Position; chart: Chart; id?: string; before: Set<string>; moved: boolean; scroll: number; pointerId: number };
 const EVENT_LABEL: Record<EventType, string> = { BPM: 'BPM', METER: '拍号', SCROLL: '谱面滚速', NOTE_SPEED: '音符速度', GROUP_SCROLL: '分组滚速', SCROLL_ASSIGNMENT: '滚速分组', STOP: '旧版停止' };
-const TRACK_SCALE_KEY = 'chuni-editor-track-scale';
+
 /** Lane width at 100% track scale. A host too narrow for it still fits every visible lane. */
 const STANDARD_LANE_WIDTH = 30;
 const EVENT_COLOR: Record<EventType, string> = { BPM: '#65cf69', METER: '#d4a46b', SCROLL: '#e2575f', NOTE_SPEED: '#b9b9b9', GROUP_SCROLL: '#e88bb0', SCROLL_ASSIGNMENT: '#a897d8', STOP: '#e2575f' };
@@ -37,12 +38,6 @@ function eventText(event: ChartEvent): string {
     case 'SCROLL_ASSIGNMENT': return `→G${event.group ?? event.value}`;
     case 'STOP': return 'STOP';
   }
-}
-function readTrackScale(): number {
-  try {
-    const value = Number(window.localStorage.getItem(TRACK_SCALE_KEY));
-    return Number.isFinite(value) && value >= .5 && value <= 3 ? value : 1;
-  } catch { return 1; }
 }
 const esc = (value: unknown) => String(value ?? '').replace(/[&<>"']/g, char => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' })[char]!);
 function fractionLabel(value: number): string {
@@ -74,15 +69,21 @@ export class ChartEditor {
   private pickedJoint?: string;
   /** First segment of a SLIDE / AIR chain whose head node was picked; deleting it takes the whole long note. */
   private pickedHead?: string;
+  /** Set on press when the click lands on the only selected item with others stacked under it; a release without a drag then picks the next one. */
+  private cycling = false;
+  /** The pick a cycling click replaced, so that a double click still acts on the item it began on. */
+  private cycled?: { selection: Set<string>; joint?: string; head?: string; time: number };
   /** Segment being reshaped while the shape panel is open; `preview` then holds the candidate path. */
   private shapeId?: string;
   private readonly shapePanel: HTMLFormElement;
-  private snap = 16;
-  private snapBase: 'whole' | 'beat' = 'whole';
-  private width = 2;
-  private nodeKind: EditorNodeKind | 'inherit' = 'inherit';
-  private zoom = .75;
-  private trackScale = readTrackScale();
+  private snap = Math.round(readNumber('editor-snap', 16, 0, 4096));
+  private snapBase = readChoice('editor-snap-base', ['whole', 'beat'] as const, 'whole');
+  private width = Math.round(readNumber('editor-width', 2, 1, LANES));
+  private nodeKind: EditorNodeKind | 'inherit' = readChoice('editor-node-kind', ['inherit', 'normal', 'control'] as const, 'inherit');
+  /** The toolbar options as last written to this machine's settings. */
+  private savedOptions = '';
+  private zoom = readNumber('editor-zoom', .75, .2, 5);
+  private trackScale = readNumber('editor-track-scale', 1, .5, 3);
   private trackPan = 0;
   private viewStart = 0;
   private viewEnd = LANES;
@@ -129,6 +130,8 @@ export class ChartEditor {
     this.shapePanel = host.querySelector('.editor-shape-panel')!;
     this.status = host.querySelector('.editor-status')!;
     this.minimap = host.querySelector('.editor-navigation input')!;
+    // The toolbar starts from the options this machine last used.
+    for (const [name, value] of [['snap', this.snap], ['snap-base', this.snapBase], ['width', this.width], ['node-kind', this.nodeKind]] as const) host.querySelector<HTMLInputElement | HTMLSelectElement>(`[data-option="${name}"]`)!.value = String(value);
     const signal = this.abort.signal;
     host.addEventListener('click', event => this.onClick(event), { signal });
     this.shapePanel.addEventListener('submit', event => { event.preventDefault(); this.closeShape(true); }, { signal });
@@ -279,14 +282,14 @@ export class ChartEditor {
     const shape = field('shape').value as SlideShape, result = this.shapeResult(), note = this.shapePanel.querySelector<HTMLElement>('[data-shape-note]')!;
     this.shapePanel.querySelector<HTMLElement>('[data-shape-row="count"]')!.hidden = shape === 'curve';
     for (const row of ['start', 'width', 'symmetryV', 'symmetryH', 'flipV']) this.shapePanel.querySelector<HTMLElement>(`[data-shape-row="${row}"]`)!.hidden = shape !== 'curve';
-    this.shapePanel.querySelector<HTMLElement>('[data-shape-count-label]')!.textContent = shape === 'wave' ? '往返次数' : '段数';
-    this.shapePanel.querySelector<HTMLElement>('[data-shape-move-label]')!.textContent = shape === 'curve' ? '位移（轨道，负数向左）' : '水平移动（轨道，负数向左）';
+    this.shapePanel.querySelector<HTMLElement>('[data-shape-count-label]')!.textContent = shape === 'wave' ? '往返次数（左右各摆一次）' : '段数（每段出去再回来）';
+    this.shapePanel.querySelector<HTMLElement>('[data-shape-move-label]')!.textContent = shape === 'curve' ? '位移（轨道，负数向左）' : shape === 'wave' ? '摆幅（轨道，负数先向左）' : '水平移动（轨道，负数向左）';
     this.preview = result?.chart;
     const beats = parseEditorFraction(field('beats').value), wanted = Number(field('move').value) || 0;
     note.textContent = !result ? '长度须为正数，且要给后面相接的一段留出至少一个量化格'
-      : [result.move !== Math.round(wanted) ? `${shape === 'curve' ? '位移' : '水平移动'}已收窄为 ${result.move}，再远会超出轨道` : '', beats !== undefined && Math.abs(result.length - beats * this.chart.resolution / 4) > 1e-6 ? '长度已缩短，以保留后面相接的一段' : '',
+      : [result.move !== Math.round(wanted) ? `${shape === 'curve' ? '位移' : shape === 'wave' ? '摆幅' : '水平移动'}已收窄为 ${result.move}，再远会超出轨道` : '', beats !== undefined && Math.abs(result.length - beats * this.chart.resolution / 4) > 1e-6 ? '长度已缩短，以保留后面相接的一段' : '',
         shape === 'curve' && field('start').disabled ? '起点绑定在地面音符上，起始位置与宽度不可改' : '',
-        `生成 ${result.ids.length} 段；${shape === 'zigzag' ? `折点为${this.nodeKind === 'normal' ? '普通节点' : '控制点'}（跟随“新节点”）` : '中间均为控制点'}`].filter(Boolean).join('；');
+        `生成 ${result.ids.length} 段；${shape !== 'curve' ? `折点为${this.nodeKind === 'normal' ? '普通节点' : '控制点'}（跟随“新节点”）` : '中间均为控制点'}`].filter(Boolean).join('；');
     this.draw();
   }
   private closeShape(apply: boolean): void {
@@ -362,7 +365,7 @@ export class ChartEditor {
     const overflow = this.trackWidth - this.trackViewportWidth;
     this.trackPan = overflow > 0 ? clamp((center * this.trackWidth - this.trackViewportWidth / 2) / overflow, 0, 1) : 0;
     this.hover = undefined;
-    try { window.localStorage.setItem(TRACK_SCALE_KEY, String(this.trackScale)); } catch { /* Display controls also work when storage is unavailable. */ }
+    writeSetting('editor-track-scale', this.trackScale);
     this.syncTrackControls(); this.draw();
   }
   private syncTrackControls(): void {
@@ -494,7 +497,15 @@ export class ChartEditor {
       && getNotePlaybackPoints(this.chart, note).some(item => item.position === 'head'));
   }
   private get noteTool(): NoteType | undefined { return this.tool === 'select' || this.tool === 'erase' ? undefined : this.tool; }
-  private setNodeKind(kind: EditorNodeKind | 'inherit'): void { this.nodeKind = kind; this.host.querySelector<HTMLSelectElement>('[data-option="node-kind"]')!.value = kind; }
+  private setNodeKind(kind: EditorNodeKind | 'inherit'): void { this.nodeKind = kind; this.host.querySelector<HTMLSelectElement>('[data-option="node-kind"]')!.value = kind; this.saveOptions(); }
+  /** Keep the toolbar options for the next session. The wider zoom of alignment mode is temporary and is not kept. */
+  private saveOptions(): void {
+    const options = { 'editor-snap': this.snap, 'editor-snap-base': this.snapBase, 'editor-width': Math.min(this.width, LANES), 'editor-node-kind': this.nodeKind, ...(this.aligning ? {} : { 'editor-zoom': this.zoom }) };
+    const key = JSON.stringify(options);
+    if (key === this.savedOptions) return;
+    this.savedOptions = key;
+    for (const [name, value] of Object.entries(options)) writeSetting(name, value);
+  }
   private setAligning(on: boolean): void {
     if (on && !this.samples) { this.setHint('请先导入音乐，再对齐'); return; }
     if (on && this.inserting) this.setInserting(false);
@@ -532,7 +543,7 @@ export class ChartEditor {
     if (side) { side.hidden = tool !== 'AIR'; side.querySelectorAll<HTMLButtonElement>('button').forEach(button => button.classList.toggle('editor-active', Number(button.dataset.side) === this.airLean)); }
     this.host.querySelector('[data-action="connect"]')?.classList.remove('editor-active');
     this.viewport.style.cursor = tool === 'select' ? 'default' : tool === 'erase' ? 'cell' : 'crosshair';
-    this.setHint(tool === 'select' ? '拖动移动 · 左右边缘改宽度 · 点节点编辑节点、拖动改位置 · Shift 框选追加' : tool === 'erase' ? '橡皮擦：点击删除，拖动框选后松开删除 · S 选择' : `${tool === 'AIR' ? `AIR ${({ IR: '上', UL: '左上', UR: '右上', DW: '下', DL: '左下', DR: '右下' } as Record<string, string>)[this.airDirection]}` : LABEL[tool]}：点击放置${LONG.has(tool) ? '，向上拖动设置终点' : ''}${tool === 'EXTAP' ? '；点 HOLD / SLIDE 的头可设为 EX，再点取消' : ''} · 右键删除 · S 选择`);
+    this.setHint(tool === 'select' ? '拖动移动 · 左右边缘改宽度 · 点节点编辑节点、拖动改位置 · 叠放处再次单击切换 · Shift 框选追加' : tool === 'erase' ? '橡皮擦：点击删除，拖动框选后松开删除 · S 选择' : `${tool === 'AIR' ? `AIR ${({ IR: '上', UL: '左上', UR: '右上', DW: '下', DL: '左下', DR: '右下' } as Record<string, string>)[this.airDirection]}` : LABEL[tool]}：点击放置${LONG.has(tool) ? '，向上拖动设置终点' : ''}${tool === 'EXTAP' ? '；点 HOLD / SLIDE 的头可设为 EX，再点取消' : ''} · 右键删除 · S 选择`);
     this.draw();
   }
 
@@ -547,7 +558,7 @@ export class ChartEditor {
   private onChange(event: Event): void {
     const input = event.target as HTMLInputElement | HTMLSelectElement;
     if (input.dataset.option === 'snap') { this.snap = clamp(Math.round(Number(input.value) || 0), 0, 4096); input.value = String(this.snap); this.updateNavigation(); this.draw(); return; }
-    if (input.dataset.option === 'node-kind') { this.nodeKind = input.value as EditorNodeKind | 'inherit'; return; }
+    if (input.dataset.option === 'node-kind') { this.nodeKind = input.value as EditorNodeKind | 'inherit'; this.saveOptions(); return; }
     if (input.dataset.option === 'snap-base') { this.snapBase = input.value as 'whole' | 'beat'; this.updateNavigation(); this.draw(); return; }
     if (input.dataset.option === 'out-of-lane') { this.commit({ ...this.chart, allowOutOfLane: (input as HTMLInputElement).checked }, (input as HTMLInputElement).checked ? '启用轨道外演出' : '关闭轨道外演出'); return; }
     if (input.dataset.option === 'view-start') { if (this.chart.allowOutOfLane) this.viewStart = clamp(Number(input.value) || 0, -64, this.viewEnd - 4); this.syncAdvancedControls(); this.draw(); return; }
@@ -653,50 +664,65 @@ export class ChartEditor {
     } catch (error) { this.setHint(`属性格式有误：${error instanceof Error ? error.message : String(error)}`); }
   }
 
-  private hit(position: Position): { id: string; kind: DragKind } | undefined {
-    const chart = this.preview ?? this.chart;
-    if (position.x > this.trackRight) return undefined;
+  private hit(position: Position): { id: string; kind: DragKind } | undefined { return this.hits(position)[0]; }
+  /** Everything under the pointer, topmost first. `selectedFirst` puts the selection on top, so a click keeps hold of it. */
+  private hits(position: Position, selectedFirst = true): { id: string; kind: DragKind }[] {
+    const chart = this.preview ?? this.chart, found: { id: string; kind: DragKind }[] = [];
+    if (position.x > this.trackRight) return found;
+    const order = (notes: Note[]) => (selectedFirst ? [...notes].sort((a, b) => Number(this.selection.has(a.id)) - Number(this.selection.has(b.id))) : [...notes]).reverse();
     if (position.x < this.left) {
       if (position.x <= this.airLeft + this.airWidth + 5) {
         const maximum = this.airHeightMaximum(chart);
-        const notes = [...chart.notes].sort((a, b) => Number(this.selection.has(a.id)) - Number(this.selection.has(b.id)));
-        for (const note of notes.reverse()) {
+        for (const note of order(chart.notes)) {
           if (!['AIR_SLIDE', 'AIR_CRUSH'].includes(note.type)) continue;
           for (const endpoint of ['endHeight', 'height'] as const) {
             const height = endpoint === 'height' ? note.height ?? 1 : note.endHeight ?? note.height ?? 1;
             const tick = endpoint === 'height' ? note.tick : endTick(note);
-            if (Math.abs(position.x - this.airHeightX(height, maximum)) < 7 && Math.abs(position.y - this.y(tick)) < 8) return { id: note.id, kind: endpoint };
+            if (Math.abs(position.x - this.airHeightX(height, maximum)) < 7 && Math.abs(position.y - this.y(tick)) < 8) { found.push({ id: note.id, kind: endpoint }); break; }
           }
         }
+        if (found.length) return found;
       }
       const events = [...chart.events].sort((a, b) => a.tick - b.tick);
-      const event = events.find(item => Math.abs(this.y(item.tick) - position.y) < 9 && position.x >= this.eventLeft && position.x < this.eventLeft + 30);
-      return event ? { id: event.id, kind: 'move' } : undefined;
+      for (const item of events) if (Math.abs(this.y(item.tick) - position.y) < 9 && position.x >= this.eventLeft && position.x < this.eventLeft + 30) found.push({ id: item.id, kind: 'move' });
+      return found;
     }
-    const notes = [...chart.notes].sort((a, b) => Number(this.selection.has(a.id)) - Number(this.selection.has(b.id)));
     // A joint is the end of the segment before it; the segment after it is picked by its body only.
     const joints = new Set(chart.notes.map(note => nextEditorSegment(chart, note)?.id));
-    for (let i = notes.length - 1; i >= 0; i--) {
-      const note = notes[i];
+    for (const note of order(chart.notes)) {
       const startY = this.y(note.tick), finishY = this.y(endTick(note));
       const startX = this.x(note.lane), finishX = this.x(endLane(note));
       if (long(note) && Math.abs(position.y - finishY) < 9 && position.x >= finishX - 4 && position.x <= finishX + endWidth(note) * this.laneWidth + 4) {
-        return { id: note.id, kind: Math.abs(position.x - (finishX + endWidth(note) * this.laneWidth)) < 7 ? 'endWidth' : 'end' };
+        found.push({ id: note.id, kind: Math.abs(position.x - (finishX + endWidth(note) * this.laneWidth)) < 7 ? 'endWidth' : 'end' }); continue;
       }
       const span = note.width * this.laneWidth;
       // An AIR is picked by its lifted arrow, which leaves the ground note under it free to click.
       if (note.type === 'AIR' ? Math.abs(position.y - (startY - airArrowLift(span - 2))) <= airArrowHeight(span - 2) / 2 + 2 && position.x >= startX - 3 && position.x <= startX + span + 3
         : !joints.has(note.id) && Math.abs(position.y - startY) < 10 && position.x >= startX - 3 && position.x <= startX + span + 3) {
-        return { id: note.id, kind: Math.abs(position.x - (startX + span)) < 7 ? 'width' : span > 24 && Math.abs(position.x - startX) < 5 ? 'widthLeft' : 'move' };
+        found.push({ id: note.id, kind: Math.abs(position.x - (startX + span)) < 7 ? 'width' : span > 24 && Math.abs(position.x - startX) < 5 ? 'widthLeft' : 'move' }); continue;
       }
       if (long(note) && position.y < startY && position.y > finishY) {
         const t = (startY - position.y) / (startY - finishY);
         const left = startX + (finishX - startX) * t;
         const width = (note.width + (endWidth(note) - note.width) * t) * this.laneWidth;
-        if (position.x >= left && position.x <= left + width) return { id: note.id, kind: 'move' };
+        if (position.x >= left && position.x <= left + width) found.push({ id: note.id, kind: 'move' });
       }
     }
-    return undefined;
+    return found;
+  }
+  /** Take the pick that lies under the current one, wrapping round to the top. */
+  private cycleSelection(point: Position): boolean {
+    const stack = this.hits(point, false), current = stack.findIndex(item => this.selection.has(item.id));
+    if (stack.length < 2 || current < 0) return false;
+    const next = stack[(current + 1) % stack.length], note = this.chart.notes.find(item => item.id === next.id);
+    this.cycled = { selection: new Set(this.selection), joint: this.pickedJoint, head: this.pickedHead, time: performance.now() };
+    this.selection = new Set([next.id]);
+    this.pickedJoint = next.kind === 'end' || next.kind === 'endWidth' ? next.id : undefined;
+    this.pickedHead = this.headAt(next.id, next.kind, point) ? next.id : undefined;
+    this.refreshSelection();
+    const node = next.kind === 'end' || next.kind === 'endWidth' || next.kind === 'endHeight' ? ' 末节点' : next.kind === 'height' ? ' 头节点' : '';
+    this.setHint(`叠放 ${(current + 1) % stack.length + 1}/${stack.length}：${note ? LABEL[note.type] + node : '事件'} · 再次单击切换到下一个`);
+    return true;
   }
 
   private pointerDown(event: PointerEvent): void {
@@ -737,6 +763,7 @@ export class ChartEditor {
       return;
     }
     const before = new Set(this.selection);
+    this.cycling = Boolean(hit && event.button === 0 && !event.shiftKey && !event.ctrlKey && !event.metaKey && before.size === 1 && before.has(hit.id));
     let kind: DragKind = 'box', id: string | undefined;
     if (event.button === 1) { kind = 'pan'; event.preventDefault(); }
     else if (!hit && (point.x < this.eventLeft || point.y > this.canvasHeight - this.bottom)) { kind = 'seek'; this.emitCursor(point.tick); }
@@ -876,12 +903,28 @@ export class ChartEditor {
     this.drag = undefined; this.preview = undefined;
     if (this.canvas.hasPointerCapture(event.pointerId)) this.canvas.releasePointerCapture(event.pointerId);
     if (this.tool === 'erase' && drag.kind === 'box' && drag.moved && this.selection.size) { this.deleteSelection(); return; }
-    if (result && (drag.moved || drag.kind === 'draw')) this.commit(result, drag.kind === 'draw' ? '放置音符' : drag.kind === 'move' ? '移动选中项' : '调整长条节点');
+    const cycling = this.cycling && !drag.moved; this.cycling = false;
+    if (cycling && this.cycleSelection(drag.start)) { this.draw(); return; }
+    if (result && drag.kind === 'move' && drag.moved) this.commitMove(result, '移动选中项');
+    else if (result && (drag.moved || drag.kind === 'draw')) this.commit(result, drag.kind === 'draw' ? '放置音符' : '调整长条节点');
     else this.refreshSelection();
+  }
+  /** Commit a move; an ExTAP that lands exactly on a HOLD / SLIDE head makes that long note EX, as placing it there does. */
+  private commitMove(moved: Chart, label: string): void {
+    const { chart, merged } = mergeEditorExTaps(moved, this.selection);
+    if (!merged.length) { this.commit(moved, label); return; }
+    for (const note of this.chart.notes) if (this.selection.has(note.id) && !chart.notes.some(item => item.id === note.id)) this.selection.delete(note.id);
+    for (const id of merged) this.selection.add(id);
+    this.commit(chart, 'ExTAP 并入长条头');
+    this.setHint(`ExTAP 与长条头重合，已并入：${merged.length} 条长条设为 EX`);
   }
   private cancelDrag(): void { this.drag = undefined; this.preview = undefined; this.refreshSelection(); }
   private doubleClick(event: MouseEvent): void {
-    const point = this.position(event), hit = this.hit(point);
+    const point = this.position(event);
+    // The second click of the pair has just moved on to the next stacked item; go back to the one the double click began on.
+    if (this.cycled && performance.now() - this.cycled.time < 600) { this.selection = this.cycled.selection; this.pickedJoint = this.cycled.joint; this.pickedHead = this.cycled.head; this.refreshSelection(); }
+    this.cycled = undefined;
+    const hit = this.hit(point);
     if (!hit) return;
     const result = splitEditorNote(this.chart, hit.id, point.tick, this.nodeKind === 'inherit' ? undefined : this.nodeKind);
     if (result !== this.chart) this.commit(result, '插入长条节点');
@@ -965,7 +1008,7 @@ export class ChartEditor {
     if (key === 'pageup' || key === 'pagedown') { event.preventDefault(); this.scroll = Math.max(0, this.scroll + (key === 'pageup' ? 1 : -1) * this.canvasHeight / this.zoom * .8); this.updateNavigation(); this.draw(); }
     if (this.selection.size && ['arrowup', 'arrowdown', 'arrowleft', 'arrowright'].includes(key)) {
       event.preventDefault(); const amount = event.shiftKey ? this.chart.resolution / 4 : this.step;
-      this.commit(moveEditorSelection(this.chart, this.selection, key === 'arrowup' ? amount : key === 'arrowdown' ? -amount : 0, key === 'arrowleft' ? -1 : key === 'arrowright' ? 1 : 0), '微调选中项');
+      this.commitMove(moveEditorSelection(this.chart, this.selection, key === 'arrowup' ? amount : key === 'arrowdown' ? -amount : 0, key === 'arrowleft' ? -1 : key === 'arrowright' ? 1 : 0), '微调选中项');
     }
   }
 
@@ -1035,6 +1078,7 @@ export class ChartEditor {
   }
 
   private draw(): void {
+    this.saveOptions();
     if (this.pendingDraw) return;
     this.pendingDraw = requestAnimationFrame(() => { this.pendingDraw = 0; this.paint(); });
   }

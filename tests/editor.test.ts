@@ -2,7 +2,7 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import { createChart, createNote, type Note } from '../src/core/model';
 import { parseC2S, serializeC2S } from '../src/core/c2s';
-import { mirrorEditorSelection, moveEditorSelection, parseEditorFraction, splitEditorNote, appendEditorNote, copyEditorSelection, flipEditorSelection, scaleEditorSelection, shapeEditorSlide, removeEditorJoint, editorChain, attachEditorAir, boundEditorParent, setEditorEx } from '../src/renderer/editor';
+import { mirrorEditorSelection, moveEditorSelection, parseEditorFraction, splitEditorNote, appendEditorNote, copyEditorSelection, flipEditorSelection, scaleEditorSelection, shapeEditorSlide, removeEditorJoint, mergeEditorExTaps, editorChain, attachEditorAir, boundEditorParent, setEditorEx } from '../src/renderer/editor';
 import { getNoteScrollGroup } from '../src/core/timing';
 
 test('moving a mixed selection clamps the whole group without changing spacing or source records', () => {
@@ -253,23 +253,33 @@ test('SLIDE shapes replace one segment by a connected path that keeps the start 
   const before = { ...createNote('SLIDE', 0, 6, 4), duration: 96, endLane: 0, endWidth: 4, attributes: { visible: false } };
   const restarted = shapeEditorSlide({ ...chart, notes: [before, slide, next] }, slide.id, { shape: 'curve', length: 384, move: 2, start: 5, width: 3, count: 1, step: 96, kind: 'control' })!.chart.notes;
   assert.deepEqual([restarted[0].endLane, restarted[0].endWidth, restarted[1].lane, restarted[1].width], [5, 3, 5, 3]);
-  // Zigzag: straight pieces between the start lane and the far side; corners take the requested node kind.
-  const zigzag = shapeEditorSlide(chart, slide.id, { shape: 'zigzag', length: 192, move: 3, count: 4, step: 24, kind: 'normal' })!;
+  // Zigzag: every tooth goes out to the far side and back, so the tail is level with the head for any count.
+  const zigzag = shapeEditorSlide(chart, slide.id, { shape: 'zigzag', length: 192, move: 3, count: 2, step: 24, kind: 'normal' })!;
   assert.deepEqual(rows(zigzag.chart.notes).slice(0, 4), [[96, 48, 0, 3, 4, 4], [144, 48, 3, 0, 4, 4], [192, 48, 0, 3, 4, 4], [240, 48, 3, 0, 4, 4]]);
   assert.deepEqual(rows(zigzag.chart.notes)[4], [288, 384, 0, 8, 4, 2], 'the next segment starts at the new end and keeps its own end');
   assert.deepEqual(zigzag.chart.notes.filter(note => zigzag.ids.includes(note.id)).map(note => note.attributes.visible), [true, true, true, true]);
-  const soft = shapeEditorSlide(chart, slide.id, { shape: 'zigzag', length: 192, move: 3, count: 4, step: 24, kind: 'control' })!;
+  const soft = shapeEditorSlide(chart, slide.id, { shape: 'zigzag', length: 192, move: 3, count: 2, step: 24, kind: 'control' })!;
   assert.deepEqual(soft.chart.notes.filter(note => soft.ids.includes(note.id)).map(note => note.attributes.visible), [false, false, false, true]);
-  // Wave: there and back once, samples on a straight line are dropped.
-  const wave = shapeEditorSlide(chart, slide.id, { shape: 'wave', length: 384, move: 4, count: 1, step: 96, kind: 'control' })!;
-  assert.deepEqual(rows(wave.chart.notes).slice(0, 2).map(row => [row[0], row[2], row[3]]), [[96, 0, 4], [288, 4, 0]]);
+  const odd = shapeEditorSlide(chart, slide.id, { shape: 'zigzag', length: 288, move: 3, count: 3, step: 24, kind: 'control' })!;
+  assert.equal(odd.ids.length, 6);
+  assert.deepEqual(rows(odd.chart.notes).slice(0, 6).map(row => [row[2], row[3]]), [[0, 3], [3, 0], [0, 3], [3, 0], [0, 3], [3, 0]], 'an odd count also ends on the start lane');
+  // Wave: a zigzag about the start lane, out to one side, across to the other and back; corners take the node kind.
+  const centred = { ...slide, lane: 6, endLane: 6 }, waveChart = { ...chart, notes: [tap, centred] };
+  const wave = shapeEditorSlide(waveChart, slide.id, { shape: 'wave', length: 384, move: 4, count: 1, step: 96, kind: 'normal' })!;
+  assert.deepEqual(rows(wave.chart.notes).map(row => [row[0], row[1], row[2], row[3]]), [[96, 96, 6, 10], [192, 192, 10, 2], [384, 96, 2, 6]]);
+  assert.deepEqual(wave.chart.notes.filter(note => wave.ids.includes(note.id)).map(note => note.attributes.visible), [true, true, true]);
+  const twice = shapeEditorSlide(waveChart, slide.id, { shape: 'wave', length: 384, move: -2, count: 2, step: 96, kind: 'control' })!;
+  assert.deepEqual(rows(twice.chart.notes).map(row => [row[2], row[3]]), [[6, 4], [4, 8], [8, 4], [4, 8], [8, 6]]);
+  // Both sides must fit: two lanes from the left edge leave a swing of two.
+  const edge = shapeEditorSlide({ ...chart, notes: [{ ...slide, lane: 2, endLane: 2 }] }, slide.id, { shape: 'wave', length: 384, move: 5, count: 1, step: 96, kind: 'control' })!;
+  assert.equal(edge.move, 2); assert.deepEqual(rows(edge.chart.notes).map(row => row[3]), [4, 0, 2]);
   // The far side is narrowed to stay on the lanes, and the length stops one step before the next segment's end.
-  const narrowed = shapeEditorSlide(chart, slide.id, { shape: 'zigzag', length: 96, move: 20, count: 2, step: 24, kind: 'control' })!;
+  const narrowed = shapeEditorSlide(chart, slide.id, { shape: 'zigzag', length: 96, move: 20, count: 1, step: 24, kind: 'control' })!;
   assert.equal(narrowed.move, 12); assert.equal(Math.max(...narrowed.chart.notes.map(note => (note.endLane ?? note.lane) + (note.endWidth ?? note.width))), 16);
   assert.equal(shapeEditorSlide(chart, slide.id, { shape: 'curve', length: 9999, move: 4, count: 1, step: 96, kind: 'control' })!.length, 480);
   // AIR SLIDE heights follow the path linearly.
   const air = { ...createNote('AIR_SLIDE', 0, 2, 2), duration: 96, endLane: 6, height: 1, endHeight: 5 };
-  const lifted = shapeEditorSlide({ ...chart, notes: [air] }, air.id, { shape: 'zigzag', length: 96, move: 4, count: 2, step: 24, kind: 'control' })!.chart.notes;
+  const lifted = shapeEditorSlide({ ...chart, notes: [air] }, air.id, { shape: 'zigzag', length: 96, move: 4, count: 1, step: 24, kind: 'control' })!.chart.notes;
   assert.deepEqual(lifted.map(note => [note.height, note.endHeight]), [[1, 3], [3, 5]]);
   assert.equal(shapeEditorSlide(chart, tap.id, { shape: 'curve', length: 96, move: 4, count: 1, step: 24, kind: 'control' }), undefined);
   assert.equal(shapeEditorSlide(chart, slide.id, { shape: 'curve', length: 0, move: 4, count: 1, step: 24, kind: 'control' }), undefined);
@@ -317,4 +327,23 @@ test('removing a joint joins the two segments around it and keeps what hangs on 
   const last = { ...createNote('AIR_SLIDE', 192, 4, 2), duration: 96, endLane: 4, height: 5, endHeight: 5, attributes: { visible: true, parent: 'ASD' } };
   const lifted = removeEditorJoint({ ...chart, notes: [up, on, last] }, up.id).notes;
   assert.deepEqual(lifted.map(note => [note.duration, note.height, note.endHeight, note.attributes.visible, note.attributes.parent]), [[192, 1, 5, true, undefined], [96, 5, 5, true, 'ASD']]);
+});
+
+test('an ExTAP moved exactly onto a HOLD / SLIDE head becomes that long note\'s EX', () => {
+  const chart = createChart();
+  const head = { ...createNote('SLIDE', 96, 0, 4), duration: 96, endLane: 4, attributes: { visible: true } };
+  const tail = { ...createNote('SLIDE', 192, 4, 4), duration: 96, endLane: 8, attributes: { visible: true, parent: 'SLD' } };
+  const hold = { ...createNote('HOLD', 96, 8, 2), duration: 96 };
+  const onHead = { ...createNote('EXTAP', 96, 0, 4), attributes: { effect: 'DW' } }, onHold = createNote('EXTAP', 96, 8, 2);
+  const onJoint = createNote('EXTAP', 192, 4, 4), narrower = createNote('EXTAP', 96, 0, 3), untouched = createNote('EXTAP', 96, 8, 2);
+  chart.notes = [head, tail, hold, onHead, onHold, onJoint, narrower, untouched];
+  const result = mergeEditorExTaps(chart, new Set([onHead.id, onHold.id, onJoint.id, narrower.id]));
+  assert.deepEqual(result.merged, [head.id, hold.id]);
+  assert.deepEqual(result.chart.notes.map(note => note.id), [head.id, tail.id, hold.id, onJoint.id, narrower.id, untouched.id], 'only the selected ExTAPs that sit on a head are removed');
+  assert.deepEqual(result.chart.notes.slice(0, 3).map(note => [note.attributes.ex, note.attributes.effect]), [[true, 'DW'], [true, 'DW'], [true, undefined]]);
+  // An AIR bound to the ExTAP keeps it a note of its own.
+  const carrier = createNote('EXTAP', 96, 8, 2), air = { ...createNote('AIR', 96, 8, 2), attributes: { direction: 'IR', color: 'DEF', parent: 'CHR' } };
+  const bound = { ...chart, notes: [hold, carrier, air] };
+  assert.equal(mergeEditorExTaps(bound, new Set([carrier.id])).chart, bound);
+  assert.equal(mergeEditorExTaps(chart, new Set([tail.id])).chart, chart);
 });
