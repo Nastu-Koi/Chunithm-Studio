@@ -116,6 +116,18 @@ CRUSH `add_` 源材质为 layer factors 1/1，operation 2，因此 RGB 乘两张
 
 `DefaultPSFunc.h` 有纹理时先测试 `base.a - shapeParam.x`，小于零才丢弃；测试对象不是乘过顶点透明度的最终 alpha。`0x6d82f0..0x6d8392` 经 `0x659dd0` 读取无符号 alphaRef 字节，乘 `0x179567c` 的 1/255，再限制最小值为 0.0001；因此 25 对应 25/255，0 对应 0.0001。UV 静态变换为 `uv * tsUVScrollUVn.zw + tsUVScrollUVn.xy`，原参数已随模型保留；动态时间推进不据名称臆造。
 
+## 长条带体的运行时状态
+
+AH 顶面与 AS Joint 的原生状态亮度见上文（普通 27/255、held 80/255、failed 3/255）。播放器始终使用普通状态：原游戏按运行时判定状态切换（各状态值的含义尚未核清），预览不模拟判定状态，轨迹在判定线前后保持同一亮度；按音符起点切换会让已越过判定线的各段比未到达的段亮约 3 倍。`getNativeAirSlideGeometry` 与 `getNativeAirHoldMaterialColors` 仍保留三种状态，供日后显示判定结果时使用。`tests/air-trail-brightness.test.ts` 检查 AHD／ASD 在判定前、中、后都只出现 27/255。
+
+地面 HOLD／SLIDE 带体也有同类状态，播放器尚未实现：
+
+- 顶点颜色来自静态初始化：`0x4d1fe0` 设 `0x1cbc498` 为白色 RGBA(255,255,255,255)，`0x4d1fc0` 设 `0x1cbc4a0` 为 RGBA(102,102,102,255)（约 0.4 灰）。
+- HOLD 更新 `0xc4e8f6..0xc4e944` 由运行时 `+0xec`／`+0xe8` 得出 mode 0/1/2，传入几何 `0xc2dee0`。`0xc2e1d8..0xc2e1f9`：mode 0 白色，mode 2 改用 0.4 灰；`0xc2e3cf` 把一个浮点写入模型 `+0x1d4`，mode 0/2 为 1.0（`0xc2e140`），mode 1 为 `sin(2π·frac(t·0.05))·0.25 + 1.5`（`0xc2e328..0xc2e388`，常数 `0x1914a68`、`0x18a15b4`、`0x18a2724`、`0x18a43b4`），在 1.25～1.75 之间脉动。
+- SLIDE 几何 `0xc2c5a0` 的 `0xc2d59b..0xc2d5ad` 与 `0xc2d900` 用同一组颜色和同一脉动公式。
+- `+0x1d4` 位于带体的绘制配置 `+0x1c8` 内（偏移 `+0xc`）。初始化 `0xdacb90` 写入 `[1, 4(blend), 0x8005, 1.0, 0]`；应用 `0xdac9c0` 把这个浮点复制到渲染状态 `+0x24`，与 blend（`+0x4`）、贴图（`+0x10→+0x30`）一起提交。渲染状态 `+0x24` 由哪段代码使用尚未找到，因此它是否是 RGB 亮度倍率仍是假设；`t` 的单位与 `+0xec` 各值对应的判定状态也未核清。
+- 播放器当前对 HOLD／SLIDE 带体固定白色、alpha 1、`SRC_ALPHA / ONE / ADD`，对应 mode 0。
+
 ## 边界
 
 完整原网格和原图不自动等于完整原生演出。尚未核清的动态材质/UV、CRUSH Ground/Arch 变换和打击粒子必须单独标记覆盖程度。ModelSet 390/391 的 Ground/Arch 资源确实存在，但已确认的 ALD 初始化只取 Top/Ladder 与 AirLadderLine；尚无证据支持把 Ground/Arch 强加到普通 CRUSH。新增自定义几何、颜色近似或缺资源 fallback 都不能标记为原生已还原。

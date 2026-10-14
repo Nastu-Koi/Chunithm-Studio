@@ -356,7 +356,8 @@ export class ChartPlayer {
         color: String(note.attributes.color ?? 'DEF'), rootCenterLane: uvSpan?.rootCenterLane ?? note.lane + note.width / 2,
         vStart: uvSpan ? nativeAirSlideVAtTick(this.chart, uvSpan, segment.startTick) : 1,
         vEnd: uvSpan ? nativeAirSlideVAtTick(this.chart, uvSpan, segment.endTick) : 0,
-        status: currentTick >= note.tick ? 1 : 0, headRiser: headRiser && currentTick <= note.tick && Math.abs(segment.startTick - note.tick) < 1e-7,
+        // The trail keeps the ordinary pending brightness throughout; the held state (80/255) is not shown.
+        status: 0, headRiser: headRiser && currentTick <= note.tick && Math.abs(segment.startTick - note.tick) < 1e-7,
         lineOrientation: note.attributes.effect === 'AxisY' ? 1 : note.attributes.effect === 'AxisZ' ? 2 : note.attributes.effect === 'Trace' ? 3 : 0,
         traceHeadCap: this.crushRoots.has(note.id) && segment.startTick === note.tick && currentTick <= note.tick,
       });
@@ -383,7 +384,7 @@ export class ChartPlayer {
           [position[0] * xScale, position[1] + nativeAirBaseHeight(note.height ?? 1), 0], this.speed);
       };
       const roof = this.nativeModel(`NotesAirHold_JointRoof_${String(size).padStart(2, '0')}${suffix}`, 0, 0, 0, 1, 1, position => projected(position, note.width / size), clip,
-        getNativeAirHoldMaterialColors(currentTick >= note.tick ? 1 : 0).roof);
+        getNativeAirHoldMaterialColors(0).roof);
       const line = this.nativeModel(`NotesAirHold_LineTop${suffix}`, 0, 0, 0, 1, 1, position => projected(position, 1), clip);
       if (roof && line) return;
     }
