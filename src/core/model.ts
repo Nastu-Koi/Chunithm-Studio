@@ -15,7 +15,23 @@ export const NOTE_TYPES = [
   'DAMAGE',
 ] as const;
 export type NoteType = (typeof NOTE_TYPES)[number];
-export type Difficulty = 'BASIC' | 'ADVANCED' | 'EXPERT' | 'MASTER' | 'ULTIMA' | 'WORLD’S END';
+/** 长条：有持续时间的音符。 */
+export const LONG_NOTE_TYPES: ReadonlySet<NoteType> = new Set(['HOLD', 'SLIDE', 'AIR_HOLD', 'AIR_SLIDE', 'AIR_CRUSH']);
+/** AIR 系列：在空中判定的音符。 */
+export const AIR_NOTE_TYPES: ReadonlySet<NoteType> = new Set(['AIR', 'AIR_HOLD', 'AIR_SLIDE', 'AIR_CRUSH']);
+/** 必须绑定父音符的 AIR 系列。 */
+export const PARENTED_NOTE_TYPES: ReadonlySet<NoteType> = new Set(['AIR', 'AIR_HOLD', 'AIR_SLIDE']);
+/** 由首尾相接的多段组成的长条。 */
+export const CHAIN_NOTE_TYPES: ReadonlySet<NoteType> = new Set(['SLIDE', 'AIR_SLIDE', 'AIR_CRUSH']);
+/** 节点分普通节点与控制节点的长条。 */
+export const NODE_KIND_NOTE_TYPES: ReadonlySet<NoteType> = new Set(['SLIDE', 'AIR_HOLD', 'AIR_SLIDE']);
+/** 首尾各带 AIR 高度的长条。 */
+export const HEIGHT_NOTE_TYPES: ReadonlySet<NoteType> = new Set(['AIR_SLIDE', 'AIR_CRUSH']);
+/** 有 EX 变体的音符。 */
+export const EX_NOTE_TYPES: ReadonlySet<NoteType> = new Set(['TAP', 'HOLD', 'SLIDE']);
+/** In native order: the index is the difficulty number in chart file names and Music.xml. */
+export const DIFFICULTIES = ['BASIC', 'ADVANCED', 'EXPERT', 'MASTER', 'ULTIMA', 'WORLD’S END'] as const;
+export type Difficulty = (typeof DIFFICULTIES)[number];
 export type Scalar = string | number | boolean;
 /** Native note attributes. Every key is optional; absent means the native default. */
 export interface NoteAttributes {
@@ -179,7 +195,7 @@ export function createProject(): Project {
   };
 }
 export function createNote(type: NoteType, tick: number, lane = 0, width = 2): Note {
-  const long = ['HOLD', 'SLIDE', 'AIR_HOLD', 'AIR_SLIDE', 'AIR_CRUSH'].includes(type);
+  const long = LONG_NOTE_TYPES.has(type);
   // Native height 1 is the ground plane; 5 is the normal 15.574-unit AIR plane.
   return {
     id: makeId('note'),
@@ -188,7 +204,7 @@ export function createNote(type: NoteType, tick: number, lane = 0, width = 2): N
     lane,
     width,
     ...(long ? { duration: 96, endLane: lane, endWidth: width } : {}),
-    ...(['AIR_SLIDE', 'AIR_CRUSH'].includes(type) ? { height: 5, endHeight: 5 } : {}),
+    ...(HEIGHT_NOTE_TYPES.has(type) ? { height: 5, endHeight: 5 } : {}),
     attributes: {},
   };
 }

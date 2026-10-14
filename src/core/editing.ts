@@ -1,4 +1,17 @@
-import { LANES, makeId, type Chart, type ChartEvent, type Note, type NoteType } from './model';
+import {
+  AIR_NOTE_TYPES,
+  CHAIN_NOTE_TYPES,
+  HEIGHT_NOTE_TYPES,
+  LANES,
+  LONG_NOTE_TYPES,
+  makeId,
+  NODE_KIND_NOTE_TYPES,
+  PARENTED_NOTE_TYPES,
+  type Chart,
+  type ChartEvent,
+  type Note,
+  type NoteType,
+} from './model';
 import { getNoteScrollGroup } from './timing';
 import { noteNativeKind } from './validation';
 import { getNativeNoteTag } from './c2s';
@@ -6,19 +19,16 @@ import { getNativeAirBindings, getNativeSlideChains, nativeParentFamily } from '
 
 /** Pure chart transformations behind the editor. Every function returns a new Chart and never mutates its input. */
 export type Clipboard = { notes: Note[]; events: ChartEvent[]; firstTick: number };
-export const LONG = new Set<NoteType>(['HOLD', 'SLIDE', 'AIR_HOLD', 'AIR_SLIDE', 'AIR_CRUSH']);
-export const AIR = new Set<NoteType>(['AIR', 'AIR_HOLD', 'AIR_SLIDE', 'AIR_CRUSH']);
-export const CHAIN = new Set<NoteType>(['SLIDE', 'AIR_SLIDE', 'AIR_CRUSH']);
 export const clamp = (value: number, low: number, high: number) => Math.min(high, Math.max(low, value));
 export const endLane = (note: Note) => note.endLane ?? note.lane;
 export const endWidth = (note: Note) => note.endWidth ?? note.width;
 export const endTick = (note: Note) => note.tick + (note.duration ?? 0);
 export const sameTick = (a: number, b: number) => Math.abs(a - b) < 1e-6;
 export const formatTick = (value: number) => Number(value.toFixed(6)).toString();
-export const long = (note: Note) => LONG.has(note.type);
+export const long = (note: Note) => LONG_NOTE_TYPES.has(note.type);
 export const copyNote = (note: Note): Note => ({ ...note, attributes: { ...note.attributes } });
 export type EditorNodeKind = 'normal' | 'control';
-export const hasNodeKind = (note: Note) => ['SLIDE', 'AIR_HOLD', 'AIR_SLIDE'].includes(note.type);
+export const hasNodeKind = (note: Note) => NODE_KIND_NOTE_TYPES.has(note.type);
 const continuationParent = (note: Note): string =>
   note.type === 'AIR_SLIDE'
     ? getNativeNoteTag(note)
@@ -62,7 +72,10 @@ export function inferEditorParent(chart: Chart, tick: number, lane: number, widt
   const parent = chart.notes
     .filter(
       note =>
-        sameTick(endTick(note), tick) && endLane(note) === lane && endWidth(note) === width && !AIR.has(note.type),
+        sameTick(endTick(note), tick) &&
+        endLane(note) === lane &&
+        endWidth(note) === width &&
+        !AIR_NOTE_TYPES.has(note.type),
     )
     .at(-1);
   return parent ? groundParentToken(parent) : 'TAP';
@@ -92,7 +105,7 @@ export function selectionWithBoundAir(chart: Chart, ids: Set<string>, withParent
 export function attachEditorAir(chart: Chart, air: Note, parentId: string): Chart | undefined {
   const index = chart.notes.findIndex(note => note.id === parentId),
     parent = chart.notes[index];
-  if (!parent || AIR.has(parent.type) || !['AIR', 'AIR_HOLD', 'AIR_SLIDE'].includes(air.type)) return undefined;
+  if (!parent || AIR_NOTE_TYPES.has(parent.type) || !PARENTED_NOTE_TYPES.has(air.type)) return undefined;
   const lane = endLane(parent),
     width = endWidth(parent);
   const note: Note = {
@@ -127,7 +140,7 @@ export function syncEditorAirBindings(before: Chart, after: Chart): Chart {
   for (const [groundId, chain] of airOf) {
     const ground = current.get(groundId),
       head = current.get(chain[0].id);
-    if (!ground || !head || AIR.has(ground.type) || !AIR.has(head.type)) continue;
+    if (!ground || !head || AIR_NOTE_TYPES.has(ground.type) || !AIR_NOTE_TYPES.has(head.type)) continue;
     const tick = endTick(ground),
       lane = endLane(ground),
       width = endWidth(ground),
@@ -158,7 +171,7 @@ export function syncEditorAirBindings(before: Chart, after: Chart): Chart {
 /** Move an AIR-height joint and keep its directly connected segment aligned. */
 export function setEditorAirHeight(chart: Chart, id: string, endpoint: 'height' | 'endHeight', height: number): Chart {
   const note = chart.notes.find(item => item.id === id);
-  if (!note || !['AIR_SLIDE', 'AIR_CRUSH'].includes(note.type) || !Number.isFinite(height) || height < 0) return chart;
+  if (!note || !HEIGHT_NOTE_TYPES.has(note.type) || !Number.isFinite(height) || height < 0) return chart;
   const atEnd = endpoint === 'endHeight',
     tick = atEnd ? endTick(note) : note.tick;
   const lane = atEnd ? endLane(note) : note.lane,
@@ -236,7 +249,7 @@ export function moveEditorSelection(chart: Chart, ids: Set<string>, ticks: numbe
     maxDelta = Infinity;
   const connections: { neighbor: Note; selected: Note; side: 'before' | 'after' }[] = [];
   for (const note of notes)
-    if (CHAIN.has(note.type))
+    if (CHAIN_NOTE_TYPES.has(note.type))
       for (const neighbor of chart.notes) {
         if (ids.has(neighbor.id) || neighbor.type !== note.type) continue;
         if (
@@ -642,7 +655,7 @@ export function mergeEditorExTaps(chart: Chart, ids: Set<string>): { chart: Char
     if (
       !tap ||
       tap.type !== 'EXTAP' ||
-      chart.notes.some(note => AIR.has(note.type) && boundEditorParent(chart, note.id)?.id === id)
+      chart.notes.some(note => AIR_NOTE_TYPES.has(note.type) && boundEditorParent(chart, note.id)?.id === id)
     )
       continue;
     const chains = getNativeSlideChains(chart);

@@ -3,10 +3,9 @@ import { createHash } from 'node:crypto';
 import path from 'node:path';
 import { XMLParser } from 'fast-xml-parser';
 import type { LibraryEntry } from '../bridge';
-import type { Difficulty } from '../core/model';
+import { DIFFICULTIES, type Difficulty } from '../core/model';
 import { validateXmlNode, xmlMetadataFromSource, type XmlMetadata, type XmlNode } from '../core/xml-metadata';
 const parser = new XMLParser({ ignoreAttributes: false, parseTagValue: false });
-const difficulties: Difficulty[] = ['BASIC', 'ADVANCED', 'EXPERT', 'MASTER', 'ULTIMA', 'WORLD’S END'];
 const array = <T>(v: T | T[] | undefined): T[] => (v === undefined ? [] : Array.isArray(v) ? v : [v]);
 /** Concurrent file-system work per batch; bounded so a large library never opens thousands of files at once. */
 const BATCH = 32;
@@ -221,7 +220,7 @@ export async function scanLibrary(gamePath: string, options: ScanOptions = {}): 
       for (const [index, fumen] of array<any>(data.fumens?.MusicFumenData).entries()) {
         if (String(fumen.enable).toLowerCase() !== 'true' || !fumen.file?.path) continue;
         const difficultyId = Number(fumen.type?.id ?? index);
-        const difficulty = difficulties[difficultyId];
+        const difficulty = DIFFICULTIES[difficultyId];
         if (!difficulty) continue;
         const chartPath = (await musicAsset(folder, String(fumen.file.path))) || path.join(folder, fumen.file.path);
         const level = Number(fumen.level ?? 0),
@@ -253,7 +252,7 @@ export async function scanLibrary(gamePath: string, options: ScanOptions = {}): 
   );
   const result = resolved
     .flat()
-    .sort((a, b) => a.musicId - b.musicId || difficulties.indexOf(a.difficulty) - difficulties.indexOf(b.difficulty));
+    .sort((a, b) => a.musicId - b.musicId || DIFFICULTIES.indexOf(a.difficulty) - DIFFICULTIES.indexOf(b.difficulty));
   if (options.cacheFile) {
     const cache: LibraryCache = { format: CACHE_FORMAT, gamePath, signature, entries: result };
     try {

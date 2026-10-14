@@ -1,4 +1,4 @@
-import type { Chart, Note } from '../core/model';
+import { PARENTED_NOTE_TYPES, type Chart, type Note } from '../core/model';
 import { getC2SEntityOrder } from '../core/c2s';
 import { tickToSeconds } from '../core/timing';
 
@@ -60,7 +60,7 @@ function airSlideChains(chart: Chart): Note[][] {
           : -1;
       const index = match < 0 ? roots.push({ ground: note, air: [] }) - 1 : candidates.splice(match, 1)[0];
       insert(groundTails, `${family}:${geometry(note, true)}`, index);
-    } else if (['AIR', 'AIR_HOLD', 'AIR_SLIDE'].includes(note.type)) {
+    } else if (PARENTED_NOTE_TYPES.has(note.type)) {
       const parent = String(note.attributes.parent ?? 'TAP');
       const continuation =
         (note.type === 'AIR_HOLD' && ['AHD', 'AHX'].includes(parent)) ||

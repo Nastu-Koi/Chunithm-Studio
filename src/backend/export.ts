@@ -2,7 +2,7 @@ import { access, mkdir, mkdtemp, readFile, readdir, realpath, rename, rm, writeF
 import path from 'node:path';
 import { XMLBuilder, XMLParser } from 'fast-xml-parser';
 import sharp from 'sharp';
-import type { Project } from '../core/model';
+import { DIFFICULTIES, type Project } from '../core/model';
 import { serializeC2S, parseC2S } from '../core/c2s';
 import { validateChart } from '../core/validation';
 import {
@@ -290,8 +290,7 @@ export async function exportOpt(
     throw new Error('Music ID 与 cueFile ID 必须是 1–9999 的整数。');
   if (!project.metadata.title.trim()) throw new Error('请填写曲名。');
   if (!project.audio.path || (!project.coverPath && !options.cover)) throw new Error('完整 OPT 导出需要音乐和封面。');
-  const difficultyNames = ['BASIC', 'ADVANCED', 'EXPERT', 'MASTER', 'ULTIMA', 'WORLD’S END'];
-  const difficulty = difficultyNames.indexOf(project.metadata.difficulty),
+  const difficulty = DIFFICULTIES.indexOf(project.metadata.difficulty),
     worldsEnd = difficulty === 5;
   if (difficulty < 0) throw new Error('未知难度。');
   if (worldsEnd && (!weTag || !Number.isInteger(stars) || stars < 1 || stars > 5))

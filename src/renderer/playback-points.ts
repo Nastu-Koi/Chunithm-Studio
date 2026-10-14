@@ -1,4 +1,4 @@
-import type { Chart, Note } from '../core/model';
+import { NODE_KIND_NOTE_TYPES, type Chart, type Note } from '../core/model';
 import { buildJudgementTimeline } from '../core/judgement';
 import { getNotePlaybackPoints, type NotePlaybackPoint } from '../core/timing';
 
@@ -16,7 +16,7 @@ export function getPlayerPlaybackPoints(chart: Chart, target: Note): readonly No
     );
     for (const note of chart.notes) {
       const original = getNotePlaybackPoints(chart, note);
-      if (!['SLIDE', 'AIR_HOLD', 'AIR_SLIDE'].includes(note.type)) {
+      if (!NODE_KIND_NOTE_TYPES.has(note.type)) {
         points.set(note.id, original);
         continue;
       }

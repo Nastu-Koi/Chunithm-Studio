@@ -1,4 +1,5 @@
 import type { Chart, Note } from '../core/model';
+import { upperBound } from '../core/search';
 import { getPlayerPlaybackPoints } from './playback-points';
 import { buildJudgementTimeline } from '../core/judgement';
 import { tickToSeconds } from '../core/timing';
@@ -101,15 +102,6 @@ export function recentNoteEffects(
   seconds: number,
   lifetime: number,
 ): readonly NoteEffectEvent[] {
-  const bound = (time: number) => {
-    let low = 0,
-      high = events.length;
-    while (low < high) {
-      const mid = (low + high) >>> 1;
-      if (events[mid].time <= time) low = mid + 1;
-      else high = mid;
-    }
-    return low;
-  };
+  const bound = (time: number) => upperBound(events, time, event => event.time);
   return events.slice(bound(seconds - lifetime), bound(seconds));
 }

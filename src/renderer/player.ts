@@ -1,6 +1,6 @@
 import { getSlideUvSpans, slideUvProgress } from './slide-timing';
-import type { Chart, Note } from '../core/model';
-import { createChart } from '../core/model';
+import { lowerBound, upperBound } from '../core/search';
+import { createChart, EX_NOTE_TYPES, type Chart, type Note } from '../core/model';
 import { isBundledImageSource, type GameModelTexture, type GameTexture, type GameTextures } from '../core/game-assets';
 import { getScrollPosition, getGrid, tickToSeconds, secondsToTick, getNoteScrollGroup } from '../core/timing';
 import { getPlayerPlaybackPoints } from './playback-points';
@@ -80,8 +80,7 @@ const headModels: Partial<Record<Note['type'], string>> = {
 export function getPlayerHeadTextureKey(note: Note, width = note.width): string | undefined {
   if (!Number.isInteger(width) || width < 1 || width > 16) return undefined;
   if (note.attributes.color && note.attributes.color !== 'DEF') return undefined;
-  const prefix =
-    note.attributes.ex && ['TAP', 'HOLD', 'SLIDE'].includes(note.type) ? 'NotesChara' : headModels[note.type];
+  const prefix = note.attributes.ex && EX_NOTE_TYPES.has(note.type) ? 'NotesChara' : headModels[note.type];
   return prefix ? `${prefix}_${String(width).padStart(2, '0')}` : undefined;
 }
 export function getPlayerBodyTextureKey(note: Note): string | undefined {
@@ -155,16 +154,6 @@ function cutsFor(chart: Chart, note: Note): number[] {
   groups.set(group, result);
   return result;
 }
-function upperBound(values: readonly number[], tick: number): number {
-  let lo = 0,
-    hi = values.length;
-  while (lo < hi) {
-    const mid = (lo + hi) >>> 1;
-    if (values[mid] <= tick) lo = mid + 1;
-    else hi = mid;
-  }
-  return lo;
-}
 export function getPlayerCrushTickIndex(timeline: JudgementTimeline): Map<string, number[]> {
   const result = new Map<string, number[]>();
   for (const point of timeline.points)
@@ -218,14 +207,8 @@ export function getPlayerCrushMarkerTicks(
   limit = Math.min(512, Math.floor(limit));
   const ranges: { start: number; end: number }[] = [];
   for (const segment of ribbon) {
-    let low = 0,
-      high = ticks.length;
-    while (low < high) {
-      const middle = (low + high) >>> 1;
-      if (ticks[middle] < segment.startTick) low = middle + 1;
-      else high = middle;
-    }
-    const end = upperBound(ticks, segment.endTick);
+    const low = lowerBound(ticks, segment.startTick, tick => tick);
+    const end = upperBound(ticks, segment.endTick, tick => tick);
     if (low < end) ranges.push({ start: low, end });
   }
   ranges.sort((a, b) => a.start - b.start);
@@ -304,7 +287,7 @@ function ribbonSegments(
   if (firstTick >= lastTick) return [];
   const cuts = cutsFor(chart, note),
     ticks = [firstTick];
-  for (let index = upperBound(cuts, firstTick); index < cuts.length && cuts[index] < lastTick; index++)
+  for (let index = upperBound(cuts, firstTick, tick => tick); index < cuts.length && cuts[index] < lastTick; index++)
     ticks.push(cuts[index]);
   ticks.push(lastTick);
   const result: PlayerRibbonSegment[] = [];

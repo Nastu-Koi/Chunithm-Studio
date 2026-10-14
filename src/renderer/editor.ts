@@ -8,6 +8,10 @@ import {
   airSide,
 } from './margrete-sprites';
 import {
+  AIR_NOTE_TYPES,
+  CHAIN_NOTE_TYPES,
+  HEIGHT_NOTE_TYPES,
+  LONG_NOTE_TYPES,
   createChart,
   createNote,
   LANES,
@@ -28,10 +32,8 @@ import { getSlideUvSpans, slideUvProgress } from './slide-timing';
 import { editorTemplate, LABEL, noteColor } from './editor-template';
 import { readChoice, readNumber, writeSetting } from './ui-settings';
 import { ICON } from './icons';
+import { escape } from './dom';
 import {
-  LONG,
-  AIR,
-  CHAIN,
   clamp,
   endLane,
   endWidth,
@@ -156,11 +158,6 @@ function eventText(event: ChartEvent): string {
       return 'STOP';
   }
 }
-const esc = (value: unknown) =>
-  String(value ?? '').replace(
-    /[&<>"']/g,
-    char => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' })[char]!,
-  );
 function fractionLabel(value: number): string {
   for (let denominator = 1; denominator <= 4096; denominator++) {
     const numerator = Math.round(value * denominator);
@@ -1067,7 +1064,7 @@ export class ChartEditor {
         ? '拖动移动 · 左右边缘改宽度 · 点节点编辑节点、拖动改位置 · 叠放处再次单击切换 · Shift 框选追加'
         : tool === 'erase'
           ? '橡皮擦：点击删除，拖动框选后松开删除 · S 选择'
-          : `${tool === 'AIR' ? `AIR ${({ IR: '上', UL: '左上', UR: '右上', DW: '下', DL: '左下', DR: '右下' } as Record<string, string>)[this.airDirection]}` : LABEL[tool]}：点击放置${LONG.has(tool) ? '，向上拖动设置终点' : ''}${tool === 'EXTAP' ? '；点 HOLD / SLIDE 的头可设为 EX，再点取消' : ''} · 右键删除 · S 选择`,
+          : `${tool === 'AIR' ? `AIR ${({ IR: '上', UL: '左上', UR: '右上', DW: '下', DL: '左下', DR: '右下' } as Record<string, string>)[this.airDirection]}` : LABEL[tool]}：点击放置${LONG_NOTE_TYPES.has(tool) ? '，向上拖动设置终点' : ''}${tool === 'EXTAP' ? '；点 HOLD / SLIDE 的头可设为 EX，再点取消' : ''} · 右键删除 · S 选择`,
     );
     this.draw();
   }
@@ -1194,7 +1191,7 @@ export class ChartEditor {
           property === 'attr.interval' ? Math.max(0, number) : value;
       } else if (property === 'type') {
         next.type = value as NoteType;
-        if (LONG.has(next.type)) {
+        if (LONG_NOTE_TYPES.has(next.type)) {
           next.duration ??= this.chart.resolution / 4;
           next.endLane ??= next.lane;
           next.endWidth ??= next.width;
@@ -1375,7 +1372,7 @@ export class ChartEditor {
       if (position.x <= this.airLeft + this.airWidth + 5) {
         const maximum = this.airHeightMaximum(chart);
         for (const note of order(chart.notes)) {
-          if (!['AIR_SLIDE', 'AIR_CRUSH'].includes(note.type)) continue;
+          if (!HEIGHT_NOTE_TYPES.has(note.type)) continue;
           for (const endpoint of ['endHeight', 'height'] as const) {
             const height = endpoint === 'height' ? (note.height ?? 1) : (note.endHeight ?? note.height ?? 1);
             const tick = endpoint === 'height' ? note.tick : endTick(note);
@@ -1505,7 +1502,8 @@ export class ChartEditor {
     const hitNote = hit ? this.chart.notes.find(note => note.id === hit!.id) : undefined;
     // AIR layers share a tick and a sensor span with their ground parent.
     const tool = this.noteTool;
-    if (event.altKey || (tool && AIR.has(tool) && hitNote && !AIR.has(hitNote.type))) hit = undefined;
+    if (event.altKey || (tool && AIR_NOTE_TYPES.has(tool) && hitNote && !AIR_NOTE_TYPES.has(hitNote.type)))
+      hit = undefined;
     if (this.tool === 'erase' && event.button === 0 && hit) {
       this.erase(hit, point);
       return;
@@ -1583,10 +1581,11 @@ export class ChartEditor {
         note.attributes.visible =
           this.nodeKind === 'inherit' ? this.selectedNote()?.attributes.visible !== false : this.nodeKind === 'normal';
       if (note.type === 'AIR') note.attributes = { direction: this.airDirection, color: 'DEF' };
-      if (tool === 'AIR_CRUSH' || !AIR.has(tool)) this.preview = { ...this.chart, notes: [...this.chart.notes, note] };
+      if (tool === 'AIR_CRUSH' || !AIR_NOTE_TYPES.has(tool))
+        this.preview = { ...this.chart, notes: [...this.chart.notes, note] };
       else {
         // The game reads AIR as an attachment of a ground note's tail, never as a free note.
-        const parent = hitNote && !AIR.has(hitNote.type) ? hitNote : this.groundTailAt(point);
+        const parent = hitNote && !AIR_NOTE_TYPES.has(hitNote.type) ? hitNote : this.groundTailAt(point);
         this.preview = parent && attachEditorAir(this.chart, note, parent.id);
         if (!this.preview) {
           this.setHint(
@@ -1648,7 +1647,7 @@ export class ChartEditor {
     return this.chart.notes
       .filter(
         note =>
-          !AIR.has(note.type) &&
+          !AIR_NOTE_TYPES.has(note.type) &&
           Math.abs(endTick(note) - point.tick) <= reach &&
           point.lane >= endLane(note) &&
           point.lane < endLane(note) + endWidth(note),
@@ -1818,7 +1817,7 @@ export class ChartEditor {
             .filter(
               item =>
                 item.id !== note.id &&
-                CHAIN.has(note.type) &&
+                CHAIN_NOTE_TYPES.has(note.type) &&
                 item.type === note.type &&
                 sameTick(endTick(item), note.tick) &&
                 endLane(item) === note.lane &&
@@ -2129,10 +2128,10 @@ export class ChartEditor {
   }
 
   private input(label: string, property: string, value: unknown, options = ''): string {
-    return `<label class="editor-field"><span>${label}</span><input data-property="${property}" type="number" value="${esc(value)}" ${options}></label>`;
+    return `<label class="editor-field"><span>${label}</span><input data-property="${property}" type="number" value="${escape(value)}" ${options}></label>`;
   }
   private textInput(label: string, property: string, value: unknown, list = ''): string {
-    return `<label class="editor-field"><span>${label}</span><input data-property="${property}" type="text" value="${esc(value)}" ${list ? `list="editor-${list}"` : ''}></label>`;
+    return `<label class="editor-field"><span>${label}</span><input data-property="${property}" type="text" value="${escape(value)}" ${list ? `list="editor-${list}"` : ''}></label>`;
   }
   private checkbox(label: string, property: string, value: boolean): string {
     return `<label class="editor-checkbox"><input type="checkbox" data-property="${property}" ${value ? 'checked' : ''}><span>${label}</span></label>`;
@@ -2207,7 +2206,7 @@ export class ChartEditor {
           .join('')}</select></label>`;
       if (note.type === 'FLICK')
         content += this.textInput('方向', 'attr.direction', note.attributes.direction ?? '', 'direction');
-      if (AIR.has(note.type) || note.type === 'SLIDE')
+      if (AIR_NOTE_TYPES.has(note.type) || note.type === 'SLIDE')
         content += this.textInput(
           '关联音符',
           'attr.parent',
@@ -2216,11 +2215,12 @@ export class ChartEditor {
         );
       if (
         note.type !== 'AIR_CRUSH' &&
-        AIR.has(note.type) &&
+        AIR_NOTE_TYPES.has(note.type) &&
         !['AHD', 'AHX', 'ASD', 'ASC'].includes(String(note.attributes.parent))
       )
         content += `<p class="editor-help">${boundEditorParent(this.chart, note.id) ? '已绑定在地面音符的尾端：位置与宽度跟随父音符，移动或删除父音符时一并处理。' : '未绑定地面音符：原游戏读谱时找不到父音符会失败。请删除后在地面音符上重新放置。'}</p>`;
-      if (AIR.has(note.type)) content += this.textInput('颜色', 'attr.color', note.attributes.color ?? 'DEF', 'color');
+      if (AIR_NOTE_TYPES.has(note.type))
+        content += this.textInput('颜色', 'attr.color', note.attributes.color ?? 'DEF', 'color');
       if (note.type === 'EXTAP' || note.type === 'HOLD' || note.type === 'SLIDE' || note.type === 'AIR_CRUSH')
         content += this.textInput(
           '特效',
@@ -2234,7 +2234,7 @@ export class ChartEditor {
         content +=
           this.input('CRUSH 间隔 tick', 'attr.interval', note.attributes.interval ?? 24, 'min="0"') +
           `<p class="editor-help">间隔 0 表示无判定装饰段。</p>`;
-      content += `<details class="editor-raw"><summary>高级原生属性</summary><textarea data-raw-attributes spellcheck="false" aria-label="原生属性 JSON">${esc(JSON.stringify(note.attributes, null, 2))}</textarea><button data-action="applyRaw">应用属性</button><p>只编辑已知原生值；未识别的源行与额外列随谱面保留。</p></details><div class="editor-inspector-actions"><button data-action="copy">复制</button><button data-action="mirror">镜像</button><button class="editor-danger" data-action="delete">删除</button></div>`;
+      content += `<details class="editor-raw"><summary>高级原生属性</summary><textarea data-raw-attributes spellcheck="false" aria-label="原生属性 JSON">${escape(JSON.stringify(note.attributes, null, 2))}</textarea><button data-action="applyRaw">应用属性</button><p>只编辑已知原生值；未识别的源行与额外列随谱面保留。</p></details><div class="editor-inspector-actions"><button data-action="copy">复制</button><button data-action="mirror">镜像</button><button class="editor-danger" data-action="delete">删除</button></div>`;
     } else if (selected.length === 1) {
       const item = selected[0] as ChartEvent;
       content += `<div class="editor-selection-heading editor-event-heading"><i></i><strong>${EVENT_LABEL[item.type]}</strong><code>EVENT</code></div>${this.textInput('位置（全音符，可填 1/7）', 'positionFraction', fractionLabel(item.tick / this.chart.resolution))}${this.input('起始 tick', 'tick', item.tick, 'min="0" step="any"')}`;
@@ -2287,7 +2287,7 @@ export class ChartEditor {
         .slice(0, 120)
         .map(
           item =>
-            `<button data-select="${esc(item.id)}" class="${this.selection.has(item.id) ? 'editor-selected-event' : ''}"><span>${EVENT_LABEL[item.type]}</span><strong>${item.type === 'METER' ? `${item.numerator}/${item.denominator}` : item.value}</strong><small title="${item.tick} tick">${Number(item.tick.toFixed(3))}t</small></button>`,
+            `<button data-select="${escape(item.id)}" class="${this.selection.has(item.id) ? 'editor-selected-event' : ''}"><span>${EVENT_LABEL[item.type]}</span><strong>${item.type === 'METER' ? `${item.numerator}/${item.denominator}` : item.value}</strong><small title="${item.tick} tick">${Number(item.tick.toFixed(3))}t</small></button>`,
         )
         .join(
           '',
@@ -2606,7 +2606,7 @@ export class ChartEditor {
       ctx.stroke();
     }
     const notes = chart.notes.filter(
-      note => ['AIR_SLIDE', 'AIR_CRUSH'].includes(note.type) && endTick(note) >= lo && note.tick <= hi,
+      note => HEIGHT_NOTE_TYPES.has(note.type) && endTick(note) >= lo && note.tick <= hi,
     );
     for (const note of notes) {
       ctx.strokeStyle = this.selection.has(note.id) ? '#eeeeee' : '#40d6c4';
@@ -2731,7 +2731,7 @@ export class ChartEditor {
     const color = noteColor(note),
       picked = this.selection.has(note.id),
       selected = picked && !(this.selection.size === 1 && this.pickedJoint === note.id),
-      airborne = AIR.has(note.type);
+      airborne = AIR_NOTE_TYPES.has(note.type);
     if (body) {
       if (!long(note)) return;
       ctx.fillStyle = `${color}35`;

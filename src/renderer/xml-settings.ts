@@ -1,4 +1,5 @@
 import type { Project } from '../core/model';
+import { escape } from './dom';
 import { getXmlMetadata, validateXmlMetadata } from '../core/xml-metadata';
 
 interface XmlSettingsActions {
@@ -7,11 +8,6 @@ interface XmlSettingsActions {
   close(): void;
   error(message: string): void;
 }
-const escape = (value: unknown): string =>
-  String(value ?? '').replace(
-    /[&<>"']/g,
-    character => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' })[character]!,
-  );
 const references = [
   ['releaseTagName', '版本登记'],
   ['netOpenName', '开放批次'],

@@ -1,5 +1,5 @@
 import type { StudioBridge, LoadedProject } from '../bridge';
-import { createProject } from '../core/model';
+import { createProject, DIFFICULTIES } from '../core/model';
 import { parseC2S, serializeC2S } from '../core/c2s';
 import { validateChart } from '../core/validation';
 const files = new Map<string, File>();
@@ -57,9 +57,7 @@ export const browserBridge: StudioBridge = {
   async exportC2s(project, allowQuantization) {
     const errors = validateChart(project.chart).filter(issue => issue.severity === 'error');
     if (errors.length) throw new Error(`请先修正谱面错误：${errors[0].message}`);
-    const difficulty = ['BASIC', 'ADVANCED', 'EXPERT', 'MASTER', 'ULTIMA', 'WORLD’S END'].indexOf(
-      project.metadata.difficulty,
-    );
+    const difficulty = DIFFICULTIES.indexOf(project.metadata.difficulty);
     const filename = `${project.exportSettings.musicId}_${String(difficulty).padStart(2, '0')}.c2s`;
     download(
       serializeC2S(project.chart, {

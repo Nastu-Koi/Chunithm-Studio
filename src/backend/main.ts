@@ -3,7 +3,7 @@ import { readFile, writeFile, mkdir, rm, access, stat, rename } from 'node:fs/pr
 import path from 'node:path';
 import { createHash } from 'node:crypto';
 import sharp from 'sharp';
-import { createProject, type Project } from '../core/model';
+import { createProject, type Project, DIFFICULTIES } from '../core/model';
 import { parseC2S, serializeC2S } from '../core/c2s';
 import { validateChart } from '../core/validation';
 import {
@@ -88,8 +88,7 @@ async function selectDirectory(title: string): Promise<string | null> {
   const r = await dialog.showOpenDialog(win, { title, properties: ['openDirectory', 'createDirectory'] });
   return r.canceled ? null : r.filePaths[0];
 }
-const difficultyId = (p: Project) =>
-  ['BASIC', 'ADVANCED', 'EXPERT', 'MASTER', 'ULTIMA', 'WORLD’S END'].indexOf(p.metadata.difficulty);
+const difficultyId = (p: Project) => DIFFICULTIES.indexOf(p.metadata.difficulty);
 function exportChart(p: Project, allowQuantization: boolean): string {
   const errors = validateChart(p.chart).filter(issue => issue.severity === 'error');
   if (errors.length)

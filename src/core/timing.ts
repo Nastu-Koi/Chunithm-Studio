@@ -1,4 +1,12 @@
-import type { Chart, ChartEvent, Note, TimelineSegment, MeasureLine } from './model';
+import {
+  NODE_KIND_NOTE_TYPES,
+  type Chart,
+  type ChartEvent,
+  type Note,
+  type TimelineSegment,
+  type MeasureLine,
+} from './model';
+import { upperBound } from './search';
 const timelines = new WeakMap<Chart, TimelineSegment[]>();
 const sortedEvents = new WeakMap<Chart, ChartEvent[]>();
 function eventsFor(chart: Chart): ChartEvent[] {
@@ -27,14 +35,7 @@ export function getTimeline(chart: Chart): TimelineSegment[] {
   return output;
 }
 function floorIndex<T>(items: T[], value: number, get: (item: T) => number): number {
-  let lo = 0;
-  let hi = items.length;
-  while (lo < hi) {
-    const mid = (lo + hi) >>> 1;
-    if (get(items[mid]) <= value) lo = mid + 1;
-    else hi = mid;
-  }
-  return Math.max(0, lo - 1);
+  return Math.max(0, upperBound(items, value, get) - 1);
 }
 export function tickToSeconds(chart: Chart, tick: number): number {
   const segments = getTimeline(chart);
@@ -444,7 +445,7 @@ export function getNotePlaybackPoints(chart: Chart, target: Note): readonly Note
       const endTick = note.tick + (note.duration ?? 0),
         endLane = note.endLane ?? note.lane,
         endWidth = note.endWidth ?? note.width;
-      const family = ['SLIDE', 'AIR_HOLD', 'AIR_SLIDE'].includes(note.type);
+      const family = NODE_KIND_NOTE_TYPES.has(note.type);
       const parent = String(note.attributes.parent ?? 'TAP');
       const predecessor =
         family &&

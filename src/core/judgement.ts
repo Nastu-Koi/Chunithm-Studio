@@ -1,4 +1,5 @@
-import { NOTE_TYPES, type Chart, type Note } from './model';
+import { PARENTED_NOTE_TYPES, HEIGHT_NOTE_TYPES, NOTE_TYPES, type Chart, type Note } from './model';
+import { upperBound } from './search';
 import { getC2SEntityOrder } from './c2s';
 import { bpmAtTick } from './timing';
 
@@ -100,7 +101,7 @@ function readNativeRoots(notes: Note[]): { roots: NativeRoot[]; orphanCount: num
       } else index = candidates.splice(match, 1)[0];
       roots[index].ground.push(note);
       insert(groundTails, `${family}:${geometry(note, true)}`, index);
-    } else if (['AIR', 'AIR_HOLD', 'AIR_SLIDE'].includes(note.type)) {
+    } else if (PARENTED_NOTE_TYPES.has(note.type)) {
       const parent = String(note.attributes.parent ?? 'TAP');
       const continuation =
         (note.type === 'AIR_HOLD' && ['AHD', 'AHX'].includes(parent)) ||
@@ -176,7 +177,7 @@ function chains(chart: Chart, type: Note['type']): Note[][] {
       atEnd ? (n.endWidth ?? n.width) : n.width,
     ) +
     (['AIR_SLIDE', 'AIR_HOLD', 'AIR_CRUSH'].includes(type) ? `:${n.attributes.color ?? 'DEF'}` : '') +
-    (['AIR_SLIDE', 'AIR_CRUSH'].includes(type) ? `:${atEnd ? (n.endHeight ?? n.height ?? 1) : (n.height ?? 1)}` : '') +
+    (HEIGHT_NOTE_TYPES.has(type) ? `:${atEnd ? (n.endHeight ?? n.height ?? 1) : (n.height ?? 1)}` : '') +
     (type === 'AIR_CRUSH' ? `:${n.attributes.interval ?? 24}` : '');
   for (const note of chart.notes.filter(n => n.type === type).sort((a, b) => a.tick - b.tick)) {
     const candidates = ends.get(key(note, false));
@@ -472,13 +473,7 @@ export function buildJudgementTimeline(chart: Chart): JudgementTimeline {
 }
 /** Binary-search the immutable timeline; seeking backwards or starting mid-song needs no mutable combo state. */
 export function getAutoScoreAtTick(timeline: JudgementTimeline, tick: number): AutoScore {
-  let low = 0,
-    high = timeline.points.length;
-  while (low < high) {
-    const middle = (low + high) >>> 1;
-    if (timeline.points[middle].tick <= tick) low = middle + 1;
-    else high = middle;
-  }
+  const low = upperBound(timeline.points, tick, point => point.tick);
   return {
     combo: low,
     score: timeline.total ? Math.floor((1010000 * low) / timeline.total) : 0,

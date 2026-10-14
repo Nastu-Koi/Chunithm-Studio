@@ -1,4 +1,4 @@
-import type { Chart, Note } from '../core/model';
+import { EX_NOTE_TYPES, type Chart, type Note } from '../core/model';
 import { TRACK_REFERENCE, projectTrackPoint, scrollWorldUnit } from './player-scene';
 import type { MeshPoint } from './game-mesh-renderer';
 
@@ -74,7 +74,7 @@ export function getNativeHeadModel(note: Note, width = note.width, endpoint = fa
         AIR_CRUSH: endpoint ? 'NotesAirLadderTop' : 'NotesAirLadder',
       } as Partial<Record<Note['type'], string>>
     )[note.type];
-    if (!endpoint && note.attributes.ex && ['TAP', 'HOLD', 'SLIDE'].includes(note.type)) prefix = 'NotesChara';
+    if (!endpoint && note.attributes.ex && EX_NOTE_TYPES.has(note.type)) prefix = 'NotesChara';
     if (endpoint && ['HOLD', 'SLIDE'].includes(note.type)) suffix = '_point';
     if (['AIR_HOLD', 'AIR_SLIDE'].includes(note.type) && note.attributes.color === 'PNK') suffix = '_P';
   }

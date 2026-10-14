@@ -1,3 +1,4 @@
+import { upperBound } from './search';
 /** Original object-space rig and UVC keys. Frame duration is deliberately not assumed. */
 export interface StageBone {
   index: number;
@@ -102,15 +103,9 @@ export function sampleStageCurve(curve: readonly StageKey[], frame: number, fall
   if (!curve.length) return fallback;
   if (frame <= curve[0].frame) return curve[0].value;
   if (frame >= curve[curve.length - 1].frame) return curve[curve.length - 1].value;
-  let lo = 0,
-    hi = curve.length - 1;
-  while (hi - lo > 1) {
-    const mid = (lo + hi) >>> 1;
-    if (curve[mid].frame <= frame) lo = mid;
-    else hi = mid;
-  }
+  const lo = upperBound(curve, frame, key => key.frame) - 1;
   const a = curve[lo],
-    b = curve[hi],
+    b = curve[lo + 1],
     duration = b.frame - a.frame,
     t = (frame - a.frame) / duration,
     t2 = t * t,

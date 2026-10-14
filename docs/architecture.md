@@ -17,7 +17,8 @@ Chuni Studio 是 Electron 桌面程序：主进程负责文件、游戏资源与
 
 ### `src/core`
 
-- `model.ts`：`Project`、`Chart`、`Note`、`ChartEvent` 等数据结构及其构造函数。音符的原生属性有明确类型 `NoteAttributes`。
+- `model.ts`：`Project`、`Chart`、`Note`、`ChartEvent` 等数据结构及其构造函数。音符的原生属性有明确类型 `NoteAttributes`。难度顺序 `DIFFICULTIES` 与音符分类（长条、AIR 系列、需要父音符的 AIR、多段长条、带节点类型、带 AIR 高度、有 EX 变体）的集合也定义在这里，其他模块不再自建同类列表。
+- `search.ts`：有序数组的二分查找 `upperBound` / `lowerBound`。
 - `c2s.ts`：原生 C2S 文本的解析与序列化。
 - `timing.ts`：分段 BPM 时间轴、tick 与秒的换算、小节线与小节号。
 - `quantization.ts`：分数 tick 对齐到整数 tick 的分析。

@@ -1,4 +1,5 @@
 import type { Chart, NoteType } from '../core/model';
+import { lowerBound } from '../core/search';
 import { tickToSeconds, secondsToTick, getBeatLines } from '../core/timing';
 import { getPlayerPlaybackPoints } from './playback-points';
 import {
@@ -424,14 +425,7 @@ export class Transport {
   }
   private resetScheduler(): void {
     const time = this.seconds - 0.0001;
-    let lo = 0,
-      hi = this.hits.length;
-    while (lo < hi) {
-      const mid = (lo + hi) >>> 1;
-      if (this.hits[mid].time < time) lo = mid + 1;
-      else hi = mid;
-    }
-    this.scheduledIndex = lo;
+    this.scheduledIndex = lowerBound(this.hits, time, hit => hit.time);
     if (this.chart) this.metronomeTick = secondsToTick(this.chart, Math.max(0, time));
   }
   async play(): Promise<void> {

@@ -1,4 +1,4 @@
-import { LANES, NOTE_TYPES, type Chart, type Note, type Project, type ValidationIssue } from './model';
+import { LONG_NOTE_TYPES, LANES, NOTE_TYPES, type Chart, type Note, type Project, type ValidationIssue } from './model';
 import { analyzeC2SQuantization } from './quantization';
 import { getNativeAirBindings } from './judgement';
 function issue(
@@ -39,7 +39,7 @@ export function validateChart(chart: Chart): ValidationIssue[] {
           note,
         ),
       );
-    if (['HOLD', 'SLIDE', 'AIR_HOLD', 'AIR_SLIDE', 'AIR_CRUSH'].includes(note.type)) {
+    if (LONG_NOTE_TYPES.has(note.type)) {
       const zeroAllowed = note.type === 'AIR_HOLD' || (note.type === 'AIR_SLIDE' && note.attributes.visible === false);
       if (!Number.isFinite(note.duration) || note.duration! < 0 || (!zeroAllowed && note.duration === 0))
         result.push(issue('duration', '长音符时长需为正数；AIR-HOLD 端点和 AIR SLIDE 控制点允许 0 tick。', note));
