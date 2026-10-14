@@ -15,6 +15,6 @@
 
 - 前四条与 `.github/workflows/ci.yml` 一致，收尾时全部运行。格式检查不通过时先运行 `npm run format`。
 - 项目没有配置 lint。
-- 单元测试中有 7 项按环境跳过属正常：设置 `CHUNI_UI_URL` 启用 5 项编辑器交互测试，设置 `CHUNI_GAME_ROOT` 启用全库原生往返测试。
+- 单元测试中有 9 项按环境跳过属正常：设置 `CHUNI_UI_URL` 启用 7 项编辑器交互测试，设置 `CHUNI_GAME_ROOT` 启用全库原生往返测试。
 - CI 会启动 Vite 并设置 `CHUNI_UI_URL`，编辑器交互测试在 CI 中必跑。本地照做：先 `npm run dev`（后台），再 `CHUNI_UI_URL=http://127.0.0.1:5173 npm test`，此时只跳过 2 项。改动编辑器时收尾要这样跑一次。
 - Windows 桌面流程与实机验收无法在 WSL 内完成，做法与历史结果见 `docs/verification.md`；涉及这部分的验收标准要注明需在 Windows 上人工执行。
