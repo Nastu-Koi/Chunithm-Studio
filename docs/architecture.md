@@ -9,11 +9,11 @@ Chuni Studio 是 Electron 桌面程序：主进程负责文件、游戏资源与
 | `src/core` | 两个进程共用 | 谱面与工程的数据模型、C2S 读写、时间轴、量化、校验、判定时间表，以及资源清单的类型定义。纯逻辑，不访问文件、DOM 或 Electron。 |
 | `src/backend` | 主进程 | 工程文件夹读写、曲库扫描、音频转换、OPT 导出、资源副本的装载与提供。 |
 | `src/renderer` | 渲染进程 | 应用壳、俯视编辑器、透视播放器、音频时钟与对话框。 |
-| `src/bridge.ts` | 类型定义 | `StudioBridge`：渲染进程能向主进程请求的全部操作，以及跨进程传递的数据形状。 |
+| `src/bridge.ts` | 两个进程共用 | `StudioBridge`：渲染进程能向主进程请求的全部操作，以及跨进程传递的数据形状；`IPC_CHANNELS`：每个操作的 IPC 通道名。 |
 | `native` | 独立子进程 | 音频助手 `ChunithmAudio`（基于 VGAudio）与 FFmpeg，由主进程按需启动。 |
 | `scripts` | 开发时 | 构建、打包，以及把游戏资源转换复制到 `assets/game` 的一次性脚本。 |
 
-依赖方向：`src/renderer` 和 `src/backend` 都依赖 `src/core`，彼此不直接引用，只通过 `src/bridge.ts` 的类型约定对接；`src/core` 不依赖另外两者。`scripts` 可以引用 `src/backend` 和 `src/core`。
+依赖方向：`src/renderer` 和 `src/backend` 都依赖 `src/core`，彼此不直接引用，只通过 `src/bridge.ts` 的类型约定与通道表对接；`src/core` 不依赖另外两者。`scripts` 可以引用 `src/backend` 和 `src/core`。
 
 ### `src/core`
 
@@ -32,12 +32,13 @@ Chuni Studio 是 Electron 桌面程序：主进程负责文件、游戏资源与
 
 - `main.ts`：主进程入口。创建窗口、注册全部 IPC 处理函数与资源协议、维护读取白名单。
 - `preload.ts`：把 `StudioBridge` 暴露为渲染进程里的 `window.studio`。
-- `projects.ts`：项目文件夹的打开、保存、最近项目列表和原子写入。
-- `library.ts`：本地曲库扫描与缓存，读取曲目的 XML 信息。
-- `audio.ts`：调用 FFmpeg 与音频助手，完成格式归一、HCA 编码和游戏音频解码。
+- `projects.ts`：项目文件夹的打开、保存、最近项目列表和原子写入，以及把导入的 C2S 组装成新工程。
+- `library.ts`：本地曲库扫描与缓存，读取曲目的 XML 信息，把曲库谱面载入为新工程（含原曲解码与缓存）。
+- `audio.ts`：调用 FFmpeg 与音频助手，完成格式归一、HCA 编码和游戏音频解码，以及编辑器试听用 WAV 的解码缓存。
 - `cri.ts`：CRI 容器（ACB/AWB）的解析与重建。
 - `export.ts`：生成 OPT 追加包。
 - `dds-preview.ts`：DDS 封面解码。
+- `cover.ts`：读取 PNG / JPG / DDS 封面，生成界面预览与导出用的 512×512 RGBA。
 - `bundled-assets.ts`：读取 `assets/game/manifest.json`，把资源副本交给渲染进程。
 - `game-textures.ts`、`game-models.ts`、`game-animation.ts`、`game-effects.ts`、`game-scene.ts`、`game-stage-program.ts`、`game-font.ts`、`game-audio.ts`：从原游戏文件解析贴图、模型、动画、特效、场景、字体和打击音。由 `scripts` 下的资源复制脚本使用，运行中的程序不读原游戏的这些文件。
 
@@ -62,9 +63,9 @@ Chuni Studio 是 Electron 桌面程序：主进程负责文件、游戏资源与
 
 ## 进程边界
 
-渲染进程开启 `contextIsolation` 和 `sandbox`，关闭 `nodeIntegration`，不能直接访问文件系统。它只能调用 `StudioBridge` 上的方法，每个方法对应 `src/backend/main.ts` 里的一个 IPC 处理函数。应用壳用 `window.studio ?? browserBridge` 取得桥接对象，所以同一套渲染端代码在浏览器里也能运行，只是没有曲库和导出。
+渲染进程开启 `contextIsolation` 和 `sandbox`，关闭 `nodeIntegration`，不能直接访问文件系统。它只能调用 `StudioBridge` 上的方法，每个方法是 `IPC_CHANNELS` 中一个通道上的请求：`preload.ts` 按这张表生成方法，`src/backend/main.ts` 用 `handle(方法名, 处理函数)` 注册，处理函数的参数与返回值按 `StudioBridge` 做类型检查。处理函数只做授权检查、对话框和调用，业务逻辑在各个后端模块里。应用壳用 `window.studio ?? browserBridge` 取得桥接对象，所以同一套渲染端代码在浏览器里也能运行，只是没有曲库和导出。
 
-主进程维护一份读取白名单：渲染进程请求读取的路径必须是主进程交出过的（文件对话框的选择、已打开的项目、曲库扫描结果），或位于受信任的根目录下（用户数据目录、资源副本目录、扫描过的游戏目录）。原地保存会删除被替换的素材，因此只允许保存到本次会话打开、创建或恢复的项目文件夹。
+主进程维护一份读取白名单：渲染进程请求读取的路径必须是主进程交出过的（文件对话框的选择、已打开的项目、曲库扫描结果），或位于受信任的根目录下（用户数据目录、资源副本目录、曲库扫描找到的资源目录，即游戏目录下的 `data/*`、`option/*`、`bin/option/*`）。原地保存会删除被替换的素材，因此只允许保存到本次会话打开、创建或恢复的项目文件夹。
 
 音频助手和 FFmpeg 作为独立子进程运行。Windows 便携包使用 `native/win-x64` 中的自包含可执行文件，Linux 开发环境使用构建出的 .NET DLL 和 `ffmpeg-static`。
 

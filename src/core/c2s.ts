@@ -245,6 +245,15 @@ export function parseC2S(input: string): Chart {
 }
 
 /** Native tags encode the segment END joint; they do not hide a chain head. */
+/** The chart designer from the CREATOR header record; undefined when the chart has none. */
+export function c2sCreator(chart: Chart): string | undefined {
+  return chart.headerRecords
+    .find(record => record.tag === 'CREATOR')
+    ?.raw.split('\t')
+    .slice(1)
+    .join(' ')
+    .trim();
+}
 export function getNativeNoteTag(note: Note): string {
   const a = note.attributes;
   switch (note.type) {

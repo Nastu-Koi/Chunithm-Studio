@@ -1,7 +1,8 @@
 import { readFile, writeFile, rename, mkdir, copyFile, access, readdir, rm, stat } from 'node:fs/promises';
 import path from 'node:path';
 import { randomUUID } from 'node:crypto';
-import type { Project } from '../core/model';
+import { createProject, type Project } from '../core/model';
+import { c2sCreator, parseC2S } from '../core/c2s';
 import type { RecentProject } from '../bridge';
 import { getXmlMetadata, validateXmlMetadata } from '../core/xml-metadata';
 export function validateProjectDocument(value: unknown): asserts value is Project {
@@ -184,4 +185,14 @@ export async function rememberRecentProject(file: string, directory: string, pro
       RECENT_LIMIT,
     ),
   );
+}
+
+/** A new, unsaved project around an imported C2S chart: titled after the file, with the chart's CREATOR as designer. */
+export function importC2sProject(text: string, filename: string): Project {
+  const project = createProject();
+  project.metadata.title = path.basename(filename, '.c2s');
+  project.chart = parseC2S(text);
+  const creator = c2sCreator(project.chart);
+  if (creator !== undefined) project.metadata.designer = creator;
+  return project;
 }

@@ -62,6 +62,30 @@ export interface StudioBridge {
   onProgress(callback: (message: string) => void): () => void;
   platform: string;
 }
+/** Bridge operations that reach the main process as one IPC request each. */
+export type BridgeCall = Exclude<keyof StudioBridge, 'platform' | 'onProgress'>;
+/** The IPC channel of each bridge operation. Preload and main both take the names from here. */
+export const IPC_CHANNELS = {
+  loadGameResources: 'resources:load',
+  openProject: 'project:open',
+  listRecentProjects: 'project:recent',
+  importC2s: 'chart:import',
+  saveProject: 'project:save',
+  exportC2s: 'chart:export',
+  pickAudio: 'audio:pick',
+  pickCover: 'cover:pick',
+  readAudio: 'audio:read',
+  readCover: 'cover:read',
+  chooseGamePath: 'library:choose',
+  scanLibrary: 'library:scan',
+  loadLibraryChart: 'library:load',
+  exportOpt: 'opt:export',
+  autosave: 'project:autosave',
+  getRecovery: 'project:recovery',
+  revealPath: 'path:reveal',
+} as const satisfies Record<BridgeCall, string>;
+/** Progress messages the main process sends while it works. */
+export const PROGRESS_CHANNEL = 'progress';
 declare global {
   interface Window {
     studio?: StudioBridge;

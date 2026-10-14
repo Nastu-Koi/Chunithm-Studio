@@ -1,10 +1,9 @@
 import { app, BrowserWindow, dialog, ipcMain, shell, Menu, protocol } from 'electron';
-import { readFile, writeFile, mkdir, rm, access, stat, rename } from 'node:fs/promises';
+import { readFile, writeFile, rm, access } from 'node:fs/promises';
 import path from 'node:path';
 import { createHash } from 'node:crypto';
-import sharp from 'sharp';
-import { createProject, type Project, DIFFICULTIES } from '../core/model';
-import { parseC2S, serializeC2S } from '../core/c2s';
+import { type Project, DIFFICULTIES } from '../core/model';
+import { serializeC2S } from '../core/c2s';
 import { validateChart } from '../core/validation';
 import {
   openProject,
@@ -14,15 +13,16 @@ import {
   rememberRecentProject,
   atomicJson,
   validateProjectDocument,
+  importC2sProject,
 } from './projects';
-import { scanLibrary, readLibraryXmlMetadata } from './library';
-import { decodeDDS } from './dds-preview';
-import { configureAudioRuntime, prepareAudio, decodeGameAudio } from './audio';
+import { scanLibrary, loadLibraryProject, resourceRoots } from './library';
+import { coverPreview, coverRgba } from './cover';
+import { configureAudioRuntime, previewAudio } from './audio';
 import ffmpegPath from 'ffmpeg-static';
 import { exportOpt } from './export';
 import { loadBundledGameResources, bundledAssetUrl, resolveBundledAsset } from './bundled-assets';
 import { BUNDLED_ASSET_SCHEME } from '../core/game-assets';
-import type { LibraryEntry } from '../bridge';
+import { IPC_CHANNELS, PROGRESS_CHANNEL, type BridgeCall, type StudioBridge } from '../bridge';
 
 let win: BrowserWindow;
 const bundledAssetRoot = () => path.join(app.getAppPath(), 'assets', 'game');
@@ -51,7 +51,7 @@ if (process.env.CHUNI_USER_DATA_DIR) {
   app.setPath('userData', process.env.CHUNI_USER_DATA_DIR);
   app.setPath('sessionData', process.env.CHUNI_USER_DATA_DIR);
 }
-const progress = (text: string) => win?.webContents.send('progress', text);
+const progress = (text: string) => win?.webContents.send(PROGRESS_CHANNEL, text);
 const cacheFile = (source: string, extension = '.wav') =>
   path.join(
     app.getPath('userData'),
@@ -113,29 +113,17 @@ async function selectFile(title: string, extensions: string[]): Promise<string |
   });
   return r.canceled ? null : r.filePaths[0];
 }
-async function previewAudio(file: string): Promise<Buffer> {
-  if (path.extname(file).toLowerCase() === '.wav') return readFile(file);
-  // Compressed music is decoded by the same FFmpeg step as export. A browser decoder may skip a different amount of
-  // encoder padding, which would make the offset aligned in the editor wrong in the exported audio.
-  const info = await stat(file),
-    target = cacheFile(`${path.resolve(file)}\n${info.size}\n${info.mtimeMs}`);
-  try {
-    await access(target);
-  } catch {
-    const temporary = `${target}.${process.pid}.${Date.now()}.wav`;
-    try {
-      await prepareAudio(file, temporary);
-      await rename(temporary, target);
-    } finally {
-      await rm(temporary, { force: true });
-    }
-  }
-  return readFile(target);
+/** Register the main-process side of a bridge operation; its arguments and result are checked against `StudioBridge`. */
+function handle<K extends BridgeCall>(
+  name: K,
+  handler: (...args: Parameters<StudioBridge[K]>) => ReturnType<StudioBridge[K]> | Awaited<ReturnType<StudioBridge[K]>>,
+): void {
+  ipcMain.handle(IPC_CHANNELS[name], (_event, ...args) => handler(...(args as Parameters<StudioBridge[K]>)));
 }
 function attachHandlers() {
-  ipcMain.handle('resources:load', () => loadBundledGameResources(bundledAssetRoot(), { imageUrl: bundledAssetUrl }));
-  ipcMain.handle('project:recent', () => listRecentProjects(recentFile()));
-  ipcMain.handle('project:open', async (_, recent?: string) => {
+  handle('loadGameResources', () => loadBundledGameResources(bundledAssetRoot(), { imageUrl: bundledAssetUrl }));
+  handle('listRecentProjects', () => listRecentProjects(recentFile()));
+  handle('openProject', async recent => {
     if (recent !== undefined && !(await listRecentProjects(recentFile())).some(item => item.path === recent))
       throw new Error('该项目不在最近打开的列表中。');
     const directory = recent ?? (await selectDirectory('打开项目文件夹'));
@@ -146,17 +134,12 @@ function attachHandlers() {
     await rememberRecentProject(recentFile(), directory, project);
     return { project, path: directory, warnings };
   });
-  ipcMain.handle('chart:import', async () => {
+  handle('importC2s', async () => {
     const file = await selectFile('导入原生 C2S 谱面', ['c2s']);
     if (!file) return null;
-    const p = createProject();
-    p.metadata.title = path.basename(file, '.c2s');
-    p.chart = parseC2S(await readFile(file, 'utf8'));
-    const creator = p.chart.headerRecords.find(r => r.tag === 'CREATOR');
-    if (creator) p.metadata.designer = creator.raw.split(/\t/).slice(1).join(' ').trim();
-    return { project: p, path: null };
+    return { project: importC2sProject(await readFile(file, 'utf8'), file), path: null };
   });
-  ipcMain.handle('project:save', async (_, project: Project, directory: string | null, saveAs: boolean) => {
+  handle('saveProject', async (project, directory, saveAs) => {
     validateProjectDocument(project);
     if (project.audio.path) assertReadable(project.audio.path);
     if (project.coverPath) assertReadable(project.coverPath);
@@ -175,7 +158,7 @@ function attachHandlers() {
     await rm(recoveryFile(), { force: true });
     return { project, path: directory, removed };
   });
-  ipcMain.handle('chart:export', async (_, p: Project, allowQuantization = false) => {
+  handle('exportC2s', async (p, allowQuantization = false) => {
     validateProjectDocument(p);
     const text = exportChart(p, allowQuantization);
     const r = await dialog.showSaveDialog(win, {
@@ -187,29 +170,19 @@ function attachHandlers() {
     await writeFile(r.filePath, text, 'utf8');
     return r.filePath;
   });
-  ipcMain.handle('audio:pick', async () => {
+  handle('pickAudio', async () => {
     const file = await selectFile('选择音乐', ['wav', 'mp3', 'ogg', 'flac', 'm4a', 'aac']);
     allowRead(file ?? undefined);
     return file;
   });
-  ipcMain.handle('cover:pick', async () => {
+  handle('pickCover', async () => {
     const file = await selectFile('选择封面', ['png', 'jpg', 'jpeg', 'webp', 'dds']);
     allowRead(file ?? undefined);
     return file;
   });
-  ipcMain.handle('audio:read', (_, filename: string) => previewAudio(assertReadable(filename)));
-  ipcMain.handle('cover:read', async (_, filename: string) => {
-    const bytes = await readFile(assertReadable(filename));
-    let image;
-    if (path.extname(filename).toLowerCase() === '.dds') {
-      const d = decodeDDS(bytes);
-      image = sharp(d.data, { raw: { width: d.width, height: d.height, channels: 4 } });
-    } else image = sharp(bytes);
-    return (
-      'data:image/png;base64,' + (await image.resize(512, 512, { fit: 'inside' }).png().toBuffer()).toString('base64')
-    );
-  });
-  ipcMain.handle('library:choose', async () => {
+  handle('readAudio', filename => previewAudio(assertReadable(filename), source => cacheFile(source)));
+  handle('readCover', filename => coverPreview(assertReadable(filename)));
+  handle('chooseGamePath', async () => {
     const r = await dialog.showOpenDialog(win, {
       title: '选择 CHUNITHM 游戏目录',
       properties: ['openDirectory'],
@@ -217,18 +190,19 @@ function attachHandlers() {
     });
     return r.canceled ? null : r.filePaths[0];
   });
-  ipcMain.handle('library:scan', async (_, root: string, force = false) => {
+  handle('scanLibrary', async (root, force = false) => {
     progress('正在读取本地曲库…');
     const list = await scanLibrary(root, {
       onProgress: progress,
       force,
       cacheFile: path.join(app.getPath('userData'), 'library-cache.json'),
     });
-    allowRoot(root);
+    // Library entries only point into the resource roots, so those are made readable rather than the whole folder.
+    for (const resourceRoot of await resourceRoots(root)) allowRoot(resourceRoot);
     progress(`已读取 ${list.length} 张谱面`);
     return list;
   });
-  ipcMain.handle('library:load', async (_, entry: LibraryEntry) => {
+  handle('loadLibraryChart', async entry => {
     for (const file of [
       entry.chartPath,
       entry.acbPath,
@@ -238,52 +212,9 @@ function attachHandlers() {
       entry.cueXmlPath,
     ])
       if (file) assertReadable(file);
-    const p = createProject();
-    p.chart = parseC2S(await readFile(entry.chartPath, 'utf8'));
-    const warnings: string[] = [];
-    p.metadata = {
-      title: entry.title,
-      artist: entry.artist,
-      designer:
-        p.chart.headerRecords
-          .find(r => r.tag === 'CREATOR')
-          ?.raw.split('\t')
-          .slice(1)
-          .join(' ')
-          .trim() ||
-        entry.notesDesigner ||
-        '',
-      difficulty: entry.difficulty,
-      level: entry.level,
-    };
-    p.coverPath = entry.coverPath;
-    p.exportSettings.weTag = entry.weTag;
-    p.exportSettings.stars = entry.stars;
-    try {
-      p.xmlMetadata = await readLibraryXmlMetadata(entry);
-    } catch (error) {
-      warnings.push(`XML 元数据未能完整载入，将使用新曲默认设置：${error instanceof Error ? error.message : error}`);
-    }
-    // Imported songs are saved as independent projects with new export identifiers.
-    if (entry.acbPath && entry.awbPath) {
-      progress('正在解码原曲音乐…');
-      const target = cacheFile(entry.awbPath);
-      await mkdir(path.dirname(target), { recursive: true });
-      try {
-        try {
-          await access(target);
-        } catch {
-          await decodeGameAudio(entry.acbPath, entry.awbPath, target);
-        }
-        p.audio.path = target;
-      } catch (error) {
-        warnings.push(`音乐解码失败，可在编辑器中重新选择音乐：${error instanceof Error ? error.message : error}`);
-      }
-    } else warnings.push('没有找到配套音乐，谱面已载入，可手动导入音乐。');
-    progress(`已载入 ${p.metadata.title}`);
-    return { project: p, path: null, warnings };
+    return loadLibraryProject(entry, { audioCache: cacheFile(entry.awbPath), onProgress: progress });
   });
-  ipcMain.handle('opt:export', async (_, p: Project, gamePath: string, allowQuantization = false) => {
+  handle('exportOpt', async (p, gamePath, allowQuantization = false) => {
     validateProjectDocument(p);
     const c2s = exportChart(p, allowQuantization);
     const r = await dialog.showOpenDialog(win, {
@@ -291,25 +222,18 @@ function attachHandlers() {
       properties: ['openDirectory', 'createDirectory'],
     });
     if (r.canceled) return null;
-    let cover;
-    if (p.coverPath) {
-      const bytes = await readFile(assertReadable(p.coverPath));
-      const d = path.extname(p.coverPath).toLowerCase() === '.dds' ? decodeDDS(bytes) : null;
-      const s = d ? sharp(d.data, { raw: { width: d.width, height: d.height, channels: 4 } }) : sharp(bytes);
-      const { data, info } = await s.resize(512, 512).ensureAlpha().raw().toBuffer({ resolveWithObject: true });
-      cover = { rgba: data, width: info.width, height: info.height };
-    }
+    const cover = p.coverPath ? await coverRgba(assertReadable(p.coverPath)) : undefined;
     const result = await exportOpt(p, { gamePath, outputDirectory: r.filePaths[0], cover, c2s }, progress);
     allowRead(result.optPath);
     return result;
   });
-  ipcMain.handle('project:autosave', async (_, p: Project | null, filename: string | null) => {
+  handle('autosave', async (p, filename) => {
     if (p) {
       validateProjectDocument(p);
       await atomicJson(recoveryFile(), { project: p, path: filename });
     } else await rm(recoveryFile(), { force: true });
   });
-  ipcMain.handle('project:recovery', async () => {
+  handle('getRecovery', async () => {
     try {
       const saved = JSON.parse(await readFile(recoveryFile(), 'utf8'));
       validateProjectDocument(saved.project);
@@ -328,7 +252,7 @@ function attachHandlers() {
       return null;
     }
   });
-  ipcMain.handle('path:reveal', (_, filename: string) => shell.showItemInFolder(assertReadable(filename)));
+  handle('revealPath', async filename => shell.showItemInFolder(assertReadable(filename)));
 }
 app.whenReady().then(() => {
   configureAudioRuntime({

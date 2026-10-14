@@ -2,8 +2,10 @@ import { readFile, readdir, access, stat, writeFile, mkdir } from 'node:fs/promi
 import { createHash } from 'node:crypto';
 import path from 'node:path';
 import { XMLParser } from 'fast-xml-parser';
-import type { LibraryEntry } from '../bridge';
-import { DIFFICULTIES, type Difficulty } from '../core/model';
+import type { LibraryEntry, LoadedProject } from '../bridge';
+import { c2sCreator, parseC2S } from '../core/c2s';
+import { decodeGameAudio } from './audio';
+import { DIFFICULTIES, createProject } from '../core/model';
 import { validateXmlNode, xmlMetadataFromSource, type XmlMetadata, type XmlNode } from '../core/xml-metadata';
 const parser = new XMLParser({ ignoreAttributes: false, parseTagValue: false });
 const array = <T>(v: T | T[] | undefined): T[] => (v === undefined ? [] : Array.isArray(v) ? v : [v]);
@@ -277,4 +279,56 @@ export async function readLibraryXmlMetadata(entry: LibraryEntry): Promise<XmlMe
   const music = await source(entry.musicXmlPath ?? path.join(path.dirname(entry.chartPath), 'Music.xml'), 'MusicData');
   const cue = entry.cueXmlPath ? await source(entry.cueXmlPath, 'CueFileData') : undefined;
   return xmlMetadataFromSource(music, cue);
+}
+
+export interface LibraryLoadOptions {
+  /** Where the decoded music of this entry is cached as WAV; an existing file is reused. */
+  audioCache: string;
+  /** Decodes the entry's ACB/AWB pair to WAV; the native audio helper by default. */
+  decodeAudio?: (acbPath: string, awbPath: string, outputWavPath: string) => Promise<unknown>;
+  onProgress?: (message: string) => void;
+}
+
+/**
+ * Open a library chart as a new, unsaved project: its chart, song information and XML metadata, and the original
+ * music decoded to WAV. What could not be read becomes a warning instead of failing the load.
+ */
+export async function loadLibraryProject(entry: LibraryEntry, options: LibraryLoadOptions): Promise<LoadedProject> {
+  const progress = options.onProgress ?? (() => {}),
+    decode = options.decodeAudio ?? decodeGameAudio;
+  const project = createProject();
+  project.chart = parseC2S(await readFile(entry.chartPath, 'utf8'));
+  const warnings: string[] = [];
+  project.metadata = {
+    title: entry.title,
+    artist: entry.artist,
+    designer: c2sCreator(project.chart) || entry.notesDesigner || '',
+    difficulty: entry.difficulty,
+    level: entry.level,
+  };
+  project.coverPath = entry.coverPath;
+  project.exportSettings.weTag = entry.weTag;
+  project.exportSettings.stars = entry.stars;
+  try {
+    project.xmlMetadata = await readLibraryXmlMetadata(entry);
+  } catch (error) {
+    warnings.push(`XML 元数据未能完整载入，将使用新曲默认设置：${error instanceof Error ? error.message : error}`);
+  }
+  // Imported songs are saved as independent projects with new export identifiers.
+  if (entry.acbPath && entry.awbPath) {
+    progress('正在解码原曲音乐…');
+    await mkdir(path.dirname(options.audioCache), { recursive: true });
+    try {
+      try {
+        await access(options.audioCache);
+      } catch {
+        await decode(entry.acbPath, entry.awbPath, options.audioCache);
+      }
+      project.audio.path = options.audioCache;
+    } catch (error) {
+      warnings.push(`音乐解码失败，可在编辑器中重新选择音乐：${error instanceof Error ? error.message : error}`);
+    }
+  } else warnings.push('没有找到配套音乐，谱面已载入，可手动导入音乐。');
+  progress(`已载入 ${project.metadata.title}`);
+  return { project, path: null, warnings };
 }

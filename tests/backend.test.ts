@@ -3,7 +3,16 @@ import assert from 'node:assert/strict';
 import { mkdtemp, mkdir, writeFile, readFile, rename, readdir, rm } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
-import { scanLibrary, readLibraryXmlMetadata, librarySignature, resourceRoots } from '../src/backend/library';
+import {
+  scanLibrary,
+  readLibraryXmlMetadata,
+  librarySignature,
+  resourceRoots,
+  loadLibraryProject,
+} from '../src/backend/library';
+import { coverPreview, coverRgba } from '../src/backend/cover';
+import { c2sCreator, parseC2S } from '../src/core/c2s';
+import sharp from 'sharp';
 import {
   readProject,
   openProject,
@@ -14,6 +23,7 @@ import {
   listRecentProjects,
   rememberRecentProject,
   PROJECT_FILE,
+  importC2sProject,
 } from '../src/backend/projects';
 import { decodeDDS } from '../src/backend/dds-preview';
 import { createProject, createNote } from '../src/core/model';
@@ -344,4 +354,82 @@ test('library scans are cached by folder fingerprint and refreshed when a song f
   );
   // Without a cache file nothing is written or read.
   assert.equal((await scanLibrary(game)).length, 2);
+});
+
+test('a library chart opens as a new project with its designer, XML metadata and decoded music, or with warnings', async t => {
+  const game = await mkdtemp(path.join(tmpdir(), 'chuni-library-load-'));
+  t.after(() => rm(game, { recursive: true, force: true }));
+  const base = path.join(game, 'data', 'A000');
+  const song = path.join(base, 'music', 'music7000');
+  await put(path.join(song, 'Music.xml'), musicXml(7000, 'Loaded title'));
+  await put(path.join(song, '7000_05.c2s'), 'CREATOR\tSomeone\tElse\nTAP\t0\t0\t0\t4\n');
+  await put(path.join(base, 'cueFile', 'cueFile7000', 'music7000.acb'), 'acb');
+  await put(path.join(base, 'cueFile', 'cueFile7000', 'music7000.awb'), 'awb');
+  const [entry] = await scanLibrary(game);
+  const cache = path.join(game, 'cache', 'music.wav'),
+    decoded: string[][] = [],
+    progress: string[] = [];
+  const loaded = await loadLibraryProject(entry, {
+    audioCache: cache,
+    decodeAudio: async (acb, awb, target) => {
+      decoded.push([acb, awb, target]);
+      await writeFile(target, 'wav');
+    },
+    onProgress: text => progress.push(text),
+  });
+  assert.equal(loaded.path, null);
+  assert.deepEqual(loaded.warnings, []);
+  assert.equal(loaded.project.metadata.title, 'Loaded title');
+  assert.equal(loaded.project.metadata.designer, 'Someone Else');
+  assert.equal(loaded.project.audio.path, cache);
+  assert.equal(loaded.project.coverPath, entry.coverPath);
+  assert.equal(loaded.project.chart.notes.length, 1);
+  assert.deepEqual(decoded, [[entry.acbPath, entry.awbPath, cache]]);
+  assert.deepEqual(progress, ['正在解码原曲音乐…', '已载入 Loaded title']);
+  // The cached WAV is reused; a failing decoder or missing music only adds a warning.
+  await loadLibraryProject(entry, { audioCache: cache, decodeAudio: async () => assert.fail('decoded again') });
+  const failed = await loadLibraryProject(entry, {
+    audioCache: path.join(game, 'cache', 'other.wav'),
+    decodeAudio: async () => {
+      throw new Error('helper missing');
+    },
+  });
+  assert.equal(failed.project.audio.path, '');
+  assert.match(failed.warnings![0], /音乐解码失败.*helper missing/);
+  const silent = await loadLibraryProject(
+    { ...entry, acbPath: '', awbPath: '', musicXmlPath: path.join(game, 'missing.xml') },
+    { audioCache: cache },
+  );
+  assert.equal(silent.warnings!.length, 2);
+  assert.match(silent.warnings![0], /XML 元数据未能完整载入/);
+  assert.match(silent.warnings![1], /没有找到配套音乐/);
+});
+
+test('an imported C2S file becomes a new project titled after the file, with CREATOR as designer', () => {
+  const imported = importC2sProject('CREATOR\tA\tB\nTAP\t0\t0\t0\t4\n', '/charts/7000_03.c2s');
+  assert.equal(imported.metadata.title, '7000_03');
+  assert.equal(imported.metadata.designer, 'A B');
+  assert.equal(imported.chart.notes.length, 1);
+  assert.equal(c2sCreator(parseC2S('TAP\t0\t0\t0\t4\n')), undefined);
+  assert.equal(importC2sProject('TAP\t0\t0\t0\t4\n', 'x.c2s').metadata.designer, createProject().metadata.designer);
+});
+
+test('covers are read from PNG or DDS: a preview within 512 px and 512 × 512 RGBA for export', async t => {
+  const folder = await mkdtemp(path.join(tmpdir(), 'chuni-cover-'));
+  t.after(() => rm(folder, { recursive: true, force: true }));
+  const png = path.join(folder, 'cover.png'),
+    dds = path.join(folder, 'cover.dds');
+  await sharp({ create: { width: 1024, height: 512, channels: 3, background: '#ff0000' } })
+    .png()
+    .toFile(png);
+  await writeFile(dds, dxt1(4, 4));
+  const preview = await coverPreview(png);
+  assert.ok(preview.startsWith('data:image/png;base64,'));
+  const size = await sharp(Buffer.from(preview.split(',')[1], 'base64')).metadata();
+  assert.deepEqual([size.width, size.height], [512, 256]);
+  for (const file of [png, dds]) {
+    const cover = await coverRgba(file);
+    assert.deepEqual([cover.width, cover.height, cover.rgba.length], [512, 512, 512 * 512 * 4]);
+  }
+  assert.deepEqual([...(await coverRgba(png)).rgba.subarray(0, 4)], [255, 0, 0, 255]);
 });

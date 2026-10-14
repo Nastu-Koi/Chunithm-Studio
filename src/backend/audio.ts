@@ -1,5 +1,5 @@
 import { spawn } from 'node:child_process';
-import { access, mkdir, readFile, rm, writeFile } from 'node:fs/promises';
+import { access, mkdir, readFile, rename, rm, stat, writeFile } from 'node:fs/promises';
 import path from 'node:path';
 import ffmpegStatic from 'ffmpeg-static';
 import { extractMusicHca, type CueAudioInfo } from './cri';
@@ -104,4 +104,28 @@ export async function decodeGameAudio(acbPath: string, awbPath: string, outputWa
   } finally {
     await rm(temporary, { force: true });
   }
+}
+
+/**
+ * Music for the editor and player as WAV bytes. WAV is read as is; compressed music is decoded by the same FFmpeg step
+ * as export, because a browser decoder may skip a different amount of encoder padding, which would make the offset
+ * aligned in the editor wrong in the exported audio. The decoded WAV is cached at `cachePath(fingerprint)`, keyed by
+ * the source path, size and modification time.
+ */
+export async function previewAudio(file: string, cachePath: (fingerprint: string) => string): Promise<Buffer> {
+  if (path.extname(file).toLowerCase() === '.wav') return readFile(file);
+  const info = await stat(file),
+    target = cachePath(`${path.resolve(file)}\n${info.size}\n${info.mtimeMs}`);
+  try {
+    await access(target);
+  } catch {
+    const temporary = `${target}.${process.pid}.${Date.now()}.wav`;
+    try {
+      await prepareAudio(file, temporary);
+      await rename(temporary, target);
+    } finally {
+      await rm(temporary, { force: true });
+    }
+  }
+  return readFile(target);
 }
