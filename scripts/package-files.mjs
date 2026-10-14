@@ -10,5 +10,8 @@ const LEFT_OUT = /(^|\/)node_modules\/\.[^/]+($|\/)|(^|\/)node_gyp_bins($|\/)|(^
 export function isPackagedPath(file) {
   const relative = file.replaceAll('\\', '/').replace(/^\//, '');
   if (LEFT_OUT.test(relative)) return false;
-  return !relative || PACKAGED.some(entry => relative === entry || relative.startsWith(`${entry}/`) || entry.startsWith(`${relative}/`));
+  return (
+    !relative ||
+    PACKAGED.some(entry => relative === entry || relative.startsWith(`${entry}/`) || entry.startsWith(`${relative}/`))
+  );
 }

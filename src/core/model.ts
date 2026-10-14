@@ -2,7 +2,18 @@ import { createXmlMetadata, type XmlMetadata } from './xml-metadata';
 /** A tick is 1 / resolution of four quarter beats (normally 384). Project times may be fractional; native C2S export requires integer ticks. */
 export const LANES = 16;
 export const DEFAULT_RESOLUTION = 384;
-export const NOTE_TYPES = ['TAP', 'EXTAP', 'FLICK', 'HOLD', 'SLIDE', 'AIR', 'AIR_HOLD', 'AIR_SLIDE', 'AIR_CRUSH', 'DAMAGE'] as const;
+export const NOTE_TYPES = [
+  'TAP',
+  'EXTAP',
+  'FLICK',
+  'HOLD',
+  'SLIDE',
+  'AIR',
+  'AIR_HOLD',
+  'AIR_SLIDE',
+  'AIR_CRUSH',
+  'DAMAGE',
+] as const;
 export type NoteType = (typeof NOTE_TYPES)[number];
 export type Difficulty = 'BASIC' | 'ADVANCED' | 'EXPERT' | 'MASTER' | 'ULTIMA' | 'WORLD’S END';
 export type Scalar = string | number | boolean;
@@ -127,21 +138,42 @@ export interface ValidationIssue {
   entityId?: string;
   tick?: number;
 }
-export interface TimelineSegment { tick: number; seconds: number; bpm: number }
-export interface MeasureLine { tick: number; measure: number; numerator: number; denominator: number }
+export interface TimelineSegment {
+  tick: number;
+  seconds: number;
+  bpm: number;
+}
+export interface MeasureLine {
+  tick: number;
+  measure: number;
+  numerator: number;
+  denominator: number;
+}
 let idSequence = 0;
 export function makeId(prefix = 'item'): string {
   idSequence += 1;
   return `${prefix}-${Date.now().toString(36)}-${idSequence.toString(36)}`;
 }
 export function createChart(bpm = 120): Chart {
-  return { version: '1.15.00', resolution: DEFAULT_RESOLUTION, defaultBpm: bpm, notes: [], events: [], headerRecords: [], unknownRecords: [] };
+  return {
+    version: '1.15.00',
+    resolution: DEFAULT_RESOLUTION,
+    defaultBpm: bpm,
+    notes: [],
+    events: [],
+    headerRecords: [],
+    unknownRecords: [],
+  };
 }
 export function createProject(): Project {
   return {
-    format: 'chunithm-studio', formatVersion: 1, id: makeId('project'),
+    format: 'chunithm-studio',
+    formatVersion: 1,
+    id: makeId('project'),
     metadata: { title: '新建乐曲', artist: '', designer: '', difficulty: 'MASTER', level: '1' },
-    audio: { path: '', offset: 0, previewStart: 0, previewEnd: 15 }, coverPath: '', xmlMetadata: createXmlMetadata(),
+    audio: { path: '', offset: 0, previewStart: 0, previewEnd: 15 },
+    coverPath: '',
+    xmlMetadata: createXmlMetadata(),
     exportSettings: { optId: 'AZ01', musicId: 7000, cueId: 7000, weTag: '改', stars: 1 },
     chart: createChart(),
   };
@@ -149,5 +181,14 @@ export function createProject(): Project {
 export function createNote(type: NoteType, tick: number, lane = 0, width = 2): Note {
   const long = ['HOLD', 'SLIDE', 'AIR_HOLD', 'AIR_SLIDE', 'AIR_CRUSH'].includes(type);
   // Native height 1 is the ground plane; 5 is the normal 15.574-unit AIR plane.
-  return { id: makeId('note'), type, tick, lane, width, ...(long ? { duration: 96, endLane: lane, endWidth: width } : {}), ...(['AIR_SLIDE', 'AIR_CRUSH'].includes(type) ? { height: 5, endHeight: 5 } : {}), attributes: {} };
+  return {
+    id: makeId('note'),
+    type,
+    tick,
+    lane,
+    width,
+    ...(long ? { duration: 96, endLane: lane, endWidth: width } : {}),
+    ...(['AIR_SLIDE', 'AIR_CRUSH'].includes(type) ? { height: 5, endHeight: 5 } : {}),
+    attributes: {},
+  };
 }

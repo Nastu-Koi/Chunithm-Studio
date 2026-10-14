@@ -14,7 +14,8 @@ function connectedSlides(): Chart {
 }
 
 test('AIR height dragging updates both sides of the connected joint without changing node type or timing', () => {
-  const chart = connectedSlides(), before = JSON.stringify(chart);
+  const chart = connectedSlides(),
+    before = JSON.stringify(chart);
   const points = chart.notes.map(note => getNotePlaybackPoints(chart, note));
   const edited = setEditorAirHeight(chart, 'first', 'endHeight', 2.4);
   assert.equal(edited.notes[0].endHeight, 2.4);
@@ -23,7 +24,10 @@ test('AIR height dragging updates both sides of the connected joint without chan
   assert.equal(edited.notes[1].endHeight, 3);
   assert.equal(edited.notes[0].attributes.visible, false);
   assert.equal(edited.notes[1].attributes.parent, 'ASC');
-  assert.deepEqual(edited.notes.map(note => getNotePlaybackPoints(edited, note)), points);
+  assert.deepEqual(
+    edited.notes.map(note => getNotePlaybackPoints(edited, note)),
+    points,
+  );
   assert.equal(JSON.stringify(chart), before);
   const restored = parseC2S(serializeC2S(edited));
   assert.equal(restored.notes[0].endHeight, 2.4);

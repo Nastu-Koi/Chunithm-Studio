@@ -7,7 +7,8 @@ import type { SvoEntry } from '../src/backend/game-textures';
 const fixture = JSON.parse(readFileSync(new URL('./fixtures/native-note-meshes.json', import.meta.url), 'utf8')) as {
   models: { name: string; entries: (Omit<SvoEntry, 'data'> & { data: string })[] }[];
 };
-const source = (name: string): SvoEntry[] => fixture.models.find(m => m.name === name)!.entries.map(e => ({ ...e, data: Buffer.from(e.data, 'base64') }));
+const source = (name: string): SvoEntry[] =>
+  fixture.models.find(m => m.name === name)!.entries.map(e => ({ ...e, data: Buffer.from(e.data, 'base64') }));
 
 test('original AIR object graph binds its own image, triangle strip and vertex alpha', () => {
   const mesh = parseSvoMeshes(source('NotesAirU_04'));
@@ -17,7 +18,13 @@ test('original AIR object graph binds its own image, triangle strip and vertex a
   assert.ok(Math.abs(Math.min(...vertices.map(v => v.position[1]))) < 1e-4);
   assert.ok(Math.abs(Math.max(...vertices.map(v => v.position[1])) - 15.574455) < 1e-4);
   assert.ok(vertices.some(v => Math.abs(v.color[3] - 0.2) < 1e-4));
-  assert.deepEqual(mesh.map(m => [m.material.blendSource, m.material.blendDestination]), [[4, 5], [4, 1]]);
+  assert.deepEqual(
+    mesh.map(m => [m.material.blendSource, m.material.blendDestination]),
+    [
+      [4, 5],
+      [4, 1],
+    ],
+  );
   for (const m of mesh) assert.ok(m.indices.every(i => i < m.vertices.length));
 });
 
@@ -25,7 +32,13 @@ test('CRUSH preserves two texture bindings with separate UV coordinates and addi
   const mesh = parseSvoMeshes(source('NotesAirLadder_04'));
   const glow = mesh.find(m => m.material.textures.length === 2)!;
   assert.ok(glow);
-  assert.deepEqual(glow.material.textures.map(t => [t.image, t.uvSet]), [[2, 0], [0, 1]]);
+  assert.deepEqual(
+    glow.material.textures.map(t => [t.image, t.uvSet]),
+    [
+      [2, 0],
+      [0, 1],
+    ],
+  );
   assert.ok(glow.vertices.every(v => v.uv2));
   assert.equal(glow.material.blendSource, 4);
   assert.equal(glow.material.blendDestination, 1);

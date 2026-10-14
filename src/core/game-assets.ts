@@ -30,7 +30,12 @@ export interface GameModelTexture {
 export interface GameModelMesh {
   name: string;
   /** Node world transform has already been applied; all meshes share model coordinates. */
-  vertices: { position: [number, number, number]; uv: [number, number]; uv2?: [number, number]; color: [number, number, number, number] }[];
+  vertices: {
+    position: [number, number, number];
+    uv: [number, number];
+    uv2?: [number, number];
+    color: [number, number, number, number];
+  }[];
   /** Actual strip is expanded into independent triangles; degenerate connector triangles are omitted. */
   indices: number[];
   topology: 'triangles';
@@ -38,8 +43,14 @@ export interface GameModelMesh {
     name: string;
     textures: { image: number; uvSet: number; wrapU: number; wrapV: number; type: string }[];
     /** Original Stevia enum values; no inferred material recoloring. */
-    blendOperation: number; blendSource: number; blendDestination: number; alphaRef: number; cullMode: number;
-    diffuse: [number, number, number, number]; opacity: number; vertexColor: boolean;
+    blendOperation: number;
+    blendSource: number;
+    blendDestination: number;
+    alphaRef: number;
+    cullMode: number;
+    diffuse: [number, number, number, number];
+    opacity: number;
+    vertexColor: boolean;
     /** Shader layer enums: factor 0..5 = zero/one/srcA/invSrcA/dstA/invDstA; operation 0 add, 1 subtract, 2 multiply. */
     textureLayers?: { sourceFactor: number; destinationFactor: number; operation: number }[];
     /** Original tsUVScrollUVn, applied as uv * scale + offset when enabled. */
@@ -74,15 +85,20 @@ export interface GameSceneAssets {
     designWidth: number;
     designHeight: number;
     /** Object-space data. These values do not establish the final game camera. */
-    meshes: Record<string, {
-      sourcePath: string; sourceOffset: number; vertexCount: number;
-      bounds: { min: [number, number, number]; max: [number, number, number] };
-      /** Object-space vertices. Packed PNTW binding bytes are also decoded in animation.rig.vertexBones. */
-      vertices?: { position: [number, number, number]; uv: [number, number]; attachment?: number }[];
-      indices?: number[];
-      topology?: 'triangle-strip';
-      sourceIndexOffset?: number;
-    }>;
+    meshes: Record<
+      string,
+      {
+        sourcePath: string;
+        sourceOffset: number;
+        vertexCount: number;
+        bounds: { min: [number, number, number]; max: [number, number, number] };
+        /** Object-space vertices. Packed PNTW binding bytes are also decoded in animation.rig.vertexBones. */
+        vertices?: { position: [number, number, number]; uv: [number, number]; attachment?: number }[];
+        indices?: number[];
+        topology?: 'triangle-strip';
+        sourceIndexOffset?: number;
+      }
+    >;
   };
   /** Decoded original rig and curves; no paths are dereferenced at playback time. */
   animation?: StageAnimation;
@@ -106,6 +122,21 @@ export interface GameTextures {
   warnings: string[];
 }
 export interface GameBitmapFont {
-  name: string; height: number; ascent: number; pages: GameTexture[];
-  glyphs: Record<string, { advance: number; page: number; originX: number; originY: number; x: number; y: number; width: number; height: number }>;
+  name: string;
+  height: number;
+  ascent: number;
+  pages: GameTexture[];
+  glyphs: Record<
+    string,
+    {
+      advance: number;
+      page: number;
+      originX: number;
+      originY: number;
+      x: number;
+      y: number;
+      width: number;
+      height: number;
+    }
+  >;
 }

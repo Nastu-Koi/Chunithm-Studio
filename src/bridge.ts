@@ -2,16 +2,43 @@ import type { Project, Difficulty } from './core/model';
 import type { GameTextures } from './core/game-assets';
 import type { GameHitSounds } from './core/game-sounds';
 export interface LibraryEntry {
-  key: string; musicId: number; title: string; artist: string; difficulty: Difficulty;
-  level: string; chartPath: string; coverPath: string; cueId: number; pack: string;
-  acbPath: string; awbPath: string; weTag: string; stars: number;
-  musicXmlPath?: string; cueXmlPath?: string;
+  key: string;
+  musicId: number;
+  title: string;
+  artist: string;
+  difficulty: Difficulty;
+  level: string;
+  chartPath: string;
+  coverPath: string;
+  cueId: number;
+  pack: string;
+  acbPath: string;
+  awbPath: string;
+  weTag: string;
+  stars: number;
+  musicXmlPath?: string;
+  cueXmlPath?: string;
   notesDesigner?: string;
 }
 /** `path` is the project folder, or null for a project that has never been saved. `removed` lists replaced assets a save deleted. */
-export interface LoadedProject { project: Project; path: string | null; warnings?: string[]; removed?: string[] }
-export interface RecentProject { path: string; title: string; artist: string; modified: number }
-export interface ExportResult { optPath: string; files: string[]; warnings: string[]; structuralVerified: boolean }
+export interface LoadedProject {
+  project: Project;
+  path: string | null;
+  warnings?: string[];
+  removed?: string[];
+}
+export interface RecentProject {
+  path: string;
+  title: string;
+  artist: string;
+  modified: number;
+}
+export interface ExportResult {
+  optPath: string;
+  files: string[];
+  warnings: string[];
+  structuralVerified: boolean;
+}
 export interface StudioBridge {
   loadGameResources(): Promise<{ textures: GameTextures; sounds: GameHitSounds }>;
   /** Open a recent project folder, or ask for one when no folder is given. */
@@ -35,4 +62,8 @@ export interface StudioBridge {
   onProgress(callback: (message: string) => void): () => void;
   platform: string;
 }
-declare global { interface Window { studio?: StudioBridge } }
+declare global {
+  interface Window {
+    studio?: StudioBridge;
+  }
+}

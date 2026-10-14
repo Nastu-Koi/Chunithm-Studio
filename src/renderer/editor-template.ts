@@ -1,22 +1,92 @@
 import { NOTE_TYPES, type Note, type NoteType } from '../core/model';
 import { ICON } from './icons';
 
-export const LABEL: Record<NoteType, string> = { TAP: 'TAP', EXTAP: 'EX', FLICK: 'FLICK', HOLD: 'HOLD', SLIDE: 'SLIDE', AIR: 'AIR', AIR_HOLD: 'AIR HOLD', AIR_SLIDE: 'AIR SLIDE', AIR_CRUSH: 'CRUSH', DAMAGE: 'DAMAGE' };
-export const COLOR: Record<NoteType, string> = { TAP: '#ed333b', EXTAP: '#eded35', FLICK: '#8be3e5', HOLD: '#e6a23b', SLIDE: '#566cec', AIR: '#31df35', AIR_HOLD: '#31df35', AIR_SLIDE: '#31df35', AIR_CRUSH: '#b749d2', DAMAGE: '#6572cc' };
+export const LABEL: Record<NoteType, string> = {
+  TAP: 'TAP',
+  EXTAP: 'EX',
+  FLICK: 'FLICK',
+  HOLD: 'HOLD',
+  SLIDE: 'SLIDE',
+  AIR: 'AIR',
+  AIR_HOLD: 'AIR HOLD',
+  AIR_SLIDE: 'AIR SLIDE',
+  AIR_CRUSH: 'CRUSH',
+  DAMAGE: 'DAMAGE',
+};
+export const COLOR: Record<NoteType, string> = {
+  TAP: '#ed333b',
+  EXTAP: '#eded35',
+  FLICK: '#8be3e5',
+  HOLD: '#e6a23b',
+  SLIDE: '#566cec',
+  AIR: '#31df35',
+  AIR_HOLD: '#31df35',
+  AIR_SLIDE: '#31df35',
+  AIR_CRUSH: '#b749d2',
+  DAMAGE: '#6572cc',
+};
 /** Down-family AIR arrows, matching the magenta arrow of Margrete's atlas. */
 export const AIR_DOWN_COLOR = '#f03cf0';
 /** Editor colours for native colour tokens; an AIR CRUSH is drawn in the colour its record carries. */
-const NATIVE_COLOR: Record<string, string> = { RED: '#ff566b', ORN: '#ffa158', YEL: '#ffe67c', LIM: '#c3f060', GRN: '#70f1a6', AQA: '#7df3d2', CYN: '#73eeed', DGR: '#3fae6d', BLU: '#6abaff', PPL: '#be90ff', VLT: '#b195ff', PNK: '#ff94d1', GRY: '#bdc8d8', BLK: '#5a6078', NON: '#777777' };
+const NATIVE_COLOR: Record<string, string> = {
+  RED: '#ff566b',
+  ORN: '#ffa158',
+  YEL: '#ffe67c',
+  LIM: '#c3f060',
+  GRN: '#70f1a6',
+  AQA: '#7df3d2',
+  CYN: '#73eeed',
+  DGR: '#3fae6d',
+  BLU: '#6abaff',
+  PPL: '#be90ff',
+  VLT: '#b195ff',
+  PNK: '#ff94d1',
+  GRY: '#bdc8d8',
+  BLK: '#5a6078',
+  NON: '#777777',
+};
 export function noteColor(note: Note): string {
   if (note.type === 'AIR' && String(note.attributes.direction ?? '').startsWith('D')) return AIR_DOWN_COLOR;
   if (note.type === 'AIR_CRUSH') return NATIVE_COLOR[String(note.attributes.color ?? 'DEF')] ?? COLOR.AIR_CRUSH;
   return COLOR[note.type];
 }
 /** Margrete's default note keys; SLIDE and AIR SLIDE have separate keys for control and relay nodes. */
-export const TOOL_KEYS: Record<NoteType, string> = { TAP: '1', EXTAP: '2', FLICK: '3', SLIDE: '4 控制点 / 5 中继点', HOLD: '6', AIR: '7 上 / 8 下', AIR_HOLD: '9', AIR_SLIDE: 'T / Y 控制点', AIR_CRUSH: 'U', DAMAGE: '0' };
+export const TOOL_KEYS: Record<NoteType, string> = {
+  TAP: '1',
+  EXTAP: '2',
+  FLICK: '3',
+  SLIDE: '4 控制点 / 5 中继点',
+  HOLD: '6',
+  AIR: '7 上 / 8 下',
+  AIR_HOLD: '9',
+  AIR_SLIDE: 'T / Y 控制点',
+  AIR_CRUSH: 'U',
+  DAMAGE: '0',
+};
 
 /** AIR up and down are separate tools; the side group next to them leans the arrow left or right. */
-const airTools = `${([['IR', 'AIR 上', '7', ''], ['DW', 'AIR 下', '8', ' editor-icon-air-down']] as const).map(([air, label, key, icon]) => `<button class="editor-tool" data-tool="AIR" data-air="${air}" style="--note-color:${air === 'IR' ? COLOR.AIR : AIR_DOWN_COLOR}" title="${label} (${key}；再按一次切换 中 / 左 / 右)" aria-label="${label}"><span class="editor-note-icon editor-icon-air${icon}"></span><span class="editor-tool-label">${label}</span></button>`).join('')}<span class="editor-air-side" role="group" aria-label="AIR 左右方向" hidden>${([[-1, '左'], [0, '中'], [1, '右']] as const).map(([side, label]) => `<button data-action="air-side" data-side="${side}" title="AIR 方向：${label}">${label}</button>`).join('')}</span>`;
+const airTools = `${(
+  [
+    ['IR', 'AIR 上', '7', ''],
+    ['DW', 'AIR 下', '8', ' editor-icon-air-down'],
+  ] as const
+)
+  .map(
+    ([air, label, key, icon]) =>
+      `<button class="editor-tool" data-tool="AIR" data-air="${air}" style="--note-color:${air === 'IR' ? COLOR.AIR : AIR_DOWN_COLOR}" title="${label} (${key}；再按一次切换 中 / 左 / 右)" aria-label="${label}"><span class="editor-note-icon editor-icon-air${icon}"></span><span class="editor-tool-label">${label}</span></button>`,
+  )
+  .join('')}<span class="editor-air-side" role="group" aria-label="AIR 左右方向" hidden>${(
+  [
+    [-1, '左'],
+    [0, '中'],
+    [1, '右'],
+  ] as const
+)
+  .map(
+    ([side, label]) =>
+      `<button data-action="air-side" data-side="${side}" title="AIR 方向：${label}">${label}</button>`,
+  )
+  .join('')}</span>`;
 /** Static toolbar, canvas and inspector markup for ChartEditor; behaviour stays in editor.ts. */
 export function editorTemplate(options: { zoom: number }): string {
   return `<div class="editor-toolbar" role="toolbar" aria-label="制谱工具">
@@ -26,6 +96,6 @@ export function editorTemplate(options: { zoom: number }): string {
       <span class="editor-toolbar-divider"></span>
       <button data-action="mirror" title="左右镜像选中音符 (H)">${ICON.mirror} 镜像</button><button data-action="flip" title="前后翻转选中音符 (V)">${ICON.flip} 翻转</button><span class="editor-toolbar-divider"></span><button data-action="align" title="对齐音乐：先把光标放在目标小节线上，再点击波形上对应的起音；Esc 退出">${ICON.align} 对齐音乐</button><span class="editor-align-controls" hidden><button data-action="nudge" data-ms="-10" title="音乐提前 10 毫秒">−10</button><button data-action="nudge" data-ms="-1" title="音乐提前 1 毫秒">−1</button><output data-align-offset title="音乐时间偏移，正数表示延迟音乐">0.0 ms</output><button data-action="nudge" data-ms="1" title="音乐延后 1 毫秒">+1</button><button data-action="nudge" data-ms="10" title="音乐延后 10 毫秒">+10</button></span>
       <span class="editor-toolbar-spacer"></span><details class="editor-advanced-controls"><summary>${ICON.advanced} 高级</summary><div class="editor-advanced-panel"><label class="editor-checkbox"><input data-option="out-of-lane" type="checkbox">允许轨道外演出</label><p>用于 WORLD’S END 视觉。开启后坐标采用原生 0 基准（中央轨道 0–15），位置范围 −64…64，宽度 1…128。</p><div class="editor-field-pair"><label class="editor-field">视野左边界<input data-option="view-start" type="number" min="-64" max="188" value="0"></label><label class="editor-field">视野右边界<input data-option="view-end" type="number" min="-60" max="192" value="16"></label></div><div class="editor-inspector-actions"><button data-action="fit-stage">中央 16 轨</button><button data-action="fit-all">适合全部音符</button></div></div></details><button data-action="home" title="滚动到播放光标">${ICON.cursor} 光标</button><button data-action="inspector" title="显示或收起属性">${ICON.inspector} 属性</button></div>
-      <div class="editor-toolrow" aria-label="音符工具条"><span class="editor-toolbar-label">音符</span>${NOTE_TYPES.map(type => type === 'AIR' ? airTools : `<button class="editor-tool" data-tool="${type}" style="--note-color:${COLOR[type]}" title="${LABEL[type]} (${TOOL_KEYS[type]})" aria-label="${LABEL[type]}"><span class="editor-note-icon editor-icon-${type.toLowerCase()}"></span><span class="editor-tool-label">${LABEL[type]}</span></button>`).join('')}<span class="editor-toolbar-divider"></span><label class="editor-node-kind">SLIDE 控制 <select data-option="node-kind" aria-label="新建、接续与插入的节点类型"><option value="inherit">沿用选中类型</option><option value="normal">普通 / 动作节点</option><option value="control">控制 / 无动作节点</option></select></label><button data-action="shape" title="把选中的 SLIDE / AIR SLIDE 段换成预设形状：曲线 (R)、锯齿 (Z)、震荡">${ICON.shape} 形状</button><button data-action="connect" title="选中长条后点击下一节点位置">${ICON.connect} 接续</button><button data-action="split" title="插入节点：把鼠标移到 SLIDE / AIR 长条上，点击即在该处插入；Esc 退出 (K)">${ICON.insertNode} 插入节点</button></div>
+      <div class="editor-toolrow" aria-label="音符工具条"><span class="editor-toolbar-label">音符</span>${NOTE_TYPES.map(type => (type === 'AIR' ? airTools : `<button class="editor-tool" data-tool="${type}" style="--note-color:${COLOR[type]}" title="${LABEL[type]} (${TOOL_KEYS[type]})" aria-label="${LABEL[type]}"><span class="editor-note-icon editor-icon-${type.toLowerCase()}"></span><span class="editor-tool-label">${LABEL[type]}</span></button>`)).join('')}<span class="editor-toolbar-divider"></span><label class="editor-node-kind">SLIDE 控制 <select data-option="node-kind" aria-label="新建、接续与插入的节点类型"><option value="inherit">沿用选中类型</option><option value="normal">普通 / 动作节点</option><option value="control">控制 / 无动作节点</option></select></label><button data-action="shape" title="把选中的 SLIDE / AIR SLIDE 段换成预设形状：曲线 (R)、锯齿 (Z)、震荡">${ICON.shape} 形状</button><button data-action="connect" title="选中长条后点击下一节点位置">${ICON.connect} 接续</button><button data-action="split" title="插入节点：把鼠标移到 SLIDE / AIR 长条上，点击即在该处插入；Esc 退出 (K)">${ICON.insertNode} 插入节点</button></div>
     </div><div class="editor-body"><div class="editor-canvas-wrap"><div class="editor-canvas-heading"><span class="editor-height-heading">AIR 高度</span><span class="editor-ruler-heading">小节 · 事件 · 波形</span><strong>谱面 <i>16 LANES</i></strong><span>时间 ${ICON.up}</span></div><div class="editor-viewport" tabindex="0" role="application" aria-label="谱面编辑画布，使用音符工具点击放置，选择工具拖动编辑"><canvas></canvas><form class="editor-shape-panel" aria-label="SLIDE 形状" hidden><strong>SLIDE 形状</strong><label class="editor-field"><span>形状</span><select data-shape="shape"><option value="curve">平滑曲线（圆弧）</option><option value="zigzag">锯齿</option><option value="wave">震荡（左右锯齿）</option></select></label><label class="editor-field"><span>长度（拍，可填 3/2）</span><input data-shape="beats" type="text" value="1"></label><label class="editor-field"><span data-shape-move-label>水平移动（轨道，负数向左）</span><input data-shape="move" type="number" step="1" value="4"></label><label class="editor-field" data-shape-row="count"><span data-shape-count-label>段数</span><input data-shape="count" type="number" min="1" max="128" step="1" value="2"></label><label class="editor-field" data-shape-row="start"><span>起始位置（左缘轨道）</span><input data-shape="start" type="number" step="1" value="1"></label><label class="editor-field" data-shape-row="width"><span>宽度（轨道）</span><input data-shape="width" type="number" min="1" step="1" value="4"></label><label class="editor-checkbox" data-shape-row="symmetryV" title="弧线走出去再原路回来，像横放的 U"><input data-shape="symmetryV" type="checkbox">上下对称</label><label class="editor-checkbox" data-shape-row="symmetryH" title="每个节点向轨道中线对称展开，像倒放的 U；与上下对称同选成沙漏形"><input data-shape="symmetryH" type="checkbox">左右对称</label><label class="editor-checkbox" data-shape-row="flipV" title="先直行、到末尾再横移；不选则先横移、再转为直行"><input data-shape="flipV" type="checkbox">上下翻转</label><p data-shape-note></p><div class="editor-inspector-actions"><button type="submit">确认</button><button type="button" data-action="shape-cancel">取消</button></div></form><div class="editor-hint">选择 <kbd>S</kbd> · 笔 <kbd>W</kbd> · 橡皮 <kbd>E</kbd> · 空格播放</div></div><div class="editor-navigation"><span>起点</span><input type="range" min="0" max="3840" value="0" step="24" aria-label="谱面滚动位置"><span class="editor-range-end">结束</span></div></div><aside class="editor-inspector" aria-label="音符与事件属性"></aside></div><div class="editor-status" role="status"></div>`;
 }
