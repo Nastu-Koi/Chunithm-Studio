@@ -1,0 +1,5 @@
+# 纯格式化提交，git blame 跳过它们。
+# 本地启用：git config blame.ignoreRevsFile .git-blame-ignore-revs
+
+# 用 Prettier 格式化全部代码
+99c97b04ecf3c11cb46908d12be25deea5463e1c
