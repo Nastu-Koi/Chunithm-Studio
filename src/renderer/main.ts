@@ -14,6 +14,7 @@ import { browserBridge } from './browser-bridge';
 import { openXmlSettings } from './xml-settings';
 import type { LibraryEntry, LoadedProject } from '../bridge';
 import { appTemplate } from './app-template';
+import { ProjectStore } from './project-store';
 import { $, escape, formatTime } from './dom';
 import type { AppContext } from './app-context';
 import { openSettings } from './dialogs/settings';
@@ -27,30 +28,26 @@ const bridge = window.studio ?? browserBridge;
 const app = document.querySelector<HTMLDivElement>('#app')!;
 app.innerHTML = appTemplate;
 const transport = new Transport();
-let project = createProject(),
-  projectPath: string | null = null,
-  dirty = false,
-  busy = false;
+const store = new ProjectStore();
+let busy = false;
 let view: 'edit' | 'player' = 'edit',
   cursor = 0,
   gamePath =
     localStorage.getItem('chuni-game-path') || (bridge.platform === 'win32' ? 'D:\\chunithm' : '/mnt/d/chunithm');
-let history: Project[] = [],
-  future: Project[] = [],
-  autosaveTimer: ReturnType<typeof setTimeout> | undefined;
+let autosaveTimer: ReturnType<typeof setTimeout> | undefined;
 let library: LibraryEntry[] = [],
   audioGeneration = 0,
   peaks: Float32Array = new Float32Array(),
   coverUrl = '';
 const editor = new ChartEditor($('#editor-view'), {
-  onChange: (chart, label) => commit({ ...project, chart }, label),
+  onChange: (chart, label) => commit({ ...store.project, chart }, label),
   onCursor: tick => {
     cursor = tick;
-    transport.seek(tickToSeconds(project.chart, tick));
+    transport.seek(tickToSeconds(store.project.chart, tick));
   },
   onUndo: undo,
   onRedo: redo,
-  onOffset: (offset, label) => commit({ ...project, audio: { ...project.audio, offset } }, label),
+  onOffset: (offset, label) => commit({ ...store.project, audio: { ...store.project.audio, offset } }, label),
 });
 const player = new ChartPlayer($('#player-canvas-host'));
 /** The player's per-chart indexes (sorted notes, UV spans, effect events) are rebuilt only when the player view is shown. */
@@ -131,6 +128,8 @@ async function run(action: () => Promise<void>): Promise<void> {
   }
 }
 function sync(): void {
+  const project = store.project,
+    dirty = store.dirty;
   editor.setChart(project.chart);
   editor.setCursor(cursor);
   editor.setWaveform(peaks, transport.duration, project.audio.offset, transport.musicSamples);
@@ -159,60 +158,45 @@ function sync(): void {
       ? `${ICON.warning} ${issues.length} 项提示`
       : `${ICON.ok} 检查谱面`;
   $('#validation-button').classList.toggle('has-error', errors > 0);
-  $<HTMLButtonElement>('[data-action="undo"]').disabled = history.length === 0;
-  $<HTMLButtonElement>('[data-action="redo"]').disabled = future.length === 0;
+  $<HTMLButtonElement>('[data-action="undo"]').disabled = !store.canUndo;
+  $<HTMLButtonElement>('[data-action="redo"]').disabled = !store.canRedo;
 }
 function scheduleAutosave(): void {
   clearTimeout(autosaveTimer);
   autosaveTimer = setTimeout(() => {
-    void bridge.autosave(project, projectPath).catch(e => message(`自动保存失败：${e.message}`, true));
+    void bridge.autosave(store.project, store.path).catch(e => message(`自动保存失败：${e.message}`, true));
   }, 1500);
 }
 function commit(next: Project, label = '编辑谱面'): void {
-  history.push(project);
-  if (history.length > 80) history.shift();
-  future = [];
-  project = next;
-  dirty = true;
+  store.commit(next);
   sync();
   $('#status').textContent = label;
   scheduleAutosave();
 }
-function restoreHistory(next: Project): void {
-  const audioChanged = next.audio.path !== project.audio.path,
-    coverChanged = next.coverPath !== project.coverPath;
-  project = next;
-  dirty = true;
+/** After an undo or redo: the restored step may point at other music or another cover. */
+function restoredFrom(before: Project): void {
   sync();
   scheduleAutosave();
-  if (audioChanged) void loadAudio();
-  if (coverChanged) void loadCover();
+  if (store.project.audio.path !== before.audio.path) void loadAudio();
+  if (store.project.coverPath !== before.coverPath) void loadCover();
 }
 function undo(): void {
-  const previous = history.pop();
-  if (!previous) return;
-  future.push(project);
-  restoreHistory(previous);
+  const before = store.project;
+  if (store.undo()) restoredFrom(before);
 }
 function redo(): void {
-  const next = future.pop();
-  if (!next) return;
-  history.push(project);
-  restoreHistory(next);
+  const before = store.project;
+  if (store.redo()) restoredFrom(before);
 }
 function discardAllowed(): boolean {
-  return !dirty || window.confirm('当前工程尚未保存。继续会关闭当前工程，是否继续？');
+  return !store.dirty || window.confirm('当前工程尚未保存。继续会关闭当前工程，是否继续？');
 }
 async function load(p: LoadedProject): Promise<void> {
   transport.pause();
   transport.loop = null;
   $('#loop-button').classList.remove('active');
-  project = p.project;
-  projectPath = p.path;
+  store.load(p.project, p.path);
   cursor = 0;
-  history = [];
-  future = [];
-  dirty = false;
   peaks = new Float32Array();
   transport.clearAudio();
   transport.seek(0);
@@ -221,27 +205,27 @@ async function load(p: LoadedProject): Promise<void> {
 }
 async function loadAudio(): Promise<void> {
   const generation = ++audioGeneration;
-  if (!project.audio.path) {
+  if (!store.project.audio.path) {
     transport.clearAudio();
     peaks = new Float32Array();
-    editor.setWaveform(peaks, 0, project.audio.offset, null);
+    editor.setWaveform(peaks, 0, store.project.audio.offset, null);
     $('#audio-label').textContent = '尚未载入音乐';
     return;
   }
   $('#audio-label').textContent = '正在读取音乐…';
   try {
-    const bytes = await bridge.readAudio(project.audio.path);
+    const bytes = await bridge.readAudio(store.project.audio.path);
     if (generation !== audioGeneration) return;
     const result = await transport.load(new Uint8Array(bytes).buffer);
     if (generation !== audioGeneration) return;
     peaks = result.peaks;
-    transport.setOffset(project.audio.offset);
-    editor.setWaveform(peaks, result.duration, project.audio.offset, transport.musicSamples);
-    $('#audio-label').textContent = project.audio.path.split(/[\\/]/).pop() || '音乐已载入';
+    transport.setOffset(store.project.audio.offset);
+    editor.setWaveform(peaks, result.duration, store.project.audio.offset, transport.musicSamples);
+    $('#audio-label').textContent = store.project.audio.path.split(/[\\/]/).pop() || '音乐已载入';
   } catch (e) {
     transport.clearAudio();
     peaks = new Float32Array();
-    editor.setWaveform(peaks, 0, project.audio.offset, null);
+    editor.setWaveform(peaks, 0, store.project.audio.offset, null);
     $('#audio-label').textContent = '音乐未载入';
     message(`读取音乐失败：${e instanceof Error ? e.message : e}`, true);
   }
@@ -252,9 +236,9 @@ async function loadCover(): Promise<void> {
   $('#jacket-mini').innerHTML = ICON.music;
   coverUrl = '';
   void player.setCover('');
-  if (!project.coverPath) return;
+  if (!store.project.coverPath) return;
   try {
-    const url = await bridge.readCover(project.coverPath);
+    const url = await bridge.readCover(store.project.coverPath);
     if (generation !== coverGeneration) return;
     coverUrl = url;
     const img = document.createElement('img');
@@ -288,7 +272,7 @@ const ctx: AppContext = {
   editor,
   modal,
   get project() {
-    return project;
+    return store.project;
   },
   get gamePath() {
     return gamePath;
@@ -321,30 +305,15 @@ const ctx: AppContext = {
   syncPlayerChart,
   seekTick(tick) {
     cursor = tick;
-    transport.seek(tickToSeconds(project.chart, tick));
+    transport.seek(tickToSeconds(store.project.chart, tick));
     editor.setCursor(cursor, true);
   },
 };
 async function save(saveAs = false): Promise<void> {
-  const before = project,
-    result = await bridge.saveProject(project, projectPath, saveAs);
+  const before = store.project,
+    result = await bridge.saveProject(before, store.path, saveAs);
   if (!result) return;
-  // Saving moves assets into the project folder and deletes replaced ones. Undo steps follow the saved copies,
-  // so an undo neither reloads the same music from its old place nor points at a deleted file.
-  const removed = new Set(result.removed ?? []),
-    saved = result.project;
-  const follow = (p: Project): Project => {
-    const audioPath = p.audio.path === before.audio.path || removed.has(p.audio.path) ? saved.audio.path : p.audio.path;
-    const coverPath = p.coverPath === before.coverPath || removed.has(p.coverPath) ? saved.coverPath : p.coverPath;
-    return audioPath === p.audio.path && coverPath === p.coverPath
-      ? p
-      : { ...p, audio: { ...p.audio, path: audioPath }, coverPath };
-  };
-  history = history.map(follow);
-  future = future.map(follow);
-  project = saved;
-  projectPath = result.path;
-  dirty = false;
+  store.saved(result.project, result.path, result.removed, before);
   clearTimeout(autosaveTimer);
   sync();
   message(`项目已保存到 ${result.path}`);
@@ -356,7 +325,7 @@ async function openProject(directory?: string): Promise<void> {
   if (loaded.warnings?.length) message(loaded.warnings.join(' '), true);
 }
 function playbackDuration(): number {
-  return Math.max(8, chartDuration(project.chart) + 2, transport.duration + project.audio.offset);
+  return Math.max(8, chartDuration(store.project.chart) + 2, transport.duration + store.project.audio.offset);
 }
 const actions: Record<string, () => void | Promise<void>> = {
   new: async () => {
@@ -381,13 +350,18 @@ const actions: Record<string, () => void | Promise<void>> = {
   redo,
   settings: () => openSettings(ctx),
   xml: () =>
-    openXmlSettings(project, { showModal, commit, close: () => modal.close(), error: text => message(text, true) }),
+    openXmlSettings(store.project, {
+      showModal,
+      commit,
+      close: () => modal.close(),
+      error: text => message(text, true),
+    }),
   edit: () => switchView('edit'),
   player: () => switchView('player'),
   audio: async () => {
     const file = await bridge.pickAudio();
     if (file) {
-      commit({ ...project, audio: { ...project.audio, path: file } }, '导入音乐');
+      commit({ ...store.project, audio: { ...store.project.audio, path: file } }, '导入音乐');
       await loadAudio();
     }
   },
@@ -429,7 +403,7 @@ document.querySelectorAll<HTMLElement>('[data-action]').forEach(
 );
 $<HTMLInputElement>('#seek').oninput = event => {
   transport.seek(Number((event.target as HTMLInputElement).value));
-  cursor = secondsToTick(project.chart, transport.seconds);
+  cursor = secondsToTick(store.project.chart, transport.seconds);
   editor.setCursor(cursor, true);
 };
 // Monitoring and display preferences belong to this machine, not to the project: each control starts from what was
@@ -549,7 +523,7 @@ document.addEventListener('keydown', event => {
   }
 });
 window.addEventListener('beforeunload', event => {
-  if (dirty && bridge.platform !== 'browser') {
+  if (store.dirty && bridge.platform !== 'browser') {
     event.preventDefault();
     event.returnValue = '';
   }
@@ -573,7 +547,7 @@ function frame(): void {
   const seconds = transport.seconds,
     duration = playbackDuration();
   if (transport.playing && seconds > duration && !transport.loop) transport.pause();
-  cursor = secondsToTick(project.chart, seconds);
+  cursor = secondsToTick(store.project.chart, seconds);
   if (view === 'edit') editor.setCursor(cursor, transport.playing);
   else player.render(seconds);
   setText(frameElements.current, formatTime(seconds));
@@ -591,7 +565,8 @@ function frame(): void {
     seek.value = value;
     seek.style.setProperty('--progress', `${Math.min(100, (seconds / duration) * 100)}%`);
   }
-  const measure = getMeasureNumberAtTick(project.chart, cursor);
+  const project = store.project,
+    measure = getMeasureNumberAtTick(project.chart, cursor);
   setText(
     frameElements.position,
     `${measure === null ? '小节线隐藏' : `第 ${String(measure).padStart(3, '0')} 小节`} · BPM ${bpmAtTick(project.chart, cursor).toFixed(1)}`,
@@ -617,7 +592,7 @@ void bridge
     $('#recovery-restore').onclick = () =>
       void run(async () => {
         await load(recovery);
-        dirty = true;
+        store.markDirty();
         sync();
         modal.close();
       });

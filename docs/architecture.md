@@ -43,7 +43,8 @@ Chuni Studio 是 Electron 桌面程序：主进程负责文件、游戏资源与
 
 ### `src/renderer`
 
-- `main.ts`：应用壳。只保留工程状态、撤销重做、各部件之间的同步和快捷键。
+- `main.ts`：应用壳。把工程同步到各部件，处理工具栏动作、快捷键、载入与保存。
+- `project-store.ts`：`ProjectStore`，当前工程、项目文件夹、未保存标记与撤销重做（最多 80 步），以及保存后让撤销步骤指向复制进项目文件夹的素材。不访问 DOM，可单独测试。
 - `app-template.ts`：页面模板。
 - `icons.ts`：界面图标。从 `lucide` 取图标数据拼成内联 SVG 字符串，模板与各对话框只经 `ICON` 取用。
 - `app-context.ts`：`AppContext`，对话框访问工程、播放器和应用壳操作的唯一入口。
@@ -71,7 +72,7 @@ Chuni Studio 是 Electron 桌面程序：主进程负责文件、游戏资源与
 
 ### 工程
 
-工程是一个不可变的 `Project` 对象，状态保存在 `src/renderer/main.ts`。每次编辑通过 `commit` 换成新对象，旧对象压入撤销栈，然后同步到编辑器、播放器和音频时钟，并在 1.5 秒后把工程暂存到用户数据目录的 `recovery.json`。保存时主进程把工程写入项目文件夹，同时把音乐和封面复制进去。
+工程是一个不可变的 `Project` 对象，由 `src/renderer/project-store.ts` 的 `ProjectStore` 持有。每次编辑通过 `commit` 换成新对象，旧对象压入撤销栈，然后由 `src/renderer/main.ts` 同步到编辑器、播放器和音频时钟，并在 1.5 秒后把工程暂存到用户数据目录的 `recovery.json`。保存时主进程把工程写入项目文件夹，同时把音乐和封面复制进去。
 
 编辑器、播放器和音频时钟共用同一份谱面和播放位置：音频时钟给出当前秒数，`src/core/timing.ts` 把它换算成 tick，每帧只绘制当前可见的那个页面。播放器按谱面建立的索引推迟到切换到播放页时才重建。
 
