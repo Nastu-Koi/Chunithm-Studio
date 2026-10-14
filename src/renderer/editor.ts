@@ -1,21 +1,10 @@
 import {
-  MargreteNoteSprites,
-  NOTE_BAR_HEIGHT,
-  airArrowHeight,
-  airArrowLift,
-  airDown,
-  airLean,
-  airSide,
-} from './margrete-sprites';
-import {
   AIR_NOTE_TYPES,
-  HEIGHT_NOTE_TYPES,
   LONG_NOTE_TYPES,
   createChart,
   createNote,
   LANES,
   makeId,
-  NOTE_TYPES,
   type Chart,
   type ChartEvent,
   type EventType,
@@ -23,14 +12,22 @@ import {
   type NoteAttributes,
   type NoteType,
 } from '../core/model';
-import { getChartEndTick, getGrid, secondsToTick, tickToSeconds, getNotePlaybackPoints } from '../core/timing';
+import { getChartEndTick, secondsToTick, tickToSeconds } from '../core/timing';
 import { isBundledImageSource, type GameTexture } from '../core/game-assets';
-import { getNativeNoteTag } from '../core/c2s';
-import { getSlideUvSpans, slideUvProgress } from './slide-timing';
-import { editorTemplate, LABEL, noteColor } from './editor-template';
+import { EVENT_LABEL, editorTemplate, LABEL } from './editor-template';
+import { EditorView, airHeightMaximum, type Position } from './editor-view';
+import {
+  groundHeadAt,
+  groundTailAt,
+  hitsAt,
+  insertTargetAt,
+  isChainHeadPick,
+  type DragKind,
+  type Hit,
+} from './editor-hit';
+import { BODY_TEXTURE, EditorPainter, type AudioSamples } from './editor-paint';
+import { fractionLabel, inspectorHtml, inspectorKey } from './editor-inspector';
 import { readChoice, readNumber, writeSetting } from './ui-settings';
-import { ICON } from './icons';
-import { escape } from './dom';
 import {
   clamp,
   endLane,
@@ -47,7 +44,6 @@ import {
   appendEditorNote,
   attachEditorAir,
   editorChain,
-  nextEditorSegment,
   removeEditorJoint,
   mergeEditorExTaps,
   boundEditorParent,
@@ -82,12 +78,18 @@ type Callbacks = {
   onRedo(): void;
   onOffset(seconds: number, label: string): void;
 };
-type AudioSamples = { data: Float32Array; sampleRate: number };
-/** `lane` is the lane under the pointer; `laneAt` is the same place as a fractional lane coordinate. */
-type Position = { x: number; y: number; tick: number; lane: number; laneAt: number };
-type DragKind =
-  'move' | 'end' | 'width' | 'widthLeft' | 'endWidth' | 'height' | 'endHeight' | 'box' | 'draw' | 'seek' | 'pan';
 type Tool = NoteType | 'select' | 'erase';
+/** What a click on the track does besides applying the current tool. Exactly one mode is active. */
+type EditorMode =
+  | { kind: 'normal' }
+  /** Clicks split the long note under the pointer instead of placing or selecting. */
+  | { kind: 'insert' }
+  /** Clicks append a node to the selected long note. */
+  | { kind: 'continue' }
+  /** Clicks set the cursor or the music offset and never edit notes. */
+  | { kind: 'align' }
+  /** The shape panel is open for segment `id`; `preview` then holds the candidate path. */
+  | { kind: 'shape'; id: string };
 type Drag = {
   kind: DragKind;
   start: Position;
@@ -99,84 +101,15 @@ type Drag = {
   scroll: number;
   pointerId: number;
 };
-const EVENT_LABEL: Record<EventType, string> = {
-  BPM: 'BPM',
-  METER: '拍号',
-  SCROLL: '谱面滚速',
-  NOTE_SPEED: '音符速度',
-  GROUP_SCROLL: '分组滚速',
-  SCROLL_ASSIGNMENT: '指派分组',
-  STOP: '旧版停止',
-};
-
-/** Lane width at 100% track scale. A host too narrow for it still fits every visible lane. */
-/** Width of one lane on the canvas; lanes only get narrower when the view holds more of them than the canvas has room for. */
-const LANE_WIDTH = 15;
 const PROPERTY_REJECTION: Record<PropertyRejection, string> = {
   fraction: '音乐时值请输入数字或分数，例如 1/7、3/16、1.5',
   'node-position': '节点位置请输入数字或分数，例如 1/7、3/16、1.5',
   'bound-air': 'AIR 绑定在地面音符的尾端，位置与宽度跟随父音符；请修改父音符',
   'zero-note-speed': '音符速度不能为 0；停谱请使用谱面滚速事件',
 };
-const EVENT_COLOR: Record<EventType, string> = {
-  BPM: '#65cf69',
-  METER: '#d4a46b',
-  SCROLL: '#e2575f',
-  NOTE_SPEED: '#b9b9b9',
-  GROUP_SCROLL: '#e88bb0',
-  SCROLL_ASSIGNMENT: '#a897d8',
-  STOP: '#e2575f',
-};
-/** Game joint textures for ground long-note bodies, and their centre colours sampled from start (0) to end (1) as the fallback gradient. */
-const BODY_TEXTURE: Partial<Record<NoteType, string>> = { SLIDE: 'SlideJoint', HOLD: 'HoldJoint' };
-const BODY_STOPS: Partial<Record<NoteType, [number, string][]>> = {
-  SLIDE: [
-    [0, '#8242be'],
-    [0.06, '#7357c7'],
-    [0.25, '#30b3ec'],
-    [0.5, '#0ee2ff'],
-    [0.75, '#49b9e8'],
-    [0.94, '#bf68bb'],
-    [1, '#dd53af'],
-  ],
-  HOLD: [
-    [0, '#8641ba'],
-    [0.06, '#9653a2'],
-    [0.25, '#dba036'],
-    [0.5, '#fec700'],
-    [0.75, '#f5a632'],
-    [0.94, '#e26496'],
-    [1, '#dd53af'],
-  ],
-};
-function eventText(event: ChartEvent): string {
-  switch (event.type) {
-    case 'BPM':
-      return formatTick(event.value);
-    case 'METER':
-      return `${event.numerator ?? 4}/${event.denominator ?? 4}`;
-    case 'SCROLL':
-      return `×${formatTick(event.value)}`;
-    case 'NOTE_SPEED':
-      return `♪×${formatTick(event.value)}`;
-    case 'GROUP_SCROLL':
-      return `G${event.group ?? 0} ×${formatTick(event.value)}`;
-    case 'SCROLL_ASSIGNMENT':
-      return `→G${event.group ?? event.value}`;
-    case 'STOP':
-      return 'STOP';
-  }
-}
-function fractionLabel(value: number): string {
-  for (let denominator = 1; denominator <= 4096; denominator++) {
-    const numerator = Math.round(value * denominator);
-    if (Math.abs(numerator / denominator - value) < 1e-9)
-      return denominator === 1 ? String(numerator) : `${numerator}/${denominator}`;
-  }
-  return formatTick(value);
-}
 export class ChartEditor {
-  private readonly noteSprites = new MargreteNoteSprites();
+  private readonly view = new EditorView(readNumber('editor-zoom', 0.75, 0.2, 5));
+  private readonly painter: EditorPainter;
   private chart: Chart = createChart();
   private readonly canvas: HTMLCanvasElement;
   private readonly context: CanvasRenderingContext2D;
@@ -191,8 +124,7 @@ export class ChartEditor {
   private penTool: NoteType = 'TAP';
   private airVertical: 'IR' | 'DW' = 'IR';
   private airLean: -1 | 0 | 1 = 0;
-  /** Insert-node mode: clicks split the long note under the pointer instead of placing or selecting. */
-  private inserting = false;
+  private mode: EditorMode = { kind: 'normal' };
   /** Segment whose end node was picked rather than its body; the highlight and the inspector then show that node alone. */
   private pickedJoint?: string;
   /** First segment of a SLIDE / AIR chain whose head node was picked; deleting it takes the whole long note. */
@@ -201,8 +133,6 @@ export class ChartEditor {
   private cycling = false;
   /** The pick a cycling click replaced, so that a double click still acts on the item it began on. */
   private cycled?: { selection: Set<string>; joint?: string; head?: string; time: number };
-  /** Segment being reshaped while the shape panel is open; `preview` then holds the candidate path. */
-  private shapeId?: string;
   private readonly shapePanel: HTMLFormElement;
   private snap = Math.round(readNumber('editor-snap', 16, 0, 4096));
   private width = Math.round(readNumber('editor-width', 2, 1, LANES));
@@ -213,50 +143,32 @@ export class ChartEditor {
   );
   /** The toolbar options as last written to this machine's settings. */
   private savedOptions = '';
-  private zoom = readNumber('editor-zoom', 0.75, 0.2, 5);
-  private viewStart = 0;
-  private viewEnd = LANES;
-  private scroll = 0;
   private cursor = 0;
-  private canvasWidth = 1;
-  private canvasHeight = 1;
   private drag?: Drag;
   private preview?: Chart;
   private clipboard?: Clipboard;
   private hover?: Position;
-  private continuing = false;
   private peaks: Float32Array = new Float32Array();
   private audioDuration = 0;
   private audioOffset = 0;
   private samples?: AudioSamples;
-  /** Alignment mode: clicks set the cursor or the music offset and never edit notes. */
-  private aligning = false;
-  private readonly alignWidth = 120;
   private pendingDraw = 0;
   private inspectorKey = '';
-  private bodyTextures: Partial<Record<NoteType, HTMLImageElement>> = {};
   private bodyTextureGeneration = 0;
-  private readonly airLeft = 9;
-  private readonly airWidth = 98;
-  private readonly rulerLeft = 116;
-  private readonly rulerWidth = 68;
-  private readonly eventLeft = 186;
-  private readonly waveformLeft = 219;
-  private readonly left = 250;
-  private readonly bottom = 30;
 
   constructor(
     private readonly host: HTMLElement,
     private readonly callbacks: Callbacks,
   ) {
     host.classList.add('editor-root');
-    host.innerHTML = editorTemplate({ zoom: this.zoom });
+    host.innerHTML = editorTemplate({ zoom: this.view.zoom });
     this.canvas = host.querySelector('canvas')!;
-    this.canvas.dataset.trackLeft = String(this.left);
-    this.canvas.dataset.airHeightLeft = String(this.airLeft);
-    this.canvas.dataset.airHeightWidth = String(this.airWidth);
-    host.style.setProperty('--editor-track-left', `${this.left}px`);
+    this.canvas.dataset.trackLeft = String(this.view.left);
+    this.canvas.dataset.airHeightLeft = String(this.view.airLeft);
+    this.canvas.dataset.airHeightWidth = String(this.view.airWidth);
+    host.style.setProperty('--editor-track-left', `${this.view.left}px`);
     this.context = this.canvas.getContext('2d')!;
+    this.painter = new EditorPainter(this.canvas, this.context, this.view);
     this.viewport = host.querySelector('.editor-viewport')!;
     this.inspector = host.querySelector('.editor-inspector')!;
     this.shapePanel = host.querySelector('.editor-shape-panel')!;
@@ -321,7 +233,7 @@ export class ChartEditor {
     this.observer.observe(this.viewport);
     this.renderInspector();
     this.resize();
-    this.noteSprites.load(() => {
+    this.painter.noteSprites.load(() => {
       this.canvas.dataset.noteSprites = 'margrete-1.8.0';
       this.draw();
     });
@@ -330,17 +242,13 @@ export class ChartEditor {
   setChart(chart: Chart): void {
     const changedMode = Boolean(this.chart.allowOutOfLane) !== Boolean(chart.allowOutOfLane);
     // A candidate shape belongs to the chart it was computed from.
-    if (chart !== this.chart && !this.shapePanel.hidden) {
-      this.shapePanel.hidden = true;
-      this.shapeId = undefined;
-      this.preview = undefined;
-    }
+    if (chart !== this.chart && this.mode.kind === 'shape') this.setMode({ kind: 'normal' });
     this.chart = chart;
     const ids = new Set([...chart.notes, ...chart.events].map(item => item.id));
     this.selection = new Set([...this.selection].filter(id => ids.has(id)));
     if (!chart.allowOutOfLane) {
-      this.viewStart = 0;
-      this.viewEnd = LANES;
+      this.view.viewStart = 0;
+      this.view.viewEnd = LANES;
     } else if (changedMode) this.fitLaneRange(true);
     else this.fitLaneRange(false);
     this.syncAdvancedControls();
@@ -353,9 +261,9 @@ export class ChartEditor {
   setCursor(tick: number, follow = false): void {
     if (this.cursor === Math.max(0, tick) && !follow) return;
     this.cursor = Math.max(0, tick);
-    const visible = (this.canvasHeight - this.bottom) / this.zoom;
-    if (follow && (tick < this.scroll || tick > this.scroll + visible * 0.8))
-      this.scroll = Math.max(0, tick - visible * 0.2);
+    const visible = (this.view.canvasHeight - this.view.bottom) / this.view.zoom;
+    if (follow && (tick < this.view.scroll || tick > this.view.scroll + visible * 0.8))
+      this.view.scroll = Math.max(0, tick - visible * 0.2);
     this.updateNavigation();
     this.draw();
   }
@@ -363,7 +271,7 @@ export class ChartEditor {
   /** Use the copied game joint textures for HOLD / SLIDE bodies; without them the bodies keep the matching gradient. */
   setBodyTextures(textures: Readonly<Record<string, GameTexture>> | undefined): void {
     const generation = ++this.bodyTextureGeneration;
-    this.bodyTextures = {};
+    this.painter.bodyTextures = {};
     this.canvas.dataset.bodyTextures = 'gradient';
     for (const [type, key] of Object.entries(BODY_TEXTURE) as [NoteType, string][]) {
       const source = textures?.[key]?.dataUrl;
@@ -372,7 +280,7 @@ export class ChartEditor {
       image.crossOrigin = 'anonymous';
       image.onload = () => {
         if (generation !== this.bodyTextureGeneration) return;
-        this.bodyTextures[type] = image;
+        this.painter.bodyTextures[type] = image;
         this.canvas.dataset.bodyTextures = 'game';
         this.draw();
       };
@@ -386,7 +294,7 @@ export class ChartEditor {
     this.audioDuration = duration;
     this.audioOffset = offset;
     this.samples = samples ?? undefined;
-    if (this.aligning && !this.samples) this.setAligning(false);
+    if (this.mode.kind === 'align' && !this.samples) this.setAligning(false);
     this.host.querySelector('[data-align-offset]')!.textContent = `${(offset * 1000).toFixed(1)} ms`;
     this.updateNavigation();
     this.draw();
@@ -394,13 +302,13 @@ export class ChartEditor {
 
   resize(): void {
     const bounds = this.viewport.getBoundingClientRect();
-    this.canvasWidth = Math.max(1, bounds.width);
-    this.canvasHeight = Math.max(1, bounds.height);
+    this.view.canvasWidth = Math.max(1, bounds.width);
+    this.view.canvasHeight = Math.max(1, bounds.height);
     const dpr = window.devicePixelRatio || 1;
-    this.canvas.width = Math.round(this.canvasWidth * dpr);
-    this.canvas.height = Math.round(this.canvasHeight * dpr);
-    this.canvas.style.width = `${this.canvasWidth}px`;
-    this.canvas.style.height = `${this.canvasHeight}px`;
+    this.canvas.width = Math.round(this.view.canvasWidth * dpr);
+    this.canvas.height = Math.round(this.view.canvasHeight * dpr);
+    this.canvas.style.width = `${this.view.canvasWidth}px`;
+    this.canvas.style.height = `${this.view.canvasHeight}px`;
     this.context.setTransform(dpr, 0, 0, dpr, 0, 0);
     this.syncTrackLayout();
     this.draw();
@@ -449,10 +357,7 @@ export class ChartEditor {
       this.setHint('先选中一段 SLIDE / AIR SLIDE，再生成形状');
       return;
     }
-    if (this.aligning) this.setAligning(false);
-    if (this.inserting) this.setInserting(false);
     this.cancelDrag();
-    this.continuing = false;
     const field = <T extends HTMLElement>(name: string) => this.shapePanel.querySelector<T>(`[data-shape="${name}"]`)!;
     if (shape) field<HTMLSelectElement>('shape').value = shape;
     const sideways = endLane(note) - note.lane,
@@ -464,7 +369,7 @@ export class ChartEditor {
     field<HTMLInputElement>('start').value = String(note.lane + this.laneBase);
     field<HTMLInputElement>('width').value = String(note.width);
     field<HTMLInputElement>('start').disabled = field<HTMLInputElement>('width').disabled = bound;
-    this.shapeId = note.id;
+    this.setMode({ kind: 'shape', id: note.id });
     this.shapePanel.hidden = false;
     this.previewShape();
     field<HTMLInputElement>('beats').focus();
@@ -480,8 +385,8 @@ export class ChartEditor {
       checked = (name: string) => (input(name) as HTMLInputElement).checked;
     const beats = parseEditorFraction(field('beats')),
       shape = field('shape') as SlideShape;
-    if (!this.shapeId || beats === undefined || !(beats > 0)) return undefined;
-    return shapeEditorSlide(this.chart, this.shapeId, {
+    if (this.mode.kind !== 'shape' || beats === undefined || !(beats > 0)) return undefined;
+    return shapeEditorSlide(this.chart, this.mode.id, {
       shape,
       length: (beats * this.chart.resolution) / 4,
       move: Number(field('move')) || 0,
@@ -532,15 +437,13 @@ export class ChartEditor {
     this.draw();
   }
   private closeShape(apply: boolean): void {
-    if (this.shapePanel.hidden) return;
+    if (this.mode.kind !== 'shape') return;
     const result = apply ? this.shapeResult() : undefined;
     if (apply && !result) {
       this.previewShape();
       return;
     }
-    this.shapePanel.hidden = true;
-    this.shapeId = undefined;
-    this.preview = undefined;
+    this.setMode({ kind: 'normal' });
     if (result) {
       this.selection = new Set(result.ids);
       this.commit(result.chart, '生成 SLIDE 形状');
@@ -633,27 +536,6 @@ export class ChartEditor {
     this.commit(next, '镜像音符');
   }
 
-  private get trackViewportWidth(): number {
-    return Math.max(1, this.canvasWidth - this.left - 18);
-  }
-  private get trackWidth(): number {
-    return Math.min(this.trackViewportWidth, LANE_WIDTH * (this.viewEnd - this.viewStart));
-  }
-  private get trackRight(): number {
-    return this.left + this.trackWidth;
-  }
-  private get laneWidth(): number {
-    return this.trackWidth / (this.viewEnd - this.viewStart);
-  }
-  private x(lane: number): number {
-    return this.left + (lane - this.viewStart) * this.laneWidth;
-  }
-  private inTrack(x: number): boolean {
-    return x >= this.left && x <= this.trackRight;
-  }
-  private y(tick: number): number {
-    return this.canvasHeight - this.bottom - (tick - this.scroll) * this.zoom;
-  }
   private quantize(tick: number): number {
     if (!this.snap) return Math.max(0, tick);
     const step = this.step;
@@ -666,11 +548,11 @@ export class ChartEditor {
     const bounds = this.canvas.getBoundingClientRect();
     const x = event.clientX - bounds.left,
       y = event.clientY - bounds.top;
-    const laneAt = this.viewStart + (x - this.left) / this.laneWidth;
+    const laneAt = this.view.laneAt(x);
     return {
       x,
       y,
-      tick: this.quantize(this.scroll + (this.canvasHeight - this.bottom - y) / this.zoom),
+      tick: this.quantize(this.view.tickAt(y)),
       laneAt,
       lane: clamp(Math.floor(laneAt), this.chart.allowOutOfLane ? -64 : 0, this.chart.allowOutOfLane ? 64 : LANES - 1),
     };
@@ -681,9 +563,9 @@ export class ChartEditor {
   }
   private syncTrackLayout(): void {
     Object.assign(this.canvas.dataset, {
-      trackWidth: String(this.trackWidth),
-      trackRight: String(this.trackRight),
-      laneWidth: String(this.laneWidth),
+      trackWidth: String(this.view.trackWidth),
+      trackRight: String(this.view.trackRight),
+      laneWidth: String(this.view.laneWidth),
     });
   }
   private emitCursor(tick: number): void {
@@ -728,11 +610,11 @@ export class ChartEditor {
       ...events.map(event => (event.lane ?? 0) + (event.width ?? 1)),
     );
     if (all) {
-      this.viewStart = Math.max(-64, Math.floor(minimum) - 2);
-      this.viewEnd = Math.min(192, Math.ceil(maximum) + 2);
+      this.view.viewStart = Math.max(-64, Math.floor(minimum) - 2);
+      this.view.viewEnd = Math.min(192, Math.ceil(maximum) + 2);
     } else {
-      if (minimum < this.viewStart) this.viewStart = Math.max(-64, Math.floor(minimum) - 2);
-      if (maximum > this.viewEnd) this.viewEnd = Math.min(192, Math.ceil(maximum) + 2);
+      if (minimum < this.view.viewStart) this.view.viewStart = Math.max(-64, Math.floor(minimum) - 2);
+      if (maximum > this.view.viewEnd) this.view.viewEnd = Math.min(192, Math.ceil(maximum) + 2);
     }
   }
   private syncAdvancedControls(): void {
@@ -740,8 +622,8 @@ export class ChartEditor {
     this.host.querySelector<HTMLInputElement>('[data-option="out-of-lane"]')!.checked = enabled;
     const start = this.host.querySelector<HTMLInputElement>('[data-option="view-start"]')!,
       end = this.host.querySelector<HTMLInputElement>('[data-option="view-end"]')!;
-    start.value = String(this.viewStart);
-    end.value = String(this.viewEnd);
+    start.value = String(this.view.viewStart);
+    end.value = String(this.view.viewEnd);
     start.disabled = !enabled;
     end.disabled = !enabled;
     const width = this.host.querySelector<HTMLInputElement>('[data-option="width"]')!;
@@ -749,7 +631,7 @@ export class ChartEditor {
     this.width = Math.min(this.width, enabled ? 128 : LANES);
     width.value = String(this.width);
     this.host.querySelector('.editor-canvas-heading i')!.textContent = enabled
-      ? `演出坐标 ${this.viewStart}…${this.viewEnd}`
+      ? `演出坐标 ${this.view.viewStart}…${this.view.viewEnd}`
       : '16 LANES';
     this.syncTrackLayout();
   }
@@ -759,11 +641,11 @@ export class ChartEditor {
       getChartEndTick(this.chart) + this.chart.resolution * 4,
       this.audioDuration ? secondsToTick(this.chart, this.audioDuration + this.audioOffset) : 0,
       this.cursor + this.chart.resolution * 2,
-      this.scroll,
+      this.view.scroll,
     );
     this.minimap.max = String(Math.ceil(end));
     this.minimap.step = String(this.step);
-    this.minimap.value = String(this.scroll);
+    this.minimap.value = String(this.view.scroll);
   }
 
   private onClick(event: MouseEvent): void {
@@ -803,7 +685,7 @@ export class ChartEditor {
         this.selectAll();
         break;
       case 'home':
-        this.scroll = Math.max(0, this.cursor - (this.canvasHeight / this.zoom) * 0.25);
+        this.view.scroll = Math.max(0, this.cursor - (this.view.canvasHeight / this.view.zoom) * 0.25);
         this.updateNavigation();
         this.draw();
         break;
@@ -812,8 +694,8 @@ export class ChartEditor {
         this.resize();
         break;
       case 'fit-stage':
-        this.viewStart = 0;
-        this.viewEnd = LANES;
+        this.view.viewStart = 0;
+        this.view.viewEnd = LANES;
         this.syncAdvancedControls();
         this.draw();
         break;
@@ -828,21 +710,19 @@ export class ChartEditor {
           this.setHint('先选中一条长条，再点击“接续”');
           return;
         }
-        if (this.inserting) this.setInserting(false);
-        this.continuing = !this.continuing;
-        button.classList.toggle('editor-active', this.continuing);
-        this.setHint(this.continuing ? '点击下一节点的时间与轨道；Esc 取消接续' : '已取消接续');
-        this.draw();
+        const on = this.mode.kind !== 'continue';
+        this.setMode(on ? { kind: 'continue' } : { kind: 'normal' });
+        this.setHint(on ? '点击下一节点的时间与轨道；Esc 取消接续' : '已取消接续');
         break;
       }
       case 'split':
-        this.setInserting(!this.inserting);
+        this.setInserting(this.mode.kind !== 'insert');
         break;
       case 'air-side':
         this.setAir(this.airVertical, Number(button.dataset.side) as -1 | 0 | 1);
         break;
       case 'align':
-        this.setAligning(!this.aligning);
+        this.setAligning(this.mode.kind !== 'align');
         break;
       case 'nudge':
         this.setOffset(this.audioOffset + Number(button.dataset.ms) / 1000, '微调音乐偏移');
@@ -873,56 +753,49 @@ export class ChartEditor {
     this.airLean = lean;
     this.setTool('AIR');
   }
-  private setInserting(on: boolean): void {
-    if (on) {
-      if (this.aligning) this.setAligning(false);
-      this.cancelDrag();
-      this.continuing = false;
-      this.host.querySelector('[data-action="connect"]')?.classList.remove('editor-active');
+  /** Switch the interaction mode: leave the current one, then sync the mode buttons and the pointer cursor. */
+  private setMode(next: EditorMode): void {
+    const previous = this.mode;
+    this.mode = next;
+    if (previous.kind === 'shape' && next.kind !== 'shape') {
+      this.shapePanel.hidden = true;
+      this.preview = undefined;
     }
-    this.inserting = on;
-    this.host.querySelector('[data-action="split"]')?.classList.toggle('editor-active', on);
-    this.viewport.style.cursor = on
-      ? 'copy'
-      : this.tool === 'select'
-        ? 'default'
-        : this.tool === 'erase'
-          ? 'cell'
-          : 'crosshair';
+    // Alignment allows a closer zoom than editing; the editing limit returns with it.
+    if (previous.kind === 'align' && next.kind !== 'align' && this.view.zoom > 5) {
+      this.view.zoom = 5;
+      this.host.querySelector<HTMLInputElement>('[data-option="zoom"]')!.value = '5';
+      this.updateNavigation();
+    }
+    this.host.querySelector('[data-action="split"]')?.classList.toggle('editor-active', next.kind === 'insert');
+    this.host
+      .querySelectorAll('[data-action="connect"]')
+      .forEach(button => button.classList.toggle('editor-active', next.kind === 'continue'));
+    this.host.querySelector('[data-action="align"]')!.classList.toggle('editor-active', next.kind === 'align');
+    this.host.querySelector<HTMLElement>('.editor-align-controls')!.hidden = next.kind !== 'align';
+    this.syncViewportCursor();
+    this.draw();
+  }
+  private syncViewportCursor(): void {
+    this.viewport.style.cursor =
+      this.mode.kind === 'insert'
+        ? 'copy'
+        : this.mode.kind === 'align' || (this.tool !== 'select' && this.tool !== 'erase')
+          ? 'crosshair'
+          : this.tool === 'select'
+            ? 'default'
+            : 'cell';
+  }
+  private setInserting(on: boolean): void {
+    if (!on && this.mode.kind !== 'insert') return;
+    if (on) this.cancelDrag();
+    this.setMode(on ? { kind: 'insert' } : { kind: 'normal' });
     this.setHint(
       on ? '插入节点：把鼠标移到 SLIDE / AIR 长条上，点击即在该处插入 · 可连续插入 · Esc 退出' : '已退出插入节点',
     );
-    this.draw();
-  }
-  /** The chained long note whose body is under the pointer, and the node a click would insert. HOLD has no inner nodes. */
-  private insertTarget(point: Position): { note: Note; lane: number; width: number } | undefined {
-    const chart = this.chart;
-    for (let index = chart.notes.length - 1; index >= 0; index--) {
-      const note = chart.notes[index];
-      if (!long(note) || note.type === 'HOLD' || !(point.tick > note.tick && point.tick < endTick(note))) continue;
-      const startY = this.y(note.tick),
-        finishY = this.y(endTick(note));
-      if (point.y > startY + 4 || point.y < finishY - 4) continue;
-      const along = clamp((startY - point.y) / (startY - finishY), 0, 1);
-      const left = this.x(note.lane) + (this.x(endLane(note)) - this.x(note.lane)) * along,
-        span = (note.width + (endWidth(note) - note.width) * along) * this.laneWidth;
-      if (point.x < left - 3 || point.x > left + span + 3) continue;
-      const fraction = (point.tick - note.tick) / note.duration!;
-      const width = clamp(
-        Math.round(note.width + (endWidth(note) - note.width) * fraction),
-        1,
-        chart.allowOutOfLane ? 128 : LANES,
-      );
-      return {
-        note,
-        width,
-        lane: limitLane(chart, Math.round(note.lane + (endLane(note) - note.lane) * fraction), width),
-      };
-    }
-    return undefined;
   }
   private insertAt(point: Position): void {
-    const target = this.insertTarget(point);
+    const target = insertTargetAt(this.view, this.chart, point);
     if (!target) {
       this.setHint(
         '这里没有可插入节点的长条：请点在 SLIDE / AIR SLIDE / AIR HOLD / AIR CRUSH 的带体上（HOLD 没有中间节点）',
@@ -940,17 +813,6 @@ export class ChartEditor {
     this.commit(result, '插入长条节点');
     this.setHint('节点已插入；继续点击可再插入，Esc 完成');
   }
-  /** A HOLD, or the first segment of a SLIDE, whose head bar is under the pointer. */
-  private groundHeadAt(point: Position): Note | undefined {
-    return this.chart.notes.findLast(
-      note =>
-        (note.type === 'HOLD' || note.type === 'SLIDE') &&
-        Math.abs(point.y - this.y(note.tick)) < 10 &&
-        point.x >= this.x(note.lane) - 3 &&
-        point.x <= this.x(note.lane + note.width) + 3 &&
-        getNotePlaybackPoints(this.chart, note).some(item => item.position === 'head'),
-    );
-  }
   private get noteTool(): NoteType | undefined {
     return this.tool === 'select' || this.tool === 'erase' ? undefined : this.tool;
   }
@@ -965,7 +827,7 @@ export class ChartEditor {
       'editor-snap': this.snap,
       'editor-width': Math.min(this.width, LANES),
       'editor-node-kind': this.nodeKind,
-      ...(this.aligning ? {} : { 'editor-zoom': this.zoom }),
+      ...(this.mode.kind === 'align' ? {} : { 'editor-zoom': this.view.zoom }),
     };
     const key = JSON.stringify(options);
     if (key === this.savedOptions) return;
@@ -977,31 +839,14 @@ export class ChartEditor {
       this.setHint('请先导入音乐，再对齐');
       return;
     }
-    if (on && this.inserting) this.setInserting(false);
-    this.aligning = on;
-    this.continuing = false;
+    if (!on && this.mode.kind !== 'align') return;
+    this.setMode(on ? { kind: 'align' } : { kind: 'normal' });
     this.cancelDrag();
-    this.host.querySelector('[data-action="align"]')!.classList.toggle('editor-active', on);
-    this.host.querySelector('[data-action="connect"]')?.classList.remove('editor-active');
-    this.host.querySelector<HTMLElement>('.editor-align-controls')!.hidden = !on;
-    if (!on && this.zoom > 5) {
-      this.zoom = 5;
-      this.host.querySelector<HTMLInputElement>('[data-option="zoom"]')!.value = '5';
-      this.updateNavigation();
-    }
-    this.viewport.style.cursor = on
-      ? 'crosshair'
-      : this.tool === 'select'
-        ? 'default'
-        : this.tool === 'erase'
-          ? 'cell'
-          : 'crosshair';
     this.setHint(
       on
         ? '对齐音乐：点击小节栏或轨道把光标放到目标线，再点击波形上的起音 · Ctrl+滚轮放大 · Esc 退出'
         : '已退出对齐音乐',
     );
-    this.draw();
   }
   private setOffset(seconds: number, label: string): void {
     // 0.1 ms is finer than one sample period at 48 kHz allows the ear to tell apart, and keeps the stored value readable.
@@ -1012,16 +857,9 @@ export class ChartEditor {
     }
     if (offset !== this.audioOffset) this.callbacks.onOffset(offset, label);
   }
-  private inAlignWaveform(point: Position): boolean {
-    return (
-      point.x >= this.waveformLeft &&
-      point.x <= this.waveformLeft + this.alignWidth &&
-      point.y <= this.canvasHeight - this.bottom
-    );
-  }
   /** Move the music so that the clicked audio moment lands on the cursor. */
   private alignAt(point: Position): void {
-    const tick = this.scroll + (this.canvasHeight - this.bottom - point.y) / this.zoom;
+    const tick = this.view.scroll + (this.view.canvasHeight - this.view.bottom - point.y) / this.view.zoom;
     const audioSeconds = tickToSeconds(this.chart, tick) - this.audioOffset;
     if (audioSeconds < 0 || audioSeconds > this.audioDuration) {
       this.setHint('这里没有音乐；请点击波形上的起音');
@@ -1031,11 +869,12 @@ export class ChartEditor {
     this.setHint(`已把该起音对齐到光标（${formatTick(this.cursor)} tick）；可用 ±1 / ±10 ms 微调，或重新点击`);
   }
   private setTool(tool: Tool): void {
-    if (this.aligning) this.setAligning(false);
+    if (this.mode.kind === 'align') this.cancelDrag();
     this.tool = tool;
-    this.continuing = false;
-    this.inserting = false;
     if (tool !== 'select' && tool !== 'erase') this.penTool = tool;
+    // A tool change ends the click modes; an open shape panel stays.
+    if (this.mode.kind !== 'shape') this.setMode({ kind: 'normal' });
+    else this.syncViewportCursor();
     this.host
       .querySelectorAll<HTMLButtonElement>('[data-tool]')
       .forEach(button =>
@@ -1044,7 +883,6 @@ export class ChartEditor {
           button.dataset.tool === tool && (!button.dataset.air || button.dataset.air === this.airVertical),
         ),
       );
-    this.host.querySelector('[data-action="split"]')?.classList.remove('editor-active');
     const side = this.host.querySelector<HTMLElement>('.editor-air-side');
     if (side) {
       side.hidden = tool !== 'AIR';
@@ -1052,8 +890,6 @@ export class ChartEditor {
         .querySelectorAll<HTMLButtonElement>('button')
         .forEach(button => button.classList.toggle('editor-active', Number(button.dataset.side) === this.airLean));
     }
-    this.host.querySelector('[data-action="connect"]')?.classList.remove('editor-active');
-    this.viewport.style.cursor = tool === 'select' ? 'default' : tool === 'erase' ? 'cell' : 'crosshair';
     this.setHint(
       tool === 'select'
         ? '拖动移动 · 左右边缘改宽度 · 点节点编辑节点、拖动改位置 · 叠放处再次单击切换 · Shift 框选追加'
@@ -1067,11 +903,11 @@ export class ChartEditor {
   private onInput(event: Event): void {
     const input = event.target as HTMLInputElement;
     if (input === this.minimap) {
-      this.scroll = Number(input.value);
+      this.view.scroll = Number(input.value);
       this.draw();
     }
     if (input.dataset.option === 'zoom') {
-      this.zoom = Number(input.value);
+      this.view.zoom = Number(input.value);
       this.draw();
     }
   }
@@ -1098,13 +934,13 @@ export class ChartEditor {
       return;
     }
     if (input.dataset.option === 'view-start') {
-      if (this.chart.allowOutOfLane) this.viewStart = clamp(Number(input.value) || 0, -64, this.viewEnd - 4);
+      if (this.chart.allowOutOfLane) this.view.viewStart = clamp(Number(input.value) || 0, -64, this.view.viewEnd - 4);
       this.syncAdvancedControls();
       this.draw();
       return;
     }
     if (input.dataset.option === 'view-end') {
-      if (this.chart.allowOutOfLane) this.viewEnd = clamp(Number(input.value) || 16, this.viewStart + 4, 192);
+      if (this.chart.allowOutOfLane) this.view.viewEnd = clamp(Number(input.value) || 16, this.view.viewStart + 4, 192);
       this.syncAdvancedControls();
       this.draw();
       return;
@@ -1236,102 +1072,12 @@ export class ChartEditor {
     }
   }
 
-  private hit(position: Position): { id: string; kind: DragKind } | undefined {
-    return this.hits(position)[0];
-  }
-  /** Everything under the pointer, topmost first. `selectedFirst` puts the selection on top, so a click keeps hold of it. */
-  private hits(position: Position, selectedFirst = true): { id: string; kind: DragKind }[] {
-    const chart = this.preview ?? this.chart,
-      found: { id: string; kind: DragKind }[] = [];
-    if (position.x > this.trackRight) return found;
-    const order = (notes: Note[]) =>
-      (selectedFirst
-        ? [...notes].sort((a, b) => Number(this.selection.has(a.id)) - Number(this.selection.has(b.id)))
-        : [...notes]
-      ).reverse();
-    if (position.x < this.left) {
-      if (position.x <= this.airLeft + this.airWidth + 5) {
-        const maximum = this.airHeightMaximum(chart);
-        for (const note of order(chart.notes)) {
-          if (!HEIGHT_NOTE_TYPES.has(note.type)) continue;
-          for (const endpoint of ['endHeight', 'height'] as const) {
-            const height = endpoint === 'height' ? (note.height ?? 1) : (note.endHeight ?? note.height ?? 1);
-            const tick = endpoint === 'height' ? note.tick : endTick(note);
-            if (
-              Math.abs(position.x - this.airHeightX(height, maximum)) < 7 &&
-              Math.abs(position.y - this.y(tick)) < 8
-            ) {
-              found.push({ id: note.id, kind: endpoint });
-              break;
-            }
-          }
-        }
-        if (found.length) return found;
-      }
-      const events = [...chart.events].sort((a, b) => a.tick - b.tick);
-      for (const item of events)
-        if (
-          Math.abs(this.y(item.tick) - position.y) < 9 &&
-          position.x >= this.eventLeft &&
-          position.x < this.eventLeft + 30
-        )
-          found.push({ id: item.id, kind: 'move' });
-      return found;
-    }
-    // A joint is the end of the segment before it; the segment after it is picked by its body only.
-    const joints = new Set(chart.notes.map(note => nextEditorSegment(chart, note)?.id));
-    for (const note of order(chart.notes)) {
-      const startY = this.y(note.tick),
-        finishY = this.y(endTick(note));
-      const startX = this.x(note.lane),
-        finishX = this.x(endLane(note));
-      if (
-        long(note) &&
-        Math.abs(position.y - finishY) < 9 &&
-        position.x >= finishX - 4 &&
-        position.x <= finishX + endWidth(note) * this.laneWidth + 4
-      ) {
-        found.push({
-          id: note.id,
-          kind: Math.abs(position.x - (finishX + endWidth(note) * this.laneWidth)) < 7 ? 'endWidth' : 'end',
-        });
-        continue;
-      }
-      const span = note.width * this.laneWidth;
-      // An AIR is picked by its lifted arrow, which leaves the ground note under it free to click.
-      if (
-        note.type === 'AIR'
-          ? Math.abs(position.y - (startY - airArrowLift(span - 2))) <= airArrowHeight(span - 2) / 2 + 2 &&
-            position.x >= startX - 3 &&
-            position.x <= startX + span + 3
-          : !joints.has(note.id) &&
-            Math.abs(position.y - startY) < 10 &&
-            position.x >= startX - 3 &&
-            position.x <= startX + span + 3
-      ) {
-        found.push({
-          id: note.id,
-          kind:
-            Math.abs(position.x - (startX + span)) < 7
-              ? 'width'
-              : span > 24 && Math.abs(position.x - startX) < 5
-                ? 'widthLeft'
-                : 'move',
-        });
-        continue;
-      }
-      if (long(note) && position.y < startY && position.y > finishY) {
-        const t = (startY - position.y) / (startY - finishY);
-        const left = startX + (finishX - startX) * t;
-        const width = (note.width + (endWidth(note) - note.width) * t) * this.laneWidth;
-        if (position.x >= left && position.x <= left + width) found.push({ id: note.id, kind: 'move' });
-      }
-    }
-    return found;
+  private hit(position: Position): Hit | undefined {
+    return hitsAt(this.view, this.preview ?? this.chart, this.selection, position)[0];
   }
   /** Take the pick that lies under the current one, wrapping round to the top. */
   private cycleSelection(point: Position): boolean {
-    const stack = this.hits(point, false),
+    const stack = hitsAt(this.view, this.preview ?? this.chart, this.selection, point, false),
       current = stack.findIndex(item => this.selection.has(item.id));
     if (stack.length < 2 || current < 0) return false;
     const next = stack[(current + 1) % stack.length],
@@ -1363,16 +1109,16 @@ export class ChartEditor {
     this.closeShape(false);
     this.viewport.focus({ preventScroll: true });
     const point = this.position(event);
-    if (this.aligning && event.button !== 1) {
+    if (this.mode.kind === 'align' && event.button !== 1) {
       event.preventDefault();
       if (event.button === 0) {
-        if (this.inAlignWaveform(point)) this.alignAt(point);
+        if (this.view.inAlignWaveform(point)) this.alignAt(point);
         else this.emitCursor(point.tick);
       }
       return;
     }
     // Space to the right of a narrowed track is not an extra editable lane.
-    if (point.x > this.trackRight && event.button !== 1) return;
+    if (point.x > this.view.trackRight && event.button !== 1) return;
     if (event.button !== 1) this.pickedJoint = this.pickedHead = undefined;
     let hit = this.hit(point);
     if (event.button === 2) {
@@ -1398,18 +1144,18 @@ export class ChartEditor {
         : covered.type === 'SLIDE' && hit.kind === 'width'
           ? { id: covered.id, kind: 'endWidth' }
           : { id: hit.id, kind: 'move' };
-    if (this.inserting && event.button === 0 && this.inTrack(point.x)) {
+    if (this.mode.kind === 'insert' && event.button === 0 && this.view.inTrack(point.x)) {
       this.insertAt(point);
       return;
     }
-    if (this.continuing && event.button === 0 && this.inTrack(point.x)) {
+    if (this.mode.kind === 'continue' && event.button === 0 && this.view.inTrack(point.x)) {
       this.appendSegment(point);
       return;
     }
     // An ExTAP dropped on the head of a HOLD / SLIDE makes that long note EX instead of stacking a second note.
     const exHead =
-      tool === 'EXTAP' && event.button === 0 && !event.altKey && this.inTrack(point.x)
-        ? this.groundHeadAt(point)
+      tool === 'EXTAP' && event.button === 0 && !event.altKey && this.view.inTrack(point.x)
+        ? groundHeadAt(this.view, this.chart, point)
         : undefined;
     if (exHead) {
       const next = setEditorEx(this.chart, exHead.id);
@@ -1437,7 +1183,7 @@ export class ChartEditor {
     if (event.button === 1) {
       kind = 'pan';
       event.preventDefault();
-    } else if (!hit && (point.x < this.eventLeft || point.y > this.canvasHeight - this.bottom)) {
+    } else if (!hit && (point.x < this.view.eventLeft || point.y > this.view.canvasHeight - this.view.bottom)) {
       kind = 'seek';
       this.emitCursor(point.tick);
     } else if (hit) {
@@ -1455,7 +1201,7 @@ export class ChartEditor {
         this.selection.add(id);
       } else if (!this.selection.has(id) || kind !== 'move') this.selection = new Set([id]);
       this.refreshSelection();
-    } else if (tool && this.inTrack(point.x)) {
+    } else if (tool && this.view.inTrack(point.x)) {
       const note = createNote(tool, point.tick, this.placeLane(point), this.width);
       if (long(note)) note.duration = this.chart.resolution / 4;
       if (hasNodeKind(note))
@@ -1466,7 +1212,10 @@ export class ChartEditor {
         this.preview = { ...this.chart, notes: [...this.chart.notes, note] };
       else {
         // The game reads AIR as an attachment of a ground note's tail, never as a free note.
-        const parent = hitNote && !AIR_NOTE_TYPES.has(hitNote.type) ? hitNote : this.groundTailAt(point);
+        const parent =
+          hitNote && !AIR_NOTE_TYPES.has(hitNote.type)
+            ? hitNote
+            : groundTailAt(this.chart, point, Math.max(this.step, 10 / this.view.zoom));
         this.preview = parent && attachEditorAir(this.chart, note, parent.id);
         if (!this.preview) {
           this.setHint(
@@ -1494,24 +1243,15 @@ export class ChartEditor {
       id,
       before: event.shiftKey || event.ctrlKey || event.metaKey ? before : new Set(),
       moved: false,
-      scroll: this.scroll,
+      scroll: this.view.scroll,
       pointerId: event.pointerId,
     };
     this.canvas.setPointerCapture(event.pointerId);
     this.draw();
   }
 
-  /** A SLIDE / AIR chain's first segment when the pointer is on its head node rather than its body. */
   private headAt(id: string, kind: DragKind, point: Position): boolean {
-    const note = this.chart.notes.find(item => item.id === id);
-    return Boolean(
-      note &&
-      hasNodeKind(note) &&
-      kind !== 'end' &&
-      kind !== 'endWidth' &&
-      Math.abs(point.y - this.y(note.tick)) < 10 &&
-      editorChain(this.chart, note)[0].id === id,
-    );
+    return isChainHeadPick(this.view, this.chart, id, kind, point);
   }
   /** Delete what was picked: a head node takes its whole long note, any other node goes alone, a chain body takes nothing. */
   private erase(hit: { id: string; kind: DragKind }, point: Position): void {
@@ -1520,20 +1260,6 @@ export class ChartEditor {
     this.pickedHead = this.headAt(hit.id, hit.kind, point) ? hit.id : undefined;
     this.deleteSelection();
     this.refreshSelection();
-  }
-
-  /** The ground note whose tail is nearest the pointer, within one snap step or the head hit distance. */
-  private groundTailAt(point: Position): Note | undefined {
-    const reach = Math.max(this.step, 10 / this.zoom);
-    return this.chart.notes
-      .filter(
-        note =>
-          !AIR_NOTE_TYPES.has(note.type) &&
-          Math.abs(endTick(note) - point.tick) <= reach &&
-          point.lane >= endLane(note) &&
-          point.lane < endLane(note) + endWidth(note),
-      )
-      .sort((a, b) => Math.abs(endTick(a) - point.tick) - Math.abs(endTick(b) - point.tick))[0];
   }
 
   private appendSegment(point: Position): void {
@@ -1560,12 +1286,12 @@ export class ChartEditor {
     const point = this.position(event);
     this.hover = point;
     const drag = this.drag;
-    if (this.aligning && !drag) {
+    if (this.mode.kind === 'align' && !drag) {
       this.canvas.style.cursor = '';
       this.draw();
       return;
     }
-    if (!drag && this.inserting) {
+    if (!drag && this.mode.kind === 'insert') {
       this.canvas.style.cursor = '';
       this.draw();
       return;
@@ -1595,7 +1321,7 @@ export class ChartEditor {
     if (Math.hypot(point.x - drag.start.x, point.y - drag.start.y) > 3) drag.moved = true;
     if (drag.kind === 'seek') this.emitCursor(point.tick);
     else if (drag.kind === 'pan') {
-      this.scroll = Math.max(0, drag.scroll + (point.y - drag.start.y) / this.zoom);
+      this.view.scroll = Math.max(0, drag.scroll + (point.y - drag.start.y) / this.view.zoom);
       this.updateNavigation();
     } else if (drag.kind === 'box') {
       const loTick = Math.min(point.tick, drag.start.tick),
@@ -1612,12 +1338,12 @@ export class ChartEditor {
         )
           this.selection.add(note.id);
       }
-      if (Math.min(point.x, drag.start.x) < this.left)
+      if (Math.min(point.x, drag.start.x) < this.view.left)
         for (const item of this.chart.events)
           if (item.tick >= loTick && item.tick <= hiTick) this.selection.add(item.id);
     } else if ((drag.kind === 'height' || drag.kind === 'endHeight') && drag.moved && drag.id) {
-      const maximum = this.airHeightMaximum(drag.chart);
-      const height = Math.round(clamp((point.x - this.airLeft) / this.airWidth, 0, 1) * maximum * 10) / 10;
+      const maximum = airHeightMaximum(drag.chart);
+      const height = Math.round(clamp((point.x - this.view.airLeft) / this.view.airWidth, 0, 1) * maximum * 10) / 10;
       this.preview = setEditorAirHeight(drag.chart, drag.id, drag.kind, height);
     } else if (drag.kind === 'move' && drag.moved) {
       this.preview = moveEditorSelection(
@@ -1644,13 +1370,17 @@ export class ChartEditor {
       if (!note) return;
       const next = { ...copyNote(note) };
       if (drag.kind === 'width') {
-        next.width = limitWidth(this.chart, Math.round((point.x - this.x(note.lane)) / this.laneWidth), note.lane);
+        next.width = limitWidth(
+          this.chart,
+          Math.round((point.x - this.view.x(note.lane)) / this.view.laneWidth),
+          note.lane,
+        );
       }
       if (drag.kind === 'widthLeft') {
         // The right edge stays; the left edge follows the pointer to the nearest lane boundary.
         const right = note.lane + note.width;
         next.lane = clamp(
-          Math.round((point.x - this.x(0)) / this.laneWidth),
+          Math.round((point.x - this.view.x(0)) / this.view.laneWidth),
           this.chart.allowOutOfLane ? Math.max(-64, right - 128) : 0,
           right - 1,
         );
@@ -1659,7 +1389,7 @@ export class ChartEditor {
       if (drag.kind === 'endWidth') {
         next.endWidth = limitWidth(
           this.chart,
-          Math.round((point.x - this.x(endLane(note))) / this.laneWidth),
+          Math.round((point.x - this.view.x(endLane(note))) / this.view.laneWidth),
           endLane(note),
         );
       }
@@ -1757,11 +1487,15 @@ export class ChartEditor {
       }
     } else if (event.ctrlKey || event.metaKey) {
       const point = this.position(event);
-      const old = this.zoom;
-      this.zoom = clamp(this.zoom * Math.exp(-event.deltaY * 0.002), 0.2, this.aligning ? 20 : 5);
-      this.scroll = Math.max(0, point.tick - ((point.tick - this.scroll) * old) / this.zoom);
-      this.host.querySelector<HTMLInputElement>('[data-option="zoom"]')!.value = String(this.zoom);
-    } else this.scroll = Math.max(0, this.scroll - event.deltaY / this.zoom);
+      const old = this.view.zoom;
+      this.view.zoom = clamp(
+        this.view.zoom * Math.exp(-event.deltaY * 0.002),
+        0.2,
+        this.mode.kind === 'align' ? 20 : 5,
+      );
+      this.view.scroll = Math.max(0, point.tick - ((point.tick - this.view.scroll) * old) / this.view.zoom);
+      this.host.querySelector<HTMLInputElement>('[data-option="zoom"]')!.value = String(this.view.zoom);
+    } else this.view.scroll = Math.max(0, this.view.scroll - event.deltaY / this.view.zoom);
     this.updateNavigation();
     this.draw();
   }
@@ -1799,21 +1533,20 @@ export class ChartEditor {
       }
       return;
     }
-    if (key === 'escape' && this.aligning) {
+    if (key === 'escape' && this.mode.kind === 'align') {
       this.setAligning(false);
       return;
     }
-    if (key === 'escape' && !this.shapePanel.hidden) {
+    if (key === 'escape' && this.mode.kind === 'shape') {
       this.closeShape(false);
       return;
     }
-    if (key === 'escape' && this.inserting) {
+    if (key === 'escape' && this.mode.kind === 'insert') {
       this.setInserting(false);
       return;
     }
     if (key === 'escape') {
       this.cancelDrag();
-      this.continuing = false;
       this.selection.clear();
       this.setTool('select');
       this.refreshSelection();
@@ -1851,7 +1584,7 @@ export class ChartEditor {
           this.flipSelection();
           break;
         case 'k':
-          this.setInserting(!this.inserting);
+          this.setInserting(this.mode.kind !== 'insert');
           break;
         case 'j':
           this.joinSelection(event.shiftKey ? 'control' : 'normal');
@@ -1930,7 +1663,7 @@ export class ChartEditor {
     }
     if (key === 'home') {
       event.preventDefault();
-      this.scroll = 0;
+      this.view.scroll = 0;
       this.emitCursor(0);
       this.updateNavigation();
     }
@@ -1941,7 +1674,10 @@ export class ChartEditor {
     }
     if (key === 'pageup' || key === 'pagedown') {
       event.preventDefault();
-      this.scroll = Math.max(0, this.scroll + (((key === 'pageup' ? 1 : -1) * this.canvasHeight) / this.zoom) * 0.8);
+      this.view.scroll = Math.max(
+        0,
+        this.view.scroll + (((key === 'pageup' ? 1 : -1) * this.view.canvasHeight) / this.view.zoom) * 0.8,
+      );
       this.updateNavigation();
       this.draw();
     }
@@ -1960,173 +1696,12 @@ export class ChartEditor {
     }
   }
 
-  private input(label: string, property: string, value: unknown, options = ''): string {
-    return `<label class="editor-field"><span>${label}</span><input data-property="${property}" type="number" value="${escape(value)}" ${options}></label>`;
-  }
-  private textInput(label: string, property: string, value: unknown, list = ''): string {
-    return `<label class="editor-field"><span>${label}</span><input data-property="${property}" type="text" value="${escape(value)}" ${list ? `list="editor-${list}"` : ''}></label>`;
-  }
-  private checkbox(label: string, property: string, value: boolean): string {
-    return `<label class="editor-checkbox"><input type="checkbox" data-property="${property}" ${value ? 'checked' : ''}><span>${label}</span></label>`;
-  }
-
   private renderInspector(): void {
-    const advanced = Boolean(this.chart.allowOutOfLane),
-      laneOffset = advanced ? 0 : 1;
-    const laneOptions = advanced ? 'min="-64" max="64"' : 'min="1" max="16"';
-    const widthOptions = `min="1" max="${advanced ? 128 : 16}"`;
-    const selected = [...this.chart.notes, ...this.chart.events].filter(item => this.selection.has(item.id));
-    const node = this.selectedNode();
-    const key = selected.map(item => JSON.stringify(item)).join('|') + this.chart.events.length + (node ? 'node' : '');
+    const node = this.selectedNode(),
+      key = inspectorKey(this.chart, this.selection, node);
     if (key === this.inspectorKey) return;
     this.inspectorKey = key;
-    let content = `<div class="editor-inspector-title"><span>属性</span><small>${selected.length ? `已选 ${selected.length} 项` : 'INSPECTOR'}</small></div>`;
-    if (node) {
-      const normal =
-        node.type === 'SLIDE'
-          ? `${node.attributes.ex ? 'SXD' : 'SLD'} · 普通连接点`
-          : node.type === 'AIR_HOLD'
-            ? 'AHD · AIR 动作节点'
-            : 'ASD · AIR 动作节点';
-      const control =
-        node.type === 'SLIDE'
-          ? `${node.attributes.ex ? 'SXC' : 'SLC'} · 轨迹控制点`
-          : node.type === 'AIR_HOLD'
-            ? 'AHX · 无动作节点'
-            : 'ASC · 轨迹控制点';
-      const following = nextEditorSegment(this.chart, node);
-      content += `<div class="editor-selection-heading" style="--note-color:${noteColor(node)}"><i></i><strong>${LABEL[node.type]} 节点</strong><code>${getNativeNoteTag(node)}</code></div><label class="editor-field editor-node-property"><span>节点类型</span><select data-property="nodeKind"><option value="normal" ${node.attributes.visible !== false ? 'selected' : ''}>${normal}</option><option value="control" ${node.attributes.visible === false ? 'selected' : ''}>${control}</option></select></label><p class="editor-help">${node.type === 'SLIDE' ? 'SLD 显示蓝色分隔条；SLC 只改变轨迹，演示中不显示分隔。两者都须持续按住，无须重新拍键。' : '动作节点在此处产生 AIR ACTION；控制 / 无动作节点不新增这次动作，持续段仍保留。'} 实心横条为普通 / 动作节点，空心菱形为控制点。</p>`;
-      content +=
-        this.textInput(
-          '位置（全音符，可填 1/7）',
-          'nodePositionFraction',
-          fractionLabel(endTick(node) / this.chart.resolution),
-        ) + this.input('节点 tick', 'nodeTick', endTick(node), 'min="0" step="any"');
-      if (node.type !== 'AIR_HOLD')
-        content += `<div class="editor-field-pair">${this.input(advanced ? '坐标（0 基）' : '轨道', 'endLane', endLane(node) + laneOffset, laneOptions)}${this.input('宽度', 'endWidth', endWidth(node), widthOptions)}</div>`;
-      if (node.type === 'AIR_SLIDE')
-        content += this.input('高度', 'endHeight', node.endHeight ?? node.height ?? 1, 'min="0" step="0.1"');
-      content += `<p class="editor-help">${following ? '节点前后两段共用这里的位置与宽度，修改时一起跟随。点击带体可选中整段。' : '这是长条的终点。点击带体可选中整段。'}</p><div class="editor-inspector-actions">${following ? '<button class="editor-danger" data-action="delete">删除节点</button>' : `<button data-action="connect">${ICON.connect} 接续节点</button>`}</div>`;
-    } else if (selected.length === 1 && 'attributes' in selected[0]) {
-      const note = selected[0];
-      content += `<div class="editor-selection-heading" style="--note-color:${noteColor(note)}"><i></i><strong>${LABEL[note.type]}</strong><code>${getNativeNoteTag(note)}</code></div><label class="editor-field"><span>音符类型</span><select data-property="type">${NOTE_TYPES.map(type => `<option value="${type}" ${type === note.type ? 'selected' : ''}>${LABEL[type]}</option>`).join('')}</select></label>`;
-      content +=
-        this.textInput(
-          '位置（全音符，可填 1/7）',
-          'positionFraction',
-          fractionLabel(note.tick / this.chart.resolution),
-        ) +
-        this.input('起始 tick', 'tick', note.tick, 'min="0" step="any"') +
-        `<div class="editor-field-pair">${this.input(advanced ? '起点坐标（0 基）' : '起始轨道', 'lane', note.lane + laneOffset, laneOptions)}${this.input('宽度', 'width', note.width, widthOptions)}</div>`;
-      if (long(note))
-        content += `<div class="editor-section-label">长条终点</div>${this.textInput('时长（全音符，可填 1/7）', 'durationFraction', fractionLabel((note.duration ?? 0) / this.chart.resolution))}${this.input('长度 tick', 'duration', note.duration, `min="${note.type === 'AIR_HOLD' || (note.type === 'AIR_SLIDE' && note.attributes.visible === false) ? 0 : 0.000001}" step="any"`)}<div class="editor-field-pair">${this.input(advanced ? '终点坐标（0 基）' : '终点轨道', 'endLane', endLane(note) + laneOffset, laneOptions)}${this.input('终点宽度', 'endWidth', endWidth(note), widthOptions)}</div><div class="editor-inspector-actions"><button data-action="connect">${ICON.connect} 接续节点</button><button data-action="split">${ICON.insertNode} 插入节点</button></div>`;
-      if (note.type === 'AIR_SLIDE' || note.type === 'AIR_CRUSH')
-        content += `<div class="editor-field-pair">${this.input('起始高度', 'height', note.height ?? 1, 'min="0" step="0.1"')}${this.input('终点高度', 'endHeight', note.endHeight ?? note.height ?? 1, 'min="0" step="0.1"')}</div>`;
-      content += `<div class="editor-section-label">原生 / WORLD’S END 属性</div>`;
-      if (note.type === 'AIR')
-        content += `<label class="editor-field"><span>AIR 方向</span><select data-property="attr.direction">${[
-          ['IR', '↑ 上'],
-          ['UL', '↖ 左上'],
-          ['UR', '↗ 右上'],
-          ['DW', '↓ 下'],
-          ['DL', '↙ 左下'],
-          ['DR', '↘ 右下'],
-        ]
-          .map(
-            ([value, label]) =>
-              `<option value="${value}" ${value === (note.attributes.direction ?? 'IR') ? 'selected' : ''}>${label}</option>`,
-          )
-          .join('')}</select></label>`;
-      if (note.type === 'FLICK')
-        content += this.textInput('方向', 'attr.direction', note.attributes.direction ?? '', 'direction');
-      if (AIR_NOTE_TYPES.has(note.type) || note.type === 'SLIDE')
-        content += this.textInput(
-          '关联音符',
-          'attr.parent',
-          note.attributes.parent ?? (note.type === 'SLIDE' ? 'SLD' : 'TAP'),
-          'parent',
-        );
-      if (
-        note.type !== 'AIR_CRUSH' &&
-        AIR_NOTE_TYPES.has(note.type) &&
-        !['AHD', 'AHX', 'ASD', 'ASC'].includes(String(note.attributes.parent))
-      )
-        content += `<p class="editor-help">${boundEditorParent(this.chart, note.id) ? '已绑定在地面音符的尾端：位置与宽度跟随父音符，移动或删除父音符时一并处理。' : '未绑定地面音符：原游戏读谱时找不到父音符会失败。请删除后在地面音符上重新放置。'}</p>`;
-      if (AIR_NOTE_TYPES.has(note.type))
-        content += this.textInput('颜色', 'attr.color', note.attributes.color ?? 'DEF', 'color');
-      if (note.type === 'EXTAP' || note.type === 'HOLD' || note.type === 'SLIDE' || note.type === 'AIR_CRUSH')
-        content += this.textInput(
-          '特效',
-          'attr.effect',
-          note.attributes.effect ?? (note.type === 'AIR_CRUSH' ? 'DEF' : 'UP'),
-          'effect',
-        );
-      if (note.type === 'HOLD' || note.type === 'SLIDE')
-        content += this.checkbox('EX 音符', 'attr.ex', Boolean(note.attributes.ex));
-      if (note.type === 'AIR_CRUSH')
-        content +=
-          this.input('CRUSH 间隔 tick', 'attr.interval', note.attributes.interval ?? 24, 'min="0"') +
-          `<p class="editor-help">间隔 0 表示无判定装饰段。</p>`;
-      content += `<details class="editor-raw"><summary>高级原生属性</summary><textarea data-raw-attributes spellcheck="false" aria-label="原生属性 JSON">${escape(JSON.stringify(note.attributes, null, 2))}</textarea><button data-action="applyRaw">应用属性</button><p>只编辑已知原生值；未识别的源行与额外列随谱面保留。</p></details><div class="editor-inspector-actions"><button data-action="copy">复制</button><button data-action="mirror">镜像</button><button class="editor-danger" data-action="delete">删除</button></div>`;
-    } else if (selected.length === 1) {
-      const item = selected[0] as ChartEvent;
-      content += `<div class="editor-selection-heading editor-event-heading"><i></i><strong>${EVENT_LABEL[item.type]}</strong><code>EVENT</code></div>${this.textInput('位置（全音符，可填 1/7）', 'positionFraction', fractionLabel(item.tick / this.chart.resolution))}${this.input('起始 tick', 'tick', item.tick, 'min="0" step="any"')}`;
-      if (item.type === 'METER')
-        content += `<div class="editor-field-pair">${this.input('分子', 'numerator', item.numerator ?? 4, 'min="0"')}${this.input('分母', 'denominator', item.denominator ?? 4, 'min="0"')}</div><p class="editor-help">拍号改变小节线；原生 tick 的时间基准保持不变。分子或分母为 0 时隐藏小节线，用于特殊谱演出。</p>`;
-      else if (item.type !== 'SCROLL_ASSIGNMENT' && item.type !== 'STOP')
-        content += this.input(
-          item.type === 'BPM' ? 'BPM' : '速度倍率',
-          'value',
-          item.value,
-          `step="${item.type === 'BPM' ? '.1' : '.05'}" ${item.type === 'BPM' ? 'min="1"' : ''}`,
-        );
-      if (item.type === 'GROUP_SCROLL' || item.type === 'SCROLL_ASSIGNMENT')
-        content += this.input(
-          '分组编号',
-          'group',
-          item.group ?? (item.type === 'SCROLL_ASSIGNMENT' ? item.value : 0),
-          'min="0" step="1"',
-        );
-      if (item.type === 'SCROLL_ASSIGNMENT')
-        content += `<div class="editor-field-pair">${this.input(advanced ? '起点坐标（0 基）' : '起始轨道', 'lane', (item.lane ?? 0) + laneOffset, laneOptions)}${this.input('宽度', 'width', item.width ?? this.width, widthOptions)}</div>`;
-      if (['SCROLL', 'NOTE_SPEED', 'GROUP_SCROLL', 'SCROLL_ASSIGNMENT'].includes(item.type))
-        content +=
-          this.textInput(
-            '时长（全音符，可填 1/7）',
-            'durationFraction',
-            fractionLabel((item.duration ?? this.chart.resolution) / this.chart.resolution),
-          ) +
-          this.input('持续 tick', 'duration', item.duration ?? this.chart.resolution, 'min="0" step="any"') +
-          `<p class="editor-help">${item.type === 'SCROLL_ASSIGNMENT' ? '精确匹配事件起点的时间、轨道、宽度；持续时间覆盖该长条链。编辑对应音符时，分组关联自动同步。' : item.type === 'GROUP_SCROLL' ? '控制指定分组的滚速。0 组为全局；其他分组配合滚速分组事件使用。' : item.type === 'SCROLL' ? '支持零速、负速与正速。' : '支持正负倍率，不能为零。'}持续区间以原生 tick 为单位。</p>`;
-      if (item.type === 'STOP')
-        content +=
-          this.input('持续 tick', 'duration', item.duration ?? this.chart.resolution, 'min="0"') +
-          `<p class="editor-help">保留导入谱面的旧版 STP。预览按区间停止显示，实际游戏行为待对照；新建停止可使用倍率 0 的谱面滚速事件。</p>`;
-      content += `<div class="editor-inspector-actions"><button data-action="seek" data-tick="${item.tick}">定位光标</button><button class="editor-danger" data-action="delete">删除事件</button></div>`;
-    } else if (selected.length > 1) {
-      content += `<div class="editor-multi-count">${selected.length}<span>个项目已选中</span></div><p class="editor-help">拖动整组选区。方向键微调轨道与时间；Shift + 方向键按一拍移动。工具栏的“镜像”与“翻转”作用于整组选区。</p><div class="editor-inspector-actions"><button data-action="copy">复制</button><button data-action="mirror">镜像</button><button data-action="flip">翻转</button><button class="editor-danger" data-action="delete">删除</button></div>`;
-    } else {
-      content += `<div class="editor-empty-selection"><div>${ICON.node}</div><strong>音符属性</strong><p>点击音符编辑属性；点击 SLIDE / AIR 长条的节点编辑该节点。拖动空白区域框选，Shift 保留原有选择。</p></div><div class="editor-shortcuts"><p><kbd>S / W / E</kbd><span>选择 / 笔 / 橡皮</span></p><p><kbd>1 — 0 · T Y U</kbd><span>切换音符</span></p><p><kbd>H / V</kbd><span>镜像 / 翻转</span></p><p><kbd>B N D M</kbd><span>BPM / 滚速 / 音符速度 / 拍号</span></p><p><kbd>K · J · R</kbd><span>插入节点 · 结合 · 曲线</span></p><p><kbd>[ ]</kbd><span>调整放置宽度</span></p><p><kbd>Shift + 滚轮</kbd><span>音符间隔</span></p><p><kbd>Ctrl + 滚轮</kbd><span>时间轴缩放</span></p><p><kbd>中键拖动</kbd><span>平移时间轴</span></p><p><kbd>双击长条</kbd><span>插入节点</span></p></div>`;
-    }
-    content += `<div class="editor-section-label editor-events-title">时间事件 <small>添加到光标位置</small></div><div class="editor-event-buttons">${(
-      Object.keys(EVENT_LABEL) as EventType[]
-    )
-      .filter(type => type !== 'STOP')
-      .map(type => `<button data-action="event" data-event="${type}">${ICON.add} ${EVENT_LABEL[type]}</button>`)
-      .join('')}</div>`;
-    const events = [...this.chart.events].sort((a, b) => a.tick - b.tick);
-    if (events.length)
-      content += `<div class="editor-event-list">${events
-        .slice(0, 120)
-        .map(
-          item =>
-            `<button data-select="${escape(item.id)}" class="${this.selection.has(item.id) ? 'editor-selected-event' : ''}"><span>${EVENT_LABEL[item.type]}</span><strong>${item.type === 'METER' ? `${item.numerator}/${item.denominator}` : item.value}</strong><small title="${item.tick} tick">${Number(item.tick.toFixed(3))}t</small></button>`,
-        )
-        .join(
-          '',
-        )}${events.length > 120 ? `<p class="editor-help">显示前 120 个事件；画布中可选择全部事件。</p>` : ''}</div>`;
-    content += `<datalist id="editor-parent">${['TAP', 'CHR', 'FLK', 'HLD', 'SLD', 'AIR', 'AHD', 'ASD', 'MNE'].map(value => `<option value="${value}">`).join('')}</datalist><datalist id="editor-color">${['DEF', 'RED', 'ORN', 'YEL', 'GRN', 'CYN', 'BLU', 'PPL', 'PNK', 'VLT', 'GRY', 'BLK', 'NON'].map(value => `<option value="${value}">`).join('')}</datalist><datalist id="editor-effect"><option value="UP"><option value="DOWN"><option value="DEF"></datalist><datalist id="editor-direction"><option value="L"><option value="R"></datalist>`;
-    this.inspector.innerHTML = content;
+    this.inspector.innerHTML = inspectorHtml(this.chart, this.selection, node, this.width);
   }
 
   private draw(): void {
@@ -2139,664 +1714,56 @@ export class ChartEditor {
   }
 
   private paint(): void {
-    const ctx = this.context,
-      w = this.canvasWidth,
-      h = this.canvasHeight;
-    const chart = this.preview ?? this.chart;
-    ctx.clearRect(0, 0, w, h);
-    ctx.fillStyle = '#000000';
-    ctx.fillRect(0, 0, w, h);
-    const right = this.trackRight,
-      lo = this.scroll,
-      hi = this.scroll + (h - this.bottom) / this.zoom;
-    ctx.fillStyle = '#080808';
-    ctx.fillRect(this.rulerLeft, 0, this.rulerWidth, h - this.bottom);
-    // Lightly alternate the four sensor banks while retaining all sixteen lane boundaries.
-    ctx.save();
-    ctx.beginPath();
-    ctx.rect(this.left, 0, right - this.left, h - this.bottom);
-    ctx.clip();
-    for (let lane = Math.floor(this.viewStart); lane < Math.ceil(this.viewEnd); lane++) {
-      const outside = lane < 0 || lane >= LANES;
-      ctx.fillStyle = outside ? '#151015' : Math.floor(lane / 4) % 2 ? '#050505' : '#000000';
-      ctx.fillRect(this.x(lane), 0, this.laneWidth, h - this.bottom);
-      if (outside && this.laneWidth < 8 && lane % 4 !== 0) continue;
-      ctx.strokeStyle =
-        lane === 0 || lane === LANES ? '#777777' : outside ? '#383038' : lane % 4 === 0 ? '#464646' : '#242424';
-      ctx.lineWidth = lane === 0 || lane === LANES ? 1.5 : 1;
-      ctx.beginPath();
-      ctx.moveTo(this.x(lane) + 0.5, 0);
-      ctx.lineTo(this.x(lane) + 0.5, h - this.bottom);
-      ctx.stroke();
-    }
-    ctx.restore();
-    ctx.strokeStyle = '#464646';
-    ctx.beginPath();
-    ctx.moveTo(right + 0.5, 0);
-    ctx.lineTo(right + 0.5, h - this.bottom);
-    ctx.stroke();
-    const division = this.snap || 16;
-    const grid = getGrid(chart, Math.max(0, lo), hi + chart.resolution, division);
-    for (const line of grid) {
-      const y = this.y(line.tick);
-      if (y < -1 || y > h - this.bottom + 1) continue;
-      if (!line.major && (this.zoom * chart.resolution) / division < 5) continue;
-      ctx.strokeStyle = line.major ? '#606060' : line.beat === Math.floor(line.beat) ? '#353535' : '#1a1a1a';
-      ctx.lineWidth = line.major ? 1.25 : 0.65;
-      ctx.beginPath();
-      ctx.moveTo(line.major ? this.airLeft : this.left, Math.round(y) + 0.5);
-      ctx.lineTo(right, Math.round(y) + 0.5);
-      ctx.stroke();
-    }
-    this.paintWaveform(ctx, lo, hi);
-    this.paintAirHeights(ctx, chart, lo, hi);
-    // A separate ruler gives measure names their own space, including at simultaneous BPM/MET events.
-    let lastLabelY = Infinity;
-    for (const line of grid) {
-      if (!line.major) continue;
-      const y = this.y(line.tick);
-      if (y < 0 || y > h - this.bottom || lastLabelY - y < 23) continue;
-      const top = clamp(y - 21, 0, Math.max(0, h - this.bottom - 21));
-      ctx.fillStyle = '#151515';
-      ctx.beginPath();
-      ctx.rect(this.rulerLeft + 4, top, this.rulerWidth - 8, 20);
-      ctx.fill();
-      ctx.fillStyle = '#dddddd';
-      ctx.font = '600 12px "Segoe UI", "Microsoft YaHei", sans-serif';
-      ctx.fillText(
-        `第${String(line.measure + 1).padStart(3, '0')}小节`,
-        this.rulerLeft + 7,
-        top + 14,
-        this.rulerWidth - 14,
-      );
-      if (lastLabelY - y >= 44 && y + 14 < h - this.bottom) {
-        ctx.fillStyle = '#888888';
-        ctx.font = '9px "Segoe UI", sans-serif';
-        ctx.fillText(`${formatTick(line.tick)} tick`, this.rulerLeft + 8, y + 12, this.rulerWidth - 12);
-      }
-      lastLabelY = y;
-    }
-    ctx.save();
-    ctx.beginPath();
-    ctx.rect(this.left, 0, right - this.left, h - this.bottom);
-    ctx.clip();
-    for (const event of chart.events) {
-      if (event.type !== 'SCROLL_ASSIGNMENT' || !this.selection.has(event.id)) continue;
-      const y = this.y(event.tick),
-        finish = this.y(event.tick + (event.duration ?? 0));
-      ctx.fillStyle = '#c4b5fd14';
-      ctx.strokeStyle = '#c4b5fd99';
-      ctx.setLineDash([4, 4]);
-      ctx.fillRect(this.x(event.lane ?? 0), finish, (event.width ?? 1) * this.laneWidth, y - finish);
-      ctx.strokeRect(this.x(event.lane ?? 0), finish, (event.width ?? 1) * this.laneWidth, y - finish);
-      ctx.setLineDash([]);
-    }
-    const visible = chart.notes.filter(
-      note => endTick(note) >= lo - 20 / this.zoom && note.tick <= hi + 32 / this.zoom,
-    );
-    for (const note of visible.filter(long)) this.paintNote(ctx, note, true);
-    for (const note of visible) this.paintNote(ctx, note, false);
-    ctx.restore();
-    // Dedicated event gutter keeps timing edits separate from note hit targets.
-    const labelRoom = w - right >= 90,
-      labelRows = new Map<number, number>();
-    for (const item of [...chart.events].sort((a, b) => a.tick - b.tick)) {
-      const y = this.y(item.tick);
-      if (y < -10 || y > h - this.bottom + 10) continue;
-      ctx.fillStyle = this.selection.has(item.id) ? '#c4b5fd' : item.type === 'BPM' ? '#65cf69' : '#d4a46b';
-      ctx.fillRect(this.eventLeft, y - 7, 30, 14);
-      ctx.fillStyle = '#202020';
-      ctx.font = 'bold 8px "Segoe UI", sans-serif';
-      ctx.fillText(
-        {
-          BPM: 'BPM',
-          METER: 'MET',
-          SCROLL: 'SFL',
-          NOTE_SPEED: 'DCM',
-          GROUP_SCROLL: 'SLP',
-          SCROLL_ASSIGNMENT: 'SLA',
-          STOP: 'STP',
-        }[item.type],
-        this.eventLeft + 3,
-        y + 3,
-      );
-      ctx.strokeStyle = '#a897d852';
-      ctx.setLineDash([3, 5]);
-      ctx.beginPath();
-      ctx.moveTo(this.left, y);
-      ctx.lineTo(right, y);
-      ctx.stroke();
-      ctx.setLineDash([]);
-      if (labelRoom && item.type !== 'SCROLL_ASSIGNMENT') {
-        // Margrete shows each event's value beside the chart; events sharing a tick line up in one row.
-        const row = Math.round(y),
-          text = eventText(item);
-        ctx.font = '11px "Segoe UI", sans-serif';
-        const x = labelRows.get(row) ?? right + 10,
-          width = ctx.measureText(text).width;
-        ctx.fillStyle = ctx.strokeStyle = this.selection.has(item.id) ? '#c4b5fd' : EVENT_COLOR[item.type];
-        ctx.fillText(text, x, y - 3);
-        ctx.beginPath();
-        ctx.moveTo(x - 4, row + 0.5);
-        ctx.lineTo(x + width + 4, row + 0.5);
-        ctx.stroke();
-        labelRows.set(row, x + width + 14);
-      } else if (item.type === 'BPM') {
-        ctx.fillStyle = '#101010ee';
-        ctx.fillRect(this.left + 5, y - 19, 63, 14);
-        ctx.fillStyle = '#65cf69';
-        ctx.font = '10px "Segoe UI", sans-serif';
-        ctx.fillText(`♩ ${formatTick(item.value)}`, this.left + 9, y - 8);
-      }
-    }
-    ctx.save();
-    ctx.beginPath();
-    ctx.rect(this.left, 0, right - this.left, h - this.bottom);
-    ctx.clip();
-    const ghostTool = this.noteTool;
-    const insert =
-      this.inserting && this.hover && !this.drag && this.inTrack(this.hover.x)
-        ? this.insertTarget(this.hover)
+    const view = this.view,
+      hover = this.hover,
+      inTrack = Boolean(hover && view.inTrack(hover.x));
+    const insertTarget =
+      this.mode.kind === 'insert' && hover && !this.drag && inTrack
+        ? insertTargetAt(view, this.chart, hover)
         : undefined;
-    if (insert) {
-      // The node a click would insert: a bar for an ordinary node, a hollow diamond for a control point.
-      const y = this.y(this.hover!.tick),
-        x = this.x(insert.lane) + 1,
-        width = insert.width * this.laneWidth - 2,
-        color = noteColor(insert.note);
-      const control =
-        hasNodeKind(insert.note) &&
-        (this.nodeKind === 'inherit' ? insert.note.attributes.visible === false : this.nodeKind === 'control');
-      ctx.strokeStyle = '#ffffff';
-      ctx.fillStyle = `${color}cc`;
-      ctx.lineWidth = 1.5;
-      if (control) {
-        const center = x + width / 2;
-        ctx.beginPath();
-        ctx.moveTo(center, y - 6);
-        ctx.lineTo(center + 6, y);
-        ctx.lineTo(center, y + 6);
-        ctx.lineTo(center - 6, y);
-        ctx.closePath();
-        ctx.fill();
-        ctx.stroke();
-      } else {
-        ctx.fillRect(x, y - NOTE_BAR_HEIGHT / 2, width, NOTE_BAR_HEIGHT);
-        ctx.strokeRect(x, y - NOTE_BAR_HEIGHT / 2, width, NOTE_BAR_HEIGHT);
-      }
+    const ghostTool = this.noteTool;
+    let placement: Note | undefined;
+    if (hover && !this.drag && ghostTool && (this.mode.kind === 'normal' || this.mode.kind === 'shape') && inTrack) {
+      placement = createNote(ghostTool, hover.tick, this.placeLane(hover), this.width);
+      if (long(placement)) placement.duration = this.chart.resolution / 4;
+      if (placement.type === 'AIR') placement.attributes.direction = this.airDirection;
     }
-    if (
-      this.hover &&
-      !this.drag &&
-      ghostTool &&
-      !this.continuing &&
-      !this.inserting &&
-      !this.aligning &&
-      this.inTrack(this.hover.x)
-    ) {
-      const note = createNote(ghostTool, this.hover.tick, this.placeLane(this.hover), this.width);
-      if (long(note)) note.duration = this.chart.resolution / 4;
-      if (note.type === 'AIR') note.attributes.direction = this.airDirection;
-      ctx.globalAlpha = 0.45;
-      this.paintNote(ctx, note, true, true);
-      this.paintNote(ctx, note, false, true);
-      ctx.globalAlpha = 1;
-    }
-    if (this.continuing && this.hover && this.inTrack(this.hover.x)) {
-      const note = this.selectedNote();
-      if (note && this.hover.tick > endTick(note)) {
-        const ghost: Note = {
-          ...note,
-          tick: endTick(note),
-          lane: endLane(note),
-          width: endWidth(note),
-          duration: this.hover.tick - endTick(note),
-          endLane: this.placeLane(this.hover),
-          endWidth: this.width,
-        };
-        ctx.globalAlpha = 0.45;
-        this.paintNote(ctx, ghost, true);
-        this.paintNote(ctx, ghost, false);
-        ctx.globalAlpha = 1;
-      }
-    }
-    ctx.restore();
-    if (this.aligning) this.paintAlignWaveform(ctx, lo);
-    const cursorY = this.y(this.cursor);
-    if (cursorY >= 0 && cursorY <= h - this.bottom) {
-      ctx.strokeStyle = '#d23838';
-      ctx.lineWidth = 1;
-      ctx.beginPath();
-      ctx.moveTo(0, cursorY);
-      ctx.lineTo(right + 8, cursorY);
-      ctx.stroke();
-      ctx.fillStyle = '#d23838';
-      ctx.beginPath();
-      ctx.moveTo(0, cursorY - 5);
-      ctx.lineTo(7, cursorY);
-      ctx.lineTo(0, cursorY + 5);
-      ctx.fill();
-    }
-    if (this.drag?.kind === 'box' && this.drag.moved) {
-      const { start, current } = this.drag;
-      ctx.fillStyle = '#86e7ff16';
-      ctx.strokeStyle = '#86e7ff';
-      ctx.lineWidth = 1;
-      ctx.setLineDash([4, 3]);
-      ctx.fillRect(start.x, start.y, current.x - start.x, current.y - start.y);
-      ctx.strokeRect(start.x, start.y, current.x - start.x, current.y - start.y);
-      ctx.setLineDash([]);
-    }
-    ctx.fillStyle = '#202020';
-    ctx.fillRect(this.left - 1, h - this.bottom, right - this.left + 2, this.bottom);
-    ctx.save();
-    ctx.beginPath();
-    ctx.rect(this.left, h - this.bottom, right - this.left, this.bottom);
-    ctx.clip();
-    ctx.font = '10px "Segoe UI", sans-serif';
-    ctx.textAlign = 'center';
-    const laneStride = this.laneWidth > 19 ? 1 : this.laneWidth > 7 ? 4 : 8;
-    for (
-      let lane = Math.ceil(this.viewStart / laneStride) * laneStride;
-      lane < Math.ceil(this.viewEnd);
-      lane += laneStride
-    ) {
-      ctx.fillStyle = lane < 0 || lane >= LANES ? '#a191b4' : lane % 4 === 0 ? '#cccccc' : '#888888';
-      ctx.fillText(
-        this.chart.allowOutOfLane ? String(lane) : String(lane + 1).padStart(2, '0'),
-        this.x(lane + 0.5),
-        h - 11,
-      );
-    }
-    ctx.restore();
-    ctx.textAlign = 'left';
-    this.status.innerHTML = `<span><i></i>${this.continuing ? '接续节点' : this.tool === 'select' ? '选择模式' : this.tool === 'erase' ? '橡皮擦' : LABEL[this.tool]}</span><span>光标 <b>${formatTick(this.cursor)}</b> tick · ${tickToSeconds(chart, this.cursor).toFixed(3)} s</span><span>${this.selection.size ? `已选 ${this.selection.size} · ` : ''}${chart.notes.length} 音符 · ${chart.events.length} 事件</span><span>${Math.round((this.zoom / 0.75) * 100)}% · ${this.snap ? `1/${this.snap} 全音符` : '自由'}</span>`;
-  }
-
-  private airHeightMaximum(chart: Chart): number {
-    return Math.max(
-      5,
-      Math.ceil(chart.notes.reduce((maximum, note) => Math.max(maximum, note.height ?? 0, note.endHeight ?? 0), 0)),
-    );
-  }
-  private airHeightX(height: number, maximum: number): number {
-    return this.airLeft + (height / maximum) * this.airWidth;
-  }
-  private paintAirHeights(ctx: CanvasRenderingContext2D, chart: Chart, lo: number, hi: number): void {
-    const maximum = this.airHeightMaximum(chart),
-      bottom = this.canvasHeight - this.bottom;
-    ctx.save();
-    ctx.beginPath();
-    ctx.rect(0, 0, this.rulerLeft - 2, bottom);
-    ctx.clip();
-    for (let index = 0; index <= 5; index++) {
-      const x = this.airLeft + (index * this.airWidth) / 5;
-      ctx.strokeStyle = index === 0 || index === 5 ? '#414141' : '#202020';
-      ctx.lineWidth = 1;
-      ctx.beginPath();
-      ctx.moveTo(x + 0.5, 0);
-      ctx.lineTo(x + 0.5, bottom);
-      ctx.stroke();
-    }
-    const notes = chart.notes.filter(
-      note => HEIGHT_NOTE_TYPES.has(note.type) && endTick(note) >= lo && note.tick <= hi,
-    );
-    for (const note of notes) {
-      ctx.strokeStyle = this.selection.has(note.id) ? '#eeeeee' : '#40d6c4';
-      ctx.lineWidth = this.selection.has(note.id) ? 2 : 1;
-      ctx.beginPath();
-      ctx.moveTo(this.airHeightX(note.height ?? 1, maximum), this.y(note.tick));
-      ctx.lineTo(this.airHeightX(note.endHeight ?? note.height ?? 1, maximum), this.y(endTick(note)));
-      ctx.stroke();
-    }
-    // End joints are drawn after starts, so a following segment cannot cover a normal joint with a hollow square.
-    for (const endpoint of ['height', 'endHeight'] as const)
-      for (const note of notes) {
-        const atEnd = endpoint === 'endHeight';
-        const x = this.airHeightX(atEnd ? (note.endHeight ?? note.height ?? 1) : (note.height ?? 1), maximum);
-        const y = this.y(atEnd ? endTick(note) : note.tick),
-          normal = atEnd && note.attributes.visible !== false;
-        ctx.lineWidth = 1;
-        ctx.fillStyle = normal ? noteColor(note) : '#111111';
-        ctx.strokeStyle = this.selection.has(note.id) ? '#ffffff' : '#acacac';
-        ctx.fillRect(x - 3, y - 3, 6, 6);
-        ctx.strokeRect(x - 3, y - 3, 6, 6);
-      }
-    ctx.restore();
-    ctx.fillStyle = '#202020';
-    ctx.fillRect(0, bottom, this.rulerLeft - 2, this.bottom);
-    ctx.fillStyle = '#bdbdbd';
-    ctx.font = '9px "Segoe UI", sans-serif';
-    ctx.textAlign = 'center';
-    for (const index of [0, 2, 5])
-      ctx.fillText(formatTick((maximum * index) / 5), this.airLeft + (index * this.airWidth) / 5, bottom + 18);
-    ctx.textAlign = 'left';
-  }
-
-  private paintWaveform(ctx: CanvasRenderingContext2D, lo: number, hi: number): void {
-    const mid = this.waveformLeft + 12,
-      half = 12;
-    ctx.fillStyle = '#000000';
-    ctx.fillRect(this.waveformLeft, 0, 25, this.canvasHeight - this.bottom);
-    ctx.strokeStyle = '#303030';
-    ctx.beginPath();
-    ctx.moveTo(mid, 0);
-    ctx.lineTo(mid, this.canvasHeight - this.bottom);
-    ctx.stroke();
-    if (!this.peaks.length || !this.audioDuration) return;
-    ctx.strokeStyle = '#619ef2c0';
-    ctx.lineWidth = 1;
-    ctx.beginPath();
-    // Waveform bins are mapped through the actual tempo map, including BPM changes.
-    for (let y = 0; y < this.canvasHeight - this.bottom; y += 2) {
-      const tick = lo + (this.canvasHeight - this.bottom - y) / this.zoom;
-      if (tick > hi + 1) continue;
-      const seconds = tickToSeconds(this.chart, tick) - this.audioOffset;
-      if (seconds < 0 || seconds > this.audioDuration) continue;
-      const index = Math.floor((seconds / this.audioDuration) * this.peaks.length);
-      const amplitude = Math.min(1, Math.abs(this.peaks[index] ?? 0));
-      ctx.moveTo(mid - amplitude * half, y);
-      ctx.lineTo(mid + amplitude * half, y);
-    }
-    ctx.stroke();
-  }
-
-  /** Alignment mode widens the waveform over the track and reads min/max straight from the samples under each pixel row. */
-  private paintAlignWaveform(ctx: CanvasRenderingContext2D, lo: number): void {
-    const samples = this.samples;
-    if (!samples) return;
-    const left = this.waveformLeft,
-      width = this.alignWidth,
-      height = this.canvasHeight - this.bottom,
-      mid = left + width / 2,
-      half = width / 2 - 5;
-    ctx.fillStyle = '#000000f0';
-    ctx.fillRect(left, 0, width, height);
-    ctx.strokeStyle = '#303030';
-    ctx.lineWidth = 1;
-    ctx.beginPath();
-    ctx.moveTo(mid + 0.5, 0);
-    ctx.lineTo(mid + 0.5, height);
-    ctx.stroke();
-    const { data, sampleRate } = samples;
-    const sampleAt = (y: number) =>
-      (tickToSeconds(this.chart, lo + (height - y) / this.zoom) - this.audioOffset) * sampleRate;
-    ctx.strokeStyle = '#8fc0ff';
-    ctx.beginPath();
-    let previous = sampleAt(height);
-    for (let y = height - 1; y >= 0; y--) {
-      const next = sampleAt(y),
-        first = Math.max(0, Math.floor(previous)),
-        last = Math.min(data.length, Math.max(Math.ceil(next), Math.floor(previous) + 1));
-      previous = next;
-      if (last <= first) continue;
-      let low = 1,
-        high = -1;
-      for (let index = first, stride = Math.max(1, Math.floor((last - first) / 256)); index < last; index += stride) {
-        const value = data[index];
-        if (value < low) low = value;
-        if (value > high) high = value;
-      }
-      ctx.moveTo(mid + clamp(low, -1, 1) * half, y + 0.5);
-      ctx.lineTo(mid + clamp(high, -1, 1) * half + 1, y + 0.5);
-    }
-    ctx.stroke();
-    ctx.strokeStyle = '#619ef2';
-    ctx.strokeRect(left + 0.5, 0.5, width - 1, height - 1);
-    if (this.hover && !this.drag && this.inAlignWaveform(this.hover)) {
-      ctx.strokeStyle = '#ffffff';
-      ctx.beginPath();
-      ctx.moveTo(left, this.hover.y + 0.5);
-      ctx.lineTo(left + width, this.hover.y + 0.5);
-      ctx.stroke();
-    }
-  }
-
-  /** `ghost` paints a placement preview: it is not in the chart, so its chain head cannot be looked up and is always drawn. */
-  private paintNote(ctx: CanvasRenderingContext2D, note: Note, body: boolean, ghost = false): void {
-    const x = this.x(note.lane) + 1,
-      y = this.y(note.tick),
-      width = note.width * this.laneWidth - 2;
-    const finishX = this.x(endLane(note)) + 1,
-      finishY = this.y(endTick(note)),
-      finishWidth = endWidth(note) * this.laneWidth - 2;
-    // A picked node is highlighted alone; the segment that ends on it is not.
-    const color = noteColor(note),
-      picked = this.selection.has(note.id),
-      selected = picked && !(this.selection.size === 1 && this.pickedJoint === note.id),
-      airborne = AIR_NOTE_TYPES.has(note.type);
-    if (body) {
-      if (!long(note)) return;
-      ctx.fillStyle = `${color}35`;
-      ctx.strokeStyle = `${color}88`;
-      ctx.lineWidth = selected ? 2 : 1;
-      ctx.beginPath();
-      ctx.moveTo(x, y);
-      ctx.lineTo(finishX, finishY);
-      ctx.lineTo(finishX + finishWidth, finishY);
-      ctx.lineTo(x + width, y);
-      ctx.closePath();
-      // AIR bodies stay translucent so the ground notes under them remain visible.
-      if (airborne) ctx.fill();
-      else this.paintGroundBody(ctx, note, x, y, width, finishX, finishY, finishWidth);
-      // Only the sides belong to the body; control joints must not draw horizontal separators.
-      ctx.beginPath();
-      ctx.moveTo(x, y);
-      ctx.lineTo(finishX, finishY);
-      ctx.moveTo(x + width, y);
-      ctx.lineTo(finishX + finishWidth, finishY);
-      ctx.stroke();
-      if (note.type === 'AIR_CRUSH' && Number(note.attributes.interval ?? 24) > 0) {
-        const interval = Math.max(1, Number(note.attributes.interval) || 24);
-        const minimum = Math.max(1, Math.ceil(8 / (interval * this.zoom)));
-        const count = Math.min(5000, Math.floor((note.duration ?? 0) / interval));
-        ctx.strokeStyle = `${color}9a`;
-        ctx.lineWidth = 1;
-        const first = Math.max(minimum, Math.floor((this.scroll - note.tick) / interval / minimum) * minimum);
-        for (let index = first; index < count; index += minimum) {
-          const fraction = (index * interval) / (note.duration ?? 1),
-            cy = this.y(note.tick + index * interval);
-          if (cy < 0) break;
-          const cx = x + (finishX - x) * fraction,
-            cw = width + (finishWidth - width) * fraction;
-          ctx.beginPath();
-          ctx.moveTo(cx, cy);
-          ctx.lineTo(cx + cw, cy);
-          ctx.stroke();
-        }
-      }
-      if (airborne) {
-        // AIR HOLD / AIR SLIDE read as one solid centre line, like Margrete; a CRUSH keeps a dashed guide in its own colour.
-        const line = note.type !== 'AIR_CRUSH';
-        if (!line) ctx.setLineDash([5, 5]);
-        ctx.strokeStyle = line ? color : `${color}b0`;
-        ctx.lineWidth = line ? 2 : 1;
-        ctx.beginPath();
-        ctx.moveTo(x + width / 2, y);
-        ctx.lineTo(finishX + finishWidth / 2, finishY);
-        ctx.stroke();
-        ctx.setLineDash([]);
-      }
-      return;
-    }
-    if (long(note)) {
-      const control = hasNodeKind(note) && note.attributes.visible === false;
-      ctx.fillStyle = color;
-      ctx.strokeStyle = picked ? '#fff' : color;
-      ctx.lineWidth = picked ? 2 : 1.5;
-      if (control) {
-        const center = finishX + finishWidth / 2;
-        if (picked) {
-          ctx.setLineDash([3, 3]);
-          ctx.beginPath();
-          ctx.moveTo(finishX, finishY);
-          ctx.lineTo(finishX + finishWidth, finishY);
-          ctx.stroke();
-          ctx.setLineDash([]);
-        }
-        ctx.beginPath();
-        ctx.moveTo(center, finishY - 6);
-        ctx.lineTo(center + 6, finishY);
-        ctx.lineTo(center, finishY + 6);
-        ctx.lineTo(center - 6, finishY);
-        ctx.closePath();
-        ctx.stroke();
-      } else if (!this.noteSprites.draw(ctx, note, true, finishX, finishY, finishWidth)) {
-        ctx.fillRect(finishX, finishY - 3, finishWidth, 6);
-        ctx.strokeStyle = picked ? '#fff' : '#cccccc';
-        ctx.strokeRect(finishX, finishY - 3, finishWidth, 6);
-      }
-      if (picked) this.handle(ctx, finishX + finishWidth, finishY, color);
-    }
-    if (
-      !ghost &&
-      hasNodeKind(note) &&
-      !getNotePlaybackPoints(this.preview ?? this.chart, note).some(point => point.position === 'head')
-    ) {
-      if (selected) this.handle(ctx, x + width, y, color);
-      return;
-    }
-    ctx.fillStyle = color;
-    ctx.strokeStyle = selected ? '#ffffff' : '#eeeeee';
-    ctx.lineWidth = selected ? 2 : 1;
-    // An AIR, and the implied AIR that starts an AIR HOLD / AIR SLIDE chain, float above the ground note they belong to.
-    const arrow = note.type === 'AIR' || note.type === 'AIR_HOLD' || note.type === 'AIR_SLIDE';
-    if (arrow) {
-      const direction = note.type === 'AIR' ? String(note.attributes.direction ?? 'IR') : 'IR',
-        arrowY = y - airArrowLift(width),
-        half = airArrowHeight(width) / 2;
-      if (!this.noteSprites.drawArrow(ctx, direction, x, arrowY, width)) {
-        const down = airDown(direction),
-          tip = x + width / 2 + (airSide(direction) * airLean(width)) / 2,
-          base = down ? arrowY - half : arrowY + half,
-          point = down ? arrowY + half : arrowY - half;
-        ctx.beginPath();
-        ctx.moveTo(x, base);
-        ctx.lineTo(tip, point);
-        ctx.lineTo(x + width, base);
-        ctx.lineTo(tip, (base + point) / 2);
-        ctx.closePath();
-        ctx.fill();
-        ctx.stroke();
-      }
-      if (selected) {
-        ctx.strokeStyle = '#fff';
-        ctx.strokeRect(x - 1, arrowY - half - 1, width + 2, half * 2 + 2);
-      }
-    } else if (this.noteSprites.draw(ctx, note, false, x, y, width)) {
-      if (selected) {
-        ctx.strokeStyle = '#fff';
-        ctx.strokeRect(x - 1, y - 5, width + 2, 10);
-      }
-    } else {
-      ctx.beginPath();
-      ctx.roundRect(x, y - NOTE_BAR_HEIGHT / 2, Math.max(1, width), NOTE_BAR_HEIGHT, 1);
-      ctx.fill();
-      ctx.stroke();
-      if (note.type === 'EXTAP' || note.attributes.ex) {
-        ctx.fillStyle = '#fff9dc';
-        ctx.fillRect(x + 2, y - 1.5, Math.max(1, width - 4), 3);
-      }
-      if (note.type === 'FLICK') {
-        ctx.strokeStyle = '#143353';
-        ctx.lineWidth = 1.5;
-        for (let cx = x + 5; cx < x + width - 3; cx += 10) {
-          ctx.beginPath();
-          ctx.moveTo(cx - 2, y - 3);
-          ctx.lineTo(cx + 2, y);
-          ctx.lineTo(cx - 2, y + 3);
-          ctx.stroke();
-        }
-      }
-      if (note.type === 'DAMAGE') {
-        ctx.strokeStyle = '#532741';
-        ctx.lineWidth = 2;
-        for (let cx = x + 4; cx < x + width - 4; cx += 10) {
-          ctx.beginPath();
-          ctx.moveTo(cx - 2, y - 3);
-          ctx.lineTo(cx + 2, y + 3);
-          ctx.moveTo(cx + 2, y - 3);
-          ctx.lineTo(cx - 2, y + 3);
-          ctx.stroke();
-        }
-      }
-    }
-    if (selected) this.handle(ctx, x + width, arrow ? y - airArrowLift(width) : y, color);
-  }
-  /**
-   * HOLD / SLIDE body inside the current path. The joint texture runs from the start (bottom row) to the end (top row)
-   * of each ordinary-node span, so control joints do not restart it; its rows stay horizontal like the time axis.
-   */
-  private paintGroundBody(
-    ctx: CanvasRenderingContext2D,
-    note: Note,
-    x: number,
-    y: number,
-    width: number,
-    finishX: number,
-    finishY: number,
-    finishWidth: number,
-  ): void {
-    const span = note.type === 'SLIDE' ? getSlideUvSpans(this.chart).get(note.id) : undefined,
-      height = y - finishY;
-    const from = span ? slideUvProgress(this.chart, span, note.tick) : 0,
-      to = span ? slideUvProgress(this.chart, span, endTick(note)) : 1;
-    if (height < 0.5 || to <= from) return;
-    const image = this.bodyTextures[note.type];
-    ctx.save();
-    ctx.clip();
-    if (!image) {
-      // Same colours as the texture centre, placed on the line where progress 0 and 1 would fall.
-      const at = (progress: number) => y - (height * (progress - from)) / (to - from),
-        gradient = ctx.createLinearGradient(0, at(0), 0, at(1));
-      for (const [progress, color] of BODY_STOPS[note.type] ?? []) gradient.addColorStop(progress, color);
-      ctx.fillStyle = gradient;
-      ctx.fill();
-    } else if (Math.abs(finishWidth - width) < 0.5) {
-      // Constant width: one affine map takes the texture rows onto the sheared body exactly.
-      ctx.transform(width, 0, x - finishX, height, finishX, finishY);
-      ctx.drawImage(
-        image,
-        0,
-        image.naturalHeight * (1 - to),
-        image.naturalWidth,
-        image.naturalHeight * (to - from),
-        0,
-        0,
-        1,
-        1,
-      );
-    } else {
-      // Changing width: rows one device pixel high, each stretched to the body's width there, so the texture's soft
-      // sides follow the slanted edges. Rows sit on the pixel grid and neither overlap nor leave seams.
-      const ratio = this.canvas.width / this.canvasWidth,
-        rows = height * ratio,
-        top = Math.round(finishY * ratio);
-      const row = (t: number) => image.naturalHeight * (1 - to + (to - from) * t);
-      for (let index = Math.max(0, -top); index < rows && (top + index) / ratio < this.canvasHeight; index++) {
-        const t0 = index / rows,
-          t1 = Math.min(1, (index + 1) / rows),
-          middle = (t0 + t1) / 2;
-        ctx.drawImage(
-          image,
-          0,
-          row(t0),
-          image.naturalWidth,
-          row(t1) - row(t0),
-          finishX + (x - finishX) * middle,
-          (top + index) / ratio,
-          finishWidth + (width - finishWidth) * middle,
-          1 / ratio,
-        );
-      }
-    }
-    ctx.restore();
-  }
-  private handle(ctx: CanvasRenderingContext2D, x: number, y: number, color: string): void {
-    ctx.fillStyle = '#202020';
-    ctx.strokeStyle = color;
-    ctx.lineWidth = 1.5;
-    ctx.fillRect(x - 3, y - 3, 6, 6);
-    ctx.strokeRect(x - 3, y - 3, 6, 6);
+    const last = this.mode.kind === 'continue' && hover && inTrack ? this.selectedNote() : undefined;
+    const continuation: Note | undefined =
+      last && hover && hover.tick > endTick(last)
+        ? {
+            ...last,
+            tick: endTick(last),
+            lane: endLane(last),
+            width: endWidth(last),
+            duration: hover.tick - endTick(last),
+            endLane: this.placeLane(hover),
+            endWidth: this.width,
+          }
+        : undefined;
+    const shown = this.preview ?? this.chart;
+    this.painter.paint({
+      chart: this.chart,
+      shown,
+      selection: this.selection,
+      pickedJoint: this.pickedJoint,
+      cursor: this.cursor,
+      snap: this.snap,
+      hover,
+      dragging: Boolean(this.drag),
+      box: this.drag?.kind === 'box' && this.drag.moved ? this.drag : undefined,
+      aligning: this.mode.kind === 'align',
+      insert: insertTarget && {
+        target: insertTarget,
+        tick: hover!.tick,
+        control:
+          hasNodeKind(insertTarget.note) &&
+          (this.nodeKind === 'inherit' ? insertTarget.note.attributes.visible === false : this.nodeKind === 'control'),
+      },
+      placement,
+      continuation,
+      waveform: { peaks: this.peaks, duration: this.audioDuration, offset: this.audioOffset, samples: this.samples },
+    });
+    this.status.innerHTML = `<span><i></i>${this.mode.kind === 'continue' ? '接续节点' : this.tool === 'select' ? '选择模式' : this.tool === 'erase' ? '橡皮擦' : LABEL[this.tool]}</span><span>光标 <b>${formatTick(this.cursor)}</b> tick · ${tickToSeconds(shown, this.cursor).toFixed(3)} s</span><span>${this.selection.size ? `已选 ${this.selection.size} · ` : ''}${shown.notes.length} 音符 · ${shown.events.length} 事件</span><span>${Math.round((view.zoom / 0.75) * 100)}% · ${this.snap ? `1/${this.snap} 全音符` : '自由'}</span>`;
   }
 }

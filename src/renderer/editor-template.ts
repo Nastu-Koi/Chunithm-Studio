@@ -1,4 +1,4 @@
-import { NOTE_TYPES, type Note, type NoteType } from '../core/model';
+import { NOTE_TYPES, type EventType, type Note, type NoteType } from '../core/model';
 import { ICON } from './icons';
 
 export const LABEL: Record<NoteType, string> = {
@@ -12,6 +12,15 @@ export const LABEL: Record<NoteType, string> = {
   AIR_SLIDE: 'AIR SLIDE',
   AIR_CRUSH: 'CRUSH',
   DAMAGE: 'DAMAGE',
+};
+export const EVENT_LABEL: Record<EventType, string> = {
+  BPM: 'BPM',
+  METER: '拍号',
+  SCROLL: '谱面滚速',
+  NOTE_SPEED: '音符速度',
+  GROUP_SCROLL: '分组滚速',
+  SCROLL_ASSIGNMENT: '指派分组',
+  STOP: '旧版停止',
 };
 export const COLOR: Record<NoteType, string> = {
   TAP: '#ed333b',

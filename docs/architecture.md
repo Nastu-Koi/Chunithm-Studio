@@ -48,7 +48,12 @@ Chuni Studio 是 Electron 桌面程序：主进程负责文件、游戏资源与
 - `icons.ts`：界面图标。从 `lucide` 取图标数据拼成内联 SVG 字符串，模板与各对话框只经 `ICON` 取用。
 - `app-context.ts`：`AppContext`，对话框访问工程、播放器和应用壳操作的唯一入口。
 - `dialogs/`：设置、曲库、最近项目、导出、小节定位、信息类对话框。
-- `editor.ts`：俯视编辑器的交互与绘制。谱面变换调用 `src/core/editing.ts`，工具栏与画布标记在 `editor-template.ts`。
+- `editor.ts`：俯视编辑器 `ChartEditor`。持有选区、工具、拖动与交互模式（普通、插入节点、接续、对齐音乐、SLIDE 形状，同一时刻只有一个，经 `setMode` 切换），处理指针、键盘、工具栏与提交；谱面变换调用 `src/core/editing.ts`。它依赖下列模块，这些模块不反向引用它：
+  - `editor-view.ts`：画布版面、缩放与滚动，以及 tick、轨道与像素之间的换算。
+  - `editor-hit.ts`：命中测试，找出指针下的音符、事件、节点与可插入位置。
+  - `editor-paint.ts`：整帧绘制。输入是 `ChartEditor` 每帧组装的只读 `PaintScene`。
+  - `editor-inspector.ts`：属性面板的标记。
+  - `editor-template.ts`：工具栏与画布的页面标记、音符与事件的显示名。
 - `player.ts`：透视播放器。HUD 在 `player-hud.ts`，原生模型绘制在 `game-mesh-renderer.ts`、`native-notes.ts`、`native-air-geometry.ts`、`native-effects.ts` 等文件。
 - `transport.ts`：音频时钟，负责音乐播放、打击音、节拍器、变速和循环。
 - `ui-settings.ts`：界面设置的读写。应用壳和编辑器的显示与监听偏好都经它存入 localStorage，不进工程，也不经过桥接接口。
