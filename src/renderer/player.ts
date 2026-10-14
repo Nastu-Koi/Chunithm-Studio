@@ -2,7 +2,14 @@ import { getSlideUvSpans, slideUvProgress } from './slide-timing';
 import { lowerBound, upperBound } from '../core/search';
 import { createChart, EX_NOTE_TYPES, type Chart, type Note } from '../core/model';
 import { isBundledImageSource, type GameModelTexture, type GameTexture, type GameTextures } from '../core/game-assets';
-import { getScrollPosition, getGrid, tickToSeconds, secondsToTick, getNoteScrollGroup } from '../core/timing';
+import {
+  getScrollPosition,
+  getGrid,
+  tickToSeconds,
+  secondsToTick,
+  getNoteScrollGroup,
+  type NotePlaybackPoint,
+} from '../core/timing';
 import { getPlayerPlaybackPoints } from './playback-points';
 import {
   fitSceneViewport,
@@ -332,6 +339,25 @@ function ribbonSegments(
 }
 /** Source Z on the near side of the judgement line at which a line at AIR height has left the screen; the camera is 120.9 away. */
 const AIR_HOLD_NEAR_Z = 110;
+/** Values shared by everything drawn in one frame. Distances are seconds of scroll from the judgement line. */
+interface Frame {
+  seconds: number;
+  tick: number;
+  /** World units per scroll second at the current speed. */
+  unit: number;
+  /** The far edge: the FIELD WALL, or the end of the track. */
+  far: number;
+  /** Nearest distance still drawn, just behind the judgement line. */
+  near: number;
+  /** Where a held AIR line leaves the bottom of the screen. */
+  airNear: number;
+  /** AIR-CRUSH markers still allowed this frame. */
+  crushMarkerBudget: number;
+}
+/** One depth-sorted drawing step; `layer` breaks ties: -1 ground bodies, 0 AIR bodies, 1 ground heads, 2 AIR heads. */
+type Primitive = { depth: number; layer: number; draw(): void };
+/** A hold effect that keeps running while its SLIDE is held. */
+type EffectKeep = { event: NoteEffectEvent; age: number };
 function noteColor(note: Note): string {
   return nativeColors[String(note.attributes.color)] ?? colors[note.type];
 }
@@ -932,12 +958,50 @@ export class ChartPlayer {
       );
     }
     // Distances are seconds of scroll; the track's own lengths are in source units, so they follow the speed.
-    const unit = scrollWorldUnit(this.speed),
-      far = fieldWallDistance(this.speed, this.wall),
-      fieldFar = scrollDistanceAt(FIELD_FAR_Z, this.speed);
-    const near = -40 / unit,
-      fieldNear = -12 / unit,
-      airNear = -AIR_HOLD_NEAR_Z / unit;
+    const unit = scrollWorldUnit(this.speed);
+    const frame: Frame = {
+      seconds,
+      tick,
+      unit,
+      far: fieldWallDistance(this.speed, this.wall),
+      near: -40 / unit,
+      airNear: -AIR_HOLD_NEAR_Z / unit,
+      crushMarkerBudget: 512,
+    };
+    this.drawField(frame);
+    const { primitives, keeps } = this.collectPrimitives(frame);
+    // Flat ground bodies cannot occlude any raised note head, regardless of segment length.
+    primitives.sort(
+      (a, b) => Number(b.layer === -1) - Number(a.layer === -1) || b.depth - a.depth || a.layer - b.layer,
+    );
+    for (const primitive of primitives) primitive.draw();
+    this.drawJudgementLine();
+    this.canvas.dataset.nativeEffectPrimitives = String(this.drawEffects(seconds, keeps));
+    if (this.textureLayer) c.drawImage(this.textureLayer.finish(), 0, 0, w, h);
+    c.restore();
+    drawPlayerHud(c, this.hudSprites, {
+      font: this.hudFont,
+      scoreStatus: this.scoreTimeline.status,
+      headerMatched: this.scoreTimeline.header.matches === true,
+      title: this.title,
+      artist: this.artist,
+      difficulty: this.difficulty,
+      level: this.level,
+      weTag: this.weTag,
+      stars: this.stars,
+      cover: this.cover,
+      score: score.score,
+      combo: score.combo,
+      total: score.total,
+      speed: this.speed,
+    });
+    c.restore();
+  }
+  /** The track surface with its far fade, side bands, lane and bar lines, and the FIELD WALL. */
+  private drawField({ tick, unit, far }: Frame): void {
+    const c = this.context;
+    const fieldFar = scrollDistanceAt(FIELD_FAR_Z, this.speed),
+      fieldNear = -12 / unit;
     const ground = this.sceneMaterials.get('notesField');
     const groundQuad: [Point, Point, Point, Point] = [
       this.point(0, fieldFar),
@@ -1014,247 +1078,293 @@ export class ChartPlayer {
       if (wall) this.texturedQuad(wall, wallQuad);
     }
     this.canvas.dataset.fieldWallTexture = String(this.sceneMaterials.has('fieldWall'));
-    const keeps: { event: NoteEffectEvent; age: number }[] = [];
-    const primitives: { depth: number; layer: number; draw(): void }[] = [];
-    let crushMarkerBudget = 512;
-    for (const { note, start, end } of this.sorted) {
-      const live = end >= seconds;
-      // An AIR SLIDE keeps scrolling towards the camera with the shape it had, also after its end.
-      const past =
-        note.type === 'AIR_SLIDE' && tick > note.tick
-          ? getPlayerPastRibbonSegments(this.chart, note, tick, airNear, 170 / unit)
-          : [];
-      if (end < seconds - 0.32 && !past.length) continue;
-      const points = note.type === 'AIR_CRUSH' ? [] : getPlayerPlaybackPoints(this.chart, note);
-      const headPoint = points.find(point => point.position === 'head'),
-        endPoint = points.find(point => point.position === 'end');
-      if (note.type === 'SLIDE' && note.duration && start <= seconds && end > seconds) {
-        const t = (tick - note.tick) / note.duration;
-        keeps.push({
-          event: {
-            note,
-            time: start,
-            kind: 'Slide',
-            lane: note.lane + ((note.endLane ?? note.lane) - note.lane) * t,
-            width: note.width + ((note.endWidth ?? note.width) - note.width) * t,
-            y: 0,
-            seed: 1,
-          },
-          age: seconds - start,
-        });
-      }
-      if (!live && !past.length) continue;
-      const head = getScrollPosition(this.chart, note.tick, tick, note);
-      const tail = getScrollPosition(this.chart, note.tick + (note.duration ?? 0), tick, note);
-      const ribbon = live ? getPlayerRibbonSegments(this.chart, note, tick, far, near, 170 / unit) : [];
-      // A held AIR HOLD does not end in mid-air above the judgement line: its line runs straight on, out of the bottom of the screen.
-      if (
-        note.type === 'AIR_HOLD' &&
-        tick > note.tick &&
-        ribbon.length &&
-        Math.abs(ribbon[0].startTick - tick) < 1e-7
-      ) {
-        ribbon.unshift({
-          startTick: tick,
-          endTick: tick,
-          startDistance: airNear,
-          endDistance: ribbon[0].startDistance,
-        });
-      }
-      ribbon.unshift(...past);
-      const airExtent: [number, number] | undefined =
-        note.type === 'AIR_HOLD' && ribbon.length
-          ? [
-              Math.min(...ribbon.flatMap(s => [s.startDistance, s.endDistance])),
-              Math.max(...ribbon.flatMap(s => [s.startDistance, s.endDistance])),
-            ]
-          : undefined;
-      const headVisible = live && head >= near && head <= far,
-        tailVisible = live && tail >= near && tail <= far;
-      if (!headVisible && !tailVisible && !ribbon.length) continue;
-      const airborne = note.type.startsWith('AIR'),
-        height = airborne ? (note.height ?? (note.type === 'AIR' ? 0.48 : 0.8)) : 0;
-      const color = noteColor(note);
-      const headColor = note.attributes.ex ? colors.EXTAP : color;
-      // A clipped active ribbon is already airborne; its new near edge is not a lift.
-      const headRiser =
-        !!headPoint && tick <= note.tick && ribbon.length > 0 && Math.abs(ribbon[0].startTick - note.tick) < 1e-7;
-      if (note.type === 'AIR_HOLD' && headRiser) {
-        const distance = ribbon[0].startDistance;
-        primitives.push({
-          depth: distance,
-          layer: 1,
-          draw: () => {
-            this.nativeModel(
-              `NotesAirHold_Line${note.attributes.color === 'PNK' ? '_P' : ''}`,
-              note.lane + note.width / 2,
-              distance,
-              nativeAirBaseHeight(note.height ?? 1),
-            );
-          },
-        });
-      }
-      if (note.duration && note.duration > 0) {
-        for (const segment of ribbon) {
-          const at = (atTick: number, distance: number, right: boolean) => {
-            const t = (atTick - note.tick) / note.duration!;
-            const x = note.lane + ((note.endLane ?? note.lane) - note.lane) * t;
-            const width = note.width + ((note.endWidth ?? note.width) - note.width) * t;
-            if (note.type === 'AIR_SLIDE' || note.type === 'AIR_CRUSH') {
-              const rawHeight = (note.height ?? 1) + ((note.endHeight ?? note.height ?? 1) - (note.height ?? 1)) * t;
-              const projected = projectNativeScrollPoint(
-                x + (right ? width : 0),
-                distance,
-                [0, nativeAirBaseHeight(rawHeight), 0],
-                this.speed,
-              );
-              return { ...projected, scale: projected.scale ?? 1 };
-            }
-            return this.point(
-              x + (right ? width : 0),
-              distance,
-              height + ((note.endHeight ?? height) - height) * t,
-              airborne,
-            );
-          };
-          primitives.push({
-            depth: (segment.startDistance + segment.endDistance) / 2,
-            layer: airborne ? 0 : -1,
-            draw: () =>
-              this.ribbon(
-                note,
-                segment,
-                [
-                  at(segment.startTick, segment.startDistance, false),
-                  at(segment.startTick, segment.startDistance, true),
-                  at(segment.endTick, segment.endDistance, true),
-                  at(segment.endTick, segment.endDistance, false),
-                ],
-                color,
-                airExtent,
-                tick,
-                headRiser,
-              ),
-          });
-        }
-      }
-      if (note.type === 'AIR_CRUSH' && crushMarkerBudget > 0) {
-        const ranges = ribbon.length
-          ? ribbon
-          : tailVisible && tail >= 0
-            ? [{ startTick: note.tick + (note.duration ?? 0), endTick: note.tick + (note.duration ?? 0) }]
-            : [];
-        const marks = getPlayerCrushMarkerTicks(this.crushTicks.get(note.id) ?? [], ranges, crushMarkerBudget);
-        for (const atTick of marks) {
-          const progress = note.duration ? (atTick - note.tick) / note.duration : 0;
-          const x = note.lane + ((note.endLane ?? note.lane) - note.lane) * progress,
-            width = note.width + ((note.endWidth ?? note.width) - note.width) * progress;
-          const distance = getScrollPosition(this.chart, atTick, tick, note),
-            high = height + ((note.endHeight ?? height) - height) * progress;
-          if (distance < 0 || distance > far) continue;
-          crushMarkerBudget--;
-          primitives.push({
-            depth: distance,
-            layer: 2,
-            draw: () => {
-              if (
-                !this.nativeHead(
-                  note,
-                  x,
-                  width,
-                  distance,
-                  (note.height ?? 1) + ((note.endHeight ?? note.height ?? 1) - (note.height ?? 1)) * progress,
-                  this.crushFirst.get(note.id) === atTick,
-                )
-              )
-                this.bar(this.point(x, distance, high), this.point(x + width, distance, high), color, note.type);
-            },
-          });
-        }
-      }
-      if (tailVisible && endPoint && note.type !== 'AIR_CRUSH') {
-        const endpoint = { ...note, attributes: { ...note.attributes, ex: false } };
-        primitives.push({
-          depth: tail,
-          layer: airborne ? 2 : 1,
-          draw: () => {
-            if (
-              !this.nativeHead(endpoint, endPoint.lane, endPoint.width, tail, note.endHeight ?? note.height ?? 1, true)
-            )
-              this.bar(
-                this.point(endPoint.lane, tail, endPoint.height ?? height),
-                this.point(endPoint.lane + endPoint.width, tail, endPoint.height ?? height),
-                color,
-                note.type,
-                endpoint,
-                endPoint.width,
-              );
-          },
-        });
-      }
-      if (headVisible && start >= seconds && headPoint && note.type !== 'AIR_CRUSH') {
-        const displayNote =
-          headPoint.type === note.type
-            ? note
-            : {
-                ...note,
-                type: headPoint.type,
-                attributes: { ...note.attributes, direction: headPoint.direction ?? 'IR' },
-              };
-        const displayHeight = headPoint.height ?? height,
-          displayColor = headPoint.type === note.type ? headColor : colors[headPoint.type];
-        primitives.push({
-          depth: head,
-          layer: airborne ? 2 : 1,
-          draw: () => {
-            const airSlideHead = note.type === 'AIR_SLIDE' && displayNote.type === 'AIR';
-            if (
-              this.nativeHead(
-                displayNote,
-                note.lane,
-                note.width,
-                head,
-                airSlideHead ? 1 : (note.height ?? 1),
-                false,
-                airSlideHead ? nativeAirBaseHeight(note.height ?? 1) / AIR_LINE_HEIGHT : 1,
-              )
-            )
-              return;
-            const left = this.point(note.lane, head, displayHeight),
-              right = this.point(note.lane + note.width, head, displayHeight);
-            this.bar(left, right, displayColor, displayNote.type, displayNote);
-            if (displayNote.type === 'AIR') {
-              const direction = String(displayNote.attributes.direction ?? 'IR');
-              const down = ['DOWN', 'DW', 'DL', 'DR', 'ADW', 'ADL', 'ADR'].includes(direction);
-              const center = (left.x + right.x) / 2;
-              const dy = 15 * left.scale * (down ? 1 : -1),
-                dx = ['UL', 'DL'].includes(direction)
-                  ? -12 * left.scale
-                  : ['UR', 'DR'].includes(direction)
-                    ? 12 * left.scale
-                    : 0;
-              this.line(
-                { ...left, x: center - 12 * left.scale },
-                { ...left, x: center + dx, y: left.y + dy },
-                '#d5ffef',
-                Math.max(1.5, 3 * left.scale),
-              );
-              this.line(
-                { ...left, x: center + dx, y: left.y + dy },
-                { ...left, x: center + 12 * left.scale },
-                '#d5ffef',
-                Math.max(1.5, 3 * left.scale),
-              );
-            }
-          },
-        });
-      }
+  }
+  /** Every note's drawing primitives for this frame, and the SLIDE hold effects that keep running. */
+  private collectPrimitives(frame: Frame): { primitives: Primitive[]; keeps: EffectKeep[] } {
+    const primitives: Primitive[] = [],
+      keeps: EffectKeep[] = [];
+    for (const entry of this.sorted) this.notePrimitives(entry, frame, primitives, keeps);
+    return { primitives, keeps };
+  }
+  private notePrimitives(
+    { note, start, end }: { note: Note; start: number; end: number },
+    frame: Frame,
+    primitives: Primitive[],
+    keeps: EffectKeep[],
+  ): void {
+    const { seconds, tick, unit, far, near, airNear } = frame;
+    const live = end >= seconds;
+    // An AIR SLIDE keeps scrolling towards the camera with the shape it had, also after its end.
+    const past =
+      note.type === 'AIR_SLIDE' && tick > note.tick
+        ? getPlayerPastRibbonSegments(this.chart, note, tick, airNear, 170 / unit)
+        : [];
+    if (end < seconds - 0.32 && !past.length) return;
+    const points = note.type === 'AIR_CRUSH' ? [] : getPlayerPlaybackPoints(this.chart, note);
+    const headPoint = points.find(point => point.position === 'head'),
+      endPoint = points.find(point => point.position === 'end');
+    if (note.type === 'SLIDE' && note.duration && start <= seconds && end > seconds) {
+      const t = (tick - note.tick) / note.duration;
+      keeps.push({
+        event: {
+          note,
+          time: start,
+          kind: 'Slide',
+          lane: note.lane + ((note.endLane ?? note.lane) - note.lane) * t,
+          width: note.width + ((note.endWidth ?? note.width) - note.width) * t,
+          y: 0,
+          seed: 1,
+        },
+        age: seconds - start,
+      });
     }
-    // Flat ground bodies cannot occlude any raised note head, regardless of segment length.
-    primitives.sort(
-      (a, b) => Number(b.layer === -1) - Number(a.layer === -1) || b.depth - a.depth || a.layer - b.layer,
-    );
-    for (const primitive of primitives) primitive.draw();
+    if (!live && !past.length) return;
+    const head = getScrollPosition(this.chart, note.tick, tick, note);
+    const tail = getScrollPosition(this.chart, note.tick + (note.duration ?? 0), tick, note);
+    const ribbon = live ? getPlayerRibbonSegments(this.chart, note, tick, far, near, 170 / unit) : [];
+    // A held AIR HOLD does not end in mid-air above the judgement line: its line runs straight on, out of the bottom of the screen.
+    if (note.type === 'AIR_HOLD' && tick > note.tick && ribbon.length && Math.abs(ribbon[0].startTick - tick) < 1e-7) {
+      ribbon.unshift({
+        startTick: tick,
+        endTick: tick,
+        startDistance: airNear,
+        endDistance: ribbon[0].startDistance,
+      });
+    }
+    ribbon.unshift(...past);
+    const headVisible = live && head >= near && head <= far,
+      tailVisible = live && tail >= near && tail <= far;
+    if (!headVisible && !tailVisible && !ribbon.length) return;
+    const airborne = note.type.startsWith('AIR'),
+      height = airborne ? (note.height ?? (note.type === 'AIR' ? 0.48 : 0.8)) : 0;
+    const color = noteColor(note);
+    // A clipped active ribbon is already airborne; its new near edge is not a lift.
+    const headRiser =
+      !!headPoint && tick <= note.tick && ribbon.length > 0 && Math.abs(ribbon[0].startTick - note.tick) < 1e-7;
+    if (note.type === 'AIR_HOLD' && headRiser) {
+      const distance = ribbon[0].startDistance;
+      primitives.push({
+        depth: distance,
+        layer: 1,
+        draw: () => {
+          this.nativeModel(
+            `NotesAirHold_Line${note.attributes.color === 'PNK' ? '_P' : ''}`,
+            note.lane + note.width / 2,
+            distance,
+            nativeAirBaseHeight(note.height ?? 1),
+          );
+        },
+      });
+    }
+    if (note.duration && note.duration > 0)
+      this.ribbonPrimitives(note, ribbon, height, color, tick, headRiser, primitives);
+    if (note.type === 'AIR_CRUSH')
+      this.crushPrimitives(note, ribbon, tail, tailVisible, height, color, frame, primitives);
+    if (tailVisible && endPoint && note.type !== 'AIR_CRUSH')
+      this.tailPrimitive(note, endPoint, tail, height, color, primitives);
+    if (headVisible && start >= seconds && headPoint && note.type !== 'AIR_CRUSH')
+      this.headPrimitive(note, headPoint, head, height, color, primitives);
+  }
+  /** The body of a long note, one primitive per visible ribbon segment. */
+  private ribbonPrimitives(
+    note: Note,
+    ribbon: PlayerRibbonSegment[],
+    height: number,
+    color: string,
+    tick: number,
+    headRiser: boolean,
+    primitives: Primitive[],
+  ): void {
+    const airborne = note.type.startsWith('AIR');
+    const airExtent: [number, number] | undefined =
+      note.type === 'AIR_HOLD' && ribbon.length
+        ? [
+            Math.min(...ribbon.flatMap(s => [s.startDistance, s.endDistance])),
+            Math.max(...ribbon.flatMap(s => [s.startDistance, s.endDistance])),
+          ]
+        : undefined;
+    const at = (atTick: number, distance: number, right: boolean) => {
+      const t = (atTick - note.tick) / note.duration!;
+      const x = note.lane + ((note.endLane ?? note.lane) - note.lane) * t;
+      const width = note.width + ((note.endWidth ?? note.width) - note.width) * t;
+      if (note.type === 'AIR_SLIDE' || note.type === 'AIR_CRUSH') {
+        const rawHeight = (note.height ?? 1) + ((note.endHeight ?? note.height ?? 1) - (note.height ?? 1)) * t;
+        const projected = projectNativeScrollPoint(
+          x + (right ? width : 0),
+          distance,
+          [0, nativeAirBaseHeight(rawHeight), 0],
+          this.speed,
+        );
+        return { ...projected, scale: projected.scale ?? 1 };
+      }
+      return this.point(
+        x + (right ? width : 0),
+        distance,
+        height + ((note.endHeight ?? height) - height) * t,
+        airborne,
+      );
+    };
+    for (const segment of ribbon)
+      primitives.push({
+        depth: (segment.startDistance + segment.endDistance) / 2,
+        layer: airborne ? 0 : -1,
+        draw: () =>
+          this.ribbon(
+            note,
+            segment,
+            [
+              at(segment.startTick, segment.startDistance, false),
+              at(segment.startTick, segment.startDistance, true),
+              at(segment.endTick, segment.endDistance, true),
+              at(segment.endTick, segment.endDistance, false),
+            ],
+            color,
+            airExtent,
+            tick,
+            headRiser,
+          ),
+      });
+  }
+  /** AIR-CRUSH judgement markers along the visible ribbon, within the frame's marker budget. */
+  private crushPrimitives(
+    note: Note,
+    ribbon: PlayerRibbonSegment[],
+    tail: number,
+    tailVisible: boolean,
+    height: number,
+    color: string,
+    frame: Frame,
+    primitives: Primitive[],
+  ): void {
+    if (frame.crushMarkerBudget <= 0) return;
+    const ranges = ribbon.length
+      ? ribbon
+      : tailVisible && tail >= 0
+        ? [{ startTick: note.tick + (note.duration ?? 0), endTick: note.tick + (note.duration ?? 0) }]
+        : [];
+    const marks = getPlayerCrushMarkerTicks(this.crushTicks.get(note.id) ?? [], ranges, frame.crushMarkerBudget);
+    for (const atTick of marks) {
+      const progress = note.duration ? (atTick - note.tick) / note.duration : 0;
+      const x = note.lane + ((note.endLane ?? note.lane) - note.lane) * progress,
+        width = note.width + ((note.endWidth ?? note.width) - note.width) * progress;
+      const distance = getScrollPosition(this.chart, atTick, frame.tick, note),
+        high = height + ((note.endHeight ?? height) - height) * progress;
+      if (distance < 0 || distance > frame.far) continue;
+      frame.crushMarkerBudget--;
+      primitives.push({
+        depth: distance,
+        layer: 2,
+        draw: () => {
+          if (
+            !this.nativeHead(
+              note,
+              x,
+              width,
+              distance,
+              (note.height ?? 1) + ((note.endHeight ?? note.height ?? 1) - (note.height ?? 1)) * progress,
+              this.crushFirst.get(note.id) === atTick,
+            )
+          )
+            this.bar(this.point(x, distance, high), this.point(x + width, distance, high), color, note.type);
+        },
+      });
+    }
+  }
+  /** The end bar of a long note. */
+  private tailPrimitive(
+    note: Note,
+    endPoint: NotePlaybackPoint,
+    tail: number,
+    height: number,
+    color: string,
+    primitives: Primitive[],
+  ): void {
+    const endpoint = { ...note, attributes: { ...note.attributes, ex: false } };
+    primitives.push({
+      depth: tail,
+      layer: note.type.startsWith('AIR') ? 2 : 1,
+      draw: () => {
+        if (!this.nativeHead(endpoint, endPoint.lane, endPoint.width, tail, note.endHeight ?? note.height ?? 1, true))
+          this.bar(
+            this.point(endPoint.lane, tail, endPoint.height ?? height),
+            this.point(endPoint.lane + endPoint.width, tail, endPoint.height ?? height),
+            color,
+            note.type,
+            endpoint,
+            endPoint.width,
+          );
+      },
+    });
+  }
+  /** The head of a note, drawn as the note type its head plays as (an AIR SLIDE starts with an AIR). */
+  private headPrimitive(
+    note: Note,
+    headPoint: NotePlaybackPoint,
+    head: number,
+    height: number,
+    color: string,
+    primitives: Primitive[],
+  ): void {
+    const headColor = note.attributes.ex ? colors.EXTAP : color;
+    const displayNote =
+      headPoint.type === note.type
+        ? note
+        : {
+            ...note,
+            type: headPoint.type,
+            attributes: { ...note.attributes, direction: headPoint.direction ?? 'IR' },
+          };
+    const displayHeight = headPoint.height ?? height,
+      displayColor = headPoint.type === note.type ? headColor : colors[headPoint.type];
+    primitives.push({
+      depth: head,
+      layer: note.type.startsWith('AIR') ? 2 : 1,
+      draw: () => {
+        const airSlideHead = note.type === 'AIR_SLIDE' && displayNote.type === 'AIR';
+        if (
+          this.nativeHead(
+            displayNote,
+            note.lane,
+            note.width,
+            head,
+            airSlideHead ? 1 : (note.height ?? 1),
+            false,
+            airSlideHead ? nativeAirBaseHeight(note.height ?? 1) / AIR_LINE_HEIGHT : 1,
+          )
+        )
+          return;
+        const left = this.point(note.lane, head, displayHeight),
+          right = this.point(note.lane + note.width, head, displayHeight);
+        this.bar(left, right, displayColor, displayNote.type, displayNote);
+        if (displayNote.type === 'AIR') {
+          const direction = String(displayNote.attributes.direction ?? 'IR');
+          const down = ['DOWN', 'DW', 'DL', 'DR', 'ADW', 'ADL', 'ADR'].includes(direction);
+          const center = (left.x + right.x) / 2;
+          const dy = 15 * left.scale * (down ? 1 : -1),
+            dx = ['UL', 'DL'].includes(direction)
+              ? -12 * left.scale
+              : ['UR', 'DR'].includes(direction)
+                ? 12 * left.scale
+                : 0;
+          this.line(
+            { ...left, x: center - 12 * left.scale },
+            { ...left, x: center + dx, y: left.y + dy },
+            '#d5ffef',
+            Math.max(1.5, 3 * left.scale),
+          );
+          this.line(
+            { ...left, x: center + dx, y: left.y + dy },
+            { ...left, x: center + 12 * left.scale },
+            '#d5ffef',
+            Math.max(1.5, 3 * left.scale),
+          );
+        }
+      },
+    });
+  }
+  private drawJudgementLine(): void {
+    const c = this.context,
+      h = this.height;
     const judgeLeft = this.point(0, 0),
       judgeRight = this.point(16, 0);
     const goal = this.modelSprites.get('GoalLine');
@@ -1276,55 +1386,38 @@ export class ChartPlayer {
       c.fillRect(judgeLeft.x, judgeLeft.y, judgeRight.x - judgeLeft.x, 3);
       c.shadowBlur = 0;
     }
+  }
+  /** Hit effects of recent judgements and running SLIDE holds; returns the number of primitives drawn. */
+  private drawEffects(seconds: number, keeps: EffectKeep[]): number {
     let effectPrimitives = 0;
-    if (this.textureLayer?.active && this.nativeEffects) {
-      const budget = 4096,
-        recent = recentNoteEffects(this.effectEvents, seconds, this.nativeEffects.lifetime);
-      for (let i = recent.length - 1; i >= 0 && effectPrimitives < budget; i--)
-        effectPrimitives += this.nativeEffects.draw(
-          this.textureLayer,
-          recent[i],
-          seconds - recent[i].time,
-          this.speed,
-          false,
-          budget - effectPrimitives,
-        );
-      for (const keep of keeps) {
-        if (effectPrimitives >= budget) break;
-        effectPrimitives += this.nativeEffects.draw(
-          this.textureLayer,
-          keep.event,
-          keep.age,
-          this.speed,
-          true,
-          budget - effectPrimitives,
-        );
-      }
-      if (effectPrimitives >= budget)
-        this.nativeDiagnostics.add(
-          '密集片段的打击特效达到每帧 4096 个图元上限，优先保留最近打击；计分、谱面与音频不裁剪。',
-        );
+    if (!this.textureLayer?.active || !this.nativeEffects) return effectPrimitives;
+    const budget = 4096,
+      recent = recentNoteEffects(this.effectEvents, seconds, this.nativeEffects.lifetime);
+    for (let i = recent.length - 1; i >= 0 && effectPrimitives < budget; i--)
+      effectPrimitives += this.nativeEffects.draw(
+        this.textureLayer,
+        recent[i],
+        seconds - recent[i].time,
+        this.speed,
+        false,
+        budget - effectPrimitives,
+      );
+    for (const keep of keeps) {
+      if (effectPrimitives >= budget) break;
+      effectPrimitives += this.nativeEffects.draw(
+        this.textureLayer,
+        keep.event,
+        keep.age,
+        this.speed,
+        true,
+        budget - effectPrimitives,
+      );
     }
-    this.canvas.dataset.nativeEffectPrimitives = String(effectPrimitives);
-    if (this.textureLayer) c.drawImage(this.textureLayer.finish(), 0, 0, w, h);
-    c.restore();
-    drawPlayerHud(c, this.hudSprites, {
-      font: this.hudFont,
-      scoreStatus: this.scoreTimeline.status,
-      headerMatched: this.scoreTimeline.header.matches === true,
-      title: this.title,
-      artist: this.artist,
-      difficulty: this.difficulty,
-      level: this.level,
-      weTag: this.weTag,
-      stars: this.stars,
-      cover: this.cover,
-      score: score.score,
-      combo: score.combo,
-      total: score.total,
-      speed: this.speed,
-    });
-    c.restore();
+    if (effectPrimitives >= budget)
+      this.nativeDiagnostics.add(
+        '密集片段的打击特效达到每帧 4096 个图元上限，优先保留最近打击；计分、谱面与音频不裁剪。',
+      );
+    return effectPrimitives;
   }
   private bar(
     left: Point,
