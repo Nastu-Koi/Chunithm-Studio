@@ -15,5 +15,14 @@ jobs:
       - run: npm ci
       - run: npm run format:check
       - run: npm run check
+      - run: npx playwright install --with-deps chromium
+      # The editor interaction tests drive the real canvas in Chromium against the Vite dev server.
+      - name: Start Vite
+        run: |
+          npm run dev > vite.log 2>&1 &
+          for i in $(seq 1 60); do curl -sf -o /dev/null http://127.0.0.1:5173/ && exit 0; sleep 1; done
+          cat vite.log; exit 1
       - run: npm test
+        env:
+          CHUNI_UI_URL: http://127.0.0.1:5173
       - run: npx vite build

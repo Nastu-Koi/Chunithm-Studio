@@ -89,7 +89,7 @@ Chuni Studio 是 Electron 桌面程序：主进程负责文件、游戏资源与
 ## 构建与发布
 
 - 渲染端由 Vite 构建到 `dist/`；主进程和预加载脚本由 `scripts/build-main.mjs` 用 esbuild 打包到 `dist-electron/`。
-- `.github/workflows/ci.yml` 在推送时运行格式检查、类型检查、单元测试和渲染端构建。代码格式由 Prettier 统一，配置在 `.prettierrc.json`。
+- `.github/workflows/ci.yml` 在推送时运行格式检查、类型检查、单元测试和渲染端构建；单元测试时启动 Vite 并设置 `CHUNI_UI_URL`，编辑器交互测试在 Chromium 中实际运行。代码格式由 Prettier 统一，配置在 `.prettierrc.json`。
 - `.github/workflows/release.yml` 在打 `v*` 标签时于 Windows runner 上准备原生依赖、打包便携目录并附加到 GitHub Release。打包输出位于 `release/<版本号>/`。
 - Node 版本以 `.nvmrc` 与 `package.json` 的 `engines` 约束。
 
