@@ -4,7 +4,7 @@ import { existsSync, readFileSync } from 'node:fs';
 import { parseC2S, serializeC2S, getNativeNoteTag } from '../src/core/c2s';
 import { createChart, createNote, type Note } from '../src/core/model';
 import { getNotePlaybackPoints, tickToSeconds } from '../src/core/timing';
-import { appendEditorNote, setEditorNodeKind, splitEditorNote, inferEditorParent } from '../src/renderer/editor';
+import { appendEditorNote, setEditorNodeKind, splitEditorNote, inferEditorParent } from '../src/core/editing';
 import { getChartHits } from '../src/renderer/transport';
 import { getPlayerPlaybackPoints } from '../src/renderer/playback-points';
 import { buildJudgementTimeline } from '../src/core/judgement';

@@ -12,7 +12,7 @@ import {
   copyEditorSelection,
   selectionWithBoundAir,
   syncEditorAirBindings,
-} from '../src/renderer/editor-operations';
+} from '../src/core/editing';
 
 const chartOf = (...notes: Note[]): Chart => ({ ...createChart(), notes });
 const air = (type: 'AIR' | 'AIR_HOLD' | 'AIR_SLIDE' = 'AIR') => createNote(type, 999, 9, 1);

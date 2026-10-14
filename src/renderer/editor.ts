@@ -68,32 +68,7 @@ import {
   type EditorNodeKind,
   type SlideShape,
   type SlideShapeResult,
-} from './editor-operations';
-export {
-  appendEditorNote,
-  attachEditorAir,
-  editorChain,
-  nextEditorSegment,
-  removeEditorJoint,
-  mergeEditorExTaps,
-  boundEditorParent,
-  copyEditorSelection,
-  flipEditorSelection,
-  inferEditorParent,
-  mirrorEditorSelection,
-  moveEditorSelection,
-  parseEditorFraction,
-  selectionWithBoundAir,
-  setEditorAirHeight,
-  setEditorEx,
-  setEditorNodeKind,
-  shapeEditorSlide,
-  splitEditorNote,
-  syncEditorAirBindings,
-  type EditorNodeKind,
-  type SlideShape,
-  type SlideShapeResult,
-} from './editor-operations';
+} from '../core/editing';
 
 type Callbacks = {
   onChange(chart: Chart, label: string): void;

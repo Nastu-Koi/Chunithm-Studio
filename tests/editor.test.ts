@@ -17,7 +17,7 @@ import {
   attachEditorAir,
   boundEditorParent,
   setEditorEx,
-} from '../src/renderer/editor';
+} from '../src/core/editing';
 import { getNoteScrollGroup } from '../src/core/timing';
 import { getNativeAirBindings } from '../src/core/judgement';
 

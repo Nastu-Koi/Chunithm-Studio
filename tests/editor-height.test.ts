@@ -3,7 +3,7 @@ import assert from 'node:assert/strict';
 import { createChart, createNote, type Chart } from '../src/core/model';
 import { parseC2S, serializeC2S } from '../src/core/c2s';
 import { getNotePlaybackPoints } from '../src/core/timing';
-import { setEditorAirHeight } from '../src/renderer/editor';
+import { setEditorAirHeight } from '../src/core/editing';
 
 function connectedSlides(): Chart {
   const first = { ...createNote('AIR_SLIDE', 96, 2, 3), id: 'first', duration: 96, height: 1, endHeight: 2 };

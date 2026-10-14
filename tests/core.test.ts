@@ -12,9 +12,9 @@ import {
   getGrid,
   getScrollPosition,
   validateChart,
-  moveNotes,
-  mirrorNotes,
-  cloneNotes,
+  moveEditorSelection,
+  mirrorEditorSelection,
+  copyEditorSelection,
   snapTick,
   parseBeatPosition,
   formatBeatPosition,
@@ -98,18 +98,22 @@ test('group movement keeps relative spacing and bounds; mirror transforms both s
   const slide = { ...createNote('SLIDE', 96, 2, 4), endLane: 12, endWidth: 4 };
   const air = { ...createNote('AIR', 192, 2, 4), attributes: { direction: 'UL' } };
   chart.notes = [slide, air];
-  const moved = moveNotes(chart, [slide.id, air.id], -1000, 4);
+  const moved = moveEditorSelection(chart, new Set([slide.id, air.id]), -1000, 4);
   assert.equal(moved.notes[0].tick, 0);
   assert.equal(moved.notes[1].tick, 96);
   assert.equal(moved.notes[0].lane, 2);
-  const mirrored = mirrorNotes(chart, [slide.id, air.id]);
+  const mirrored = mirrorEditorSelection(chart, new Set([slide.id, air.id]));
   assert.equal(mirrored.notes[0].lane, 10);
   assert.equal(mirrored.notes[0].endLane, 0);
   assert.equal(mirrored.notes[1].attributes.direction, 'UR');
-  const copied = cloneNotes(chart, [slide.id], 384);
-  assert.equal(copied.notes.length, 3);
-  assert.notEqual(copied.notes[2].id, slide.id);
-  assert.equal(copied.notes[2].tick, 480);
+  const copied = copyEditorSelection(chart, new Set([slide.id]))!;
+  assert.deepEqual(
+    copied.notes.map(note => note.id),
+    [slide.id],
+  );
+  assert.equal(copied.firstTick, 96);
+  copied.notes[0].attributes.ex = true;
+  assert.equal(slide.attributes.ex, undefined);
 });
 test('malformed known records are preserved rather than silently dropped', () => {
   const text = 'TAP\t0\t0\tbad\t2\nHLD\t0\t0\t0\t4\tNaN\nX_CUSTOM\t1';
@@ -204,7 +208,7 @@ test('moving a grouped note preserves its preview group and exports an updated n
   const chart = parseC2S(
     'BPM_DEF\t120\t120\t120\t120\nSLP\t0\t0\t1536\t-1.000000\t1\nTAP\t1\t0\t0\t4\nSLA\t1\t0\t0\t4\t1\t1',
   );
-  const changed = moveNotes(chart, [chart.notes[0].id], 384, 4);
+  const changed = moveEditorSelection(chart, new Set([chart.notes[0].id]), 384, 4);
   assert.equal(getScrollPosition(changed, 768, 0, changed.notes[0]), -4);
   const output = serializeC2S(changed);
   assert.ok(output.includes('SLA\t2\t0\t4\t4\t1\t1'));
@@ -247,7 +251,7 @@ test('seven-way grid and quarter-beat fractions remain precise inside the projec
     [],
   );
   assert.ok(validation.some(item => item.code === 'native-quantization'));
-  assert.equal(moveNotes(chart, [chart.notes[0].id], step, 0).notes[0].tick, step * 2);
+  assert.equal(moveEditorSelection(chart, new Set([chart.notes[0].id]), step, 0).notes[0].tick, step * 2);
 });
 
 test('fractional tempo boundaries invert through audio time and long notes span both changes', () => {
@@ -349,7 +353,7 @@ test('edited native output sorts known records chronologically while retaining u
 
 test('implicit grouped assignments take their chronological position in edited native output', () => {
   const chart = parseC2S('BPM\t0\t0\t120\nTAP\t2\t0\t0\t4\nTAP\t4\t0\t0\t4');
-  const moved = moveNotes(chart, [chart.notes[0].id], -384, 0);
+  const moved = moveEditorSelection(chart, new Set([chart.notes[0].id]), -384, 0);
   moved.notes[0] = { ...moved.notes[0], attributes: { speedGroup: 2 } };
   const text = serializeC2S(moved);
   const ticks = text
@@ -398,7 +402,7 @@ test('intentional native offstage geometry is preserved without weakening new-no
   );
   assert.ok(validateChart(chart).some(item => item.code === 'out-of-lane-visuals'));
   assert.equal(serializeC2S(chart), text);
-  const moved = moveNotes(chart, [chart.notes[1].id], 96, 0);
+  const moved = moveEditorSelection(chart, new Set([chart.notes[1].id]), 96, 0);
   assert.equal(moved.notes[1].lane, -1);
   assert.equal(moved.notes[1].tick, 864);
   const fresh = createChart();
@@ -410,7 +414,7 @@ test('intentional native offstage geometry is preserved without weakening new-no
     [],
   );
   assert.equal(parseC2S(serializeC2S(fresh)).allowOutOfLane, true);
-  assert.equal(moveNotes(fresh, [fresh.notes[0].id], 0, -100).notes[0].lane, -64);
+  assert.equal(moveEditorSelection(fresh, new Set([fresh.notes[0].id]), 0, -100).notes[0].lane, -64);
 });
 
 test('fractional AIR-CRUSH spacing reports accumulated judgement timing error and count changes', () => {
