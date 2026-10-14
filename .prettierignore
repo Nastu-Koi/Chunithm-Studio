@@ -1,0 +1,15 @@
+# Generated output and dependencies
+node_modules/
+dist/
+dist-electron/
+release/
+out/
+.cache/
+native/
+package-lock.json
+# Data, not code: game resources, examples, fixtures
+assets/
+examples/
+tests/fixtures/
+# Prose is formatted by hand
+*.md

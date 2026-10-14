@@ -16,6 +16,8 @@
     "desktop": "npm run build && electron .",
     "test": "tsx --test tests/*.test.ts",
     "check": "tsc --noEmit",
+    "format": "prettier --write .",
+    "format:check": "prettier --check .",
     "prepare:native": "node scripts/prepare-native.mjs",
     "package:win": "npm run prepare:native && npm run build && node scripts/package-win.mjs"
   },
@@ -31,6 +33,7 @@
     "electron": "44.7.0",
     "esbuild": "^0.25.10",
     "lucide": "^1.56.0",
+    "prettier": "3.9.10",
     "tsx": "^4.20.6",
     "typescript": "^5.9.3",
     "vite": "6.4.4"
