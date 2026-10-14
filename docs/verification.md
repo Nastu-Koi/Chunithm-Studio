@@ -2,6 +2,13 @@
 
 本记录区分程序测试、资源结构验证和原游戏实机验收。资源目录为用户提供的 `D:\chunithm`，检查期间不写入原游戏文件。
 
+## 0.1.23 之后（代码整理与重构）
+
+- 程序测试：`npm run format:check`、`npm run check`、`npx vite build` 通过；`npm test` 316 项，307 通过、9 项按环境跳过、失败 0；设置 `CHUNI_UI_URL` 后 314 通过、2 项跳过（需要 `CHUNI_GAME_ROOT`）。CI 改为启动 Vite 运行全部 7 项编辑器交互测试（含改写自旧脚本的 `air-binding-ui.test.ts`、`chain-editor-ui.test.ts`）。
+- `player-textures.e2e.mts` 恢复可用：资源数据改由 Vite 从 `.cache/` 提供，不再经路由传入（下文 0.1.10 之后一节记录的浏览器退出即由此引起）；贴图使用的检测同时覆盖 WebGL 2 纹理与 2D 绘制，并按当前绘制方式更新了期望（AIR-HOLD 头为 AIR 模型、带体为原生 roof 模型）。WSL 无头 Chromium（WebGL 2）通过，180 帧 WE 谱平均 35.7 ms。
+- 播放器绘制拆分前后用 640 帧渲染快照比对，逐像素一致。
+- 未做：Windows 桌面流程。本轮改动了主进程与预加载脚本的 IPC 注册方式、曲库扫描的读取授权、编辑器交互模式的切换，需在 Windows 上走一遍打开、保存、导入 C2S、曲库扫描与载入、封面、OPT 导出、在文件夹中显示，以及编辑器的插入节点、接续、对齐音乐、SLIDE 形状。
+
 ## 0.1.19 之后（形状、流速、挡板、叠放选择与界面设置）
 
 - 程序测试：`npm run check` 通过；`npm test` 288 项，282 通过、6 项按环境跳过、失败 0；`npx vite build` 通过。新增 `tests/ui-settings.test.ts`，`tests/player-scene.test.ts` 增加流速表与挡板表的断言，`tests/editor.test.ts` 增加新锯齿、震荡和 ExTAP 并入长条头的断言。
