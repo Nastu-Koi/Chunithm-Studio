@@ -9,7 +9,6 @@ import {
 } from './margrete-sprites';
 import {
   AIR_NOTE_TYPES,
-  CHAIN_NOTE_TYPES,
   HEIGHT_NOTE_TYPES,
   LONG_NOTE_TYPES,
   createChart,
@@ -23,7 +22,6 @@ import {
   type Note,
   type NoteAttributes,
   type NoteType,
-  type Scalar,
 } from '../core/model';
 import { getChartEndTick, getGrid, secondsToTick, tickToSeconds, getNotePlaybackPoints } from '../core/timing';
 import { isBundledImageSource, type GameTexture } from '../core/game-assets';
@@ -46,7 +44,6 @@ import {
   limitLane,
   limitWidth,
   selectionWithAssignments,
-  alignAssignments,
   appendEditorNote,
   attachEditorAir,
   editorChain,
@@ -70,6 +67,12 @@ import {
   type EditorNodeKind,
   type SlideShape,
   type SlideShapeResult,
+  editEditorEventProperty,
+  editEditorNoteProperty,
+  editorLaneBase,
+  pasteEditorClipboard,
+  reshapeEditorNote,
+  type PropertyRejection,
 } from '../core/editing';
 
 type Callbacks = {
@@ -109,6 +112,12 @@ const EVENT_LABEL: Record<EventType, string> = {
 /** Lane width at 100% track scale. A host too narrow for it still fits every visible lane. */
 /** Width of one lane on the canvas; lanes only get narrower when the view holds more of them than the canvas has room for. */
 const LANE_WIDTH = 15;
+const PROPERTY_REJECTION: Record<PropertyRejection, string> = {
+  fraction: '音乐时值请输入数字或分数，例如 1/7、3/16、1.5',
+  'node-position': '节点位置请输入数字或分数，例如 1/7、3/16、1.5',
+  'bound-air': 'AIR 绑定在地面音符的尾端，位置与宽度跟随父音符；请修改父音符',
+  'zero-note-speed': '音符速度不能为 0；停谱请使用谱面滚速事件',
+};
 const EVENT_COLOR: Record<EventType, string> = {
   BPM: '#65cf69',
   METER: '#d4a46b',
@@ -418,23 +427,9 @@ export class ChartEditor {
       this.setHint('请先选中并复制音符或事件');
       return;
     }
-    const dt = this.quantize(this.cursor) - this.clipboard.firstTick;
-    const notes = this.clipboard.notes.map(note => {
-      const item = { ...copyNote(note), id: makeId('note'), tick: note.tick + dt };
-      delete item.native;
-      return item;
-    });
-    const events = this.clipboard.events.map(event => {
-      const item = { ...event, id: makeId('event'), tick: event.tick + dt };
-      delete item.native;
-      return item;
-    });
-    this.selection = new Set([...notes, ...events].map(item => item.id));
-    const pasted = { ...this.chart, notes: [...this.chart.notes, ...notes], events: [...this.chart.events, ...events] };
-    this.commit(
-      mirrored ? mirrorEditorSelection(pasted, this.selection) : pasted,
-      `${mirrored ? '左右镜像' : ''}粘贴 ${notes.length + events.length} 项`,
-    );
+    const pasted = pasteEditorClipboard(this.chart, this.clipboard, this.quantize(this.cursor), mirrored);
+    this.selection = pasted.ids;
+    this.commit(pasted.chart, `${mirrored ? '左右镜像' : ''}粘贴 ${pasted.ids.size} 项`);
   }
   clearSelection(): void {
     this.selection.clear();
@@ -476,7 +471,7 @@ export class ChartEditor {
     field<HTMLInputElement>('beats').select();
   }
   private get laneBase(): number {
-    return this.chart.allowOutOfLane ? 0 : 1;
+    return editorLaneBase(this.chart);
   }
   private shapeResult(): SlideShapeResult | undefined {
     const input = (name: string) =>
@@ -1137,150 +1132,36 @@ export class ChartEditor {
   }
 
   private updateProperty(property: string, value: string | boolean): void {
-    if (property === 'positionFraction' || property === 'durationFraction') {
-      const parsed = parseEditorFraction(String(value));
-      if (parsed === undefined || parsed < 0) {
-        this.setHint('音乐时值请输入数字或分数，例如 1/7、3/16、1.5');
-        this.inspectorKey = '';
-        this.renderInspector();
-        return;
-      }
-      this.updateProperty(
-        property === 'positionFraction' ? 'tick' : 'duration',
-        String(parsed * this.chart.resolution),
-      );
-      return;
-    }
     const note = this.selectedNote();
-    // A node is placed by its own time; the segment before it takes whatever length that leaves.
-    if (note && (property === 'nodeTick' || property === 'nodePositionFraction')) {
-      const tick =
-        property === 'nodeTick' ? Number(value) : (parseEditorFraction(String(value)) ?? NaN) * this.chart.resolution;
-      if (!Number.isFinite(tick) || tick < 0) {
-        this.setHint('节点位置请输入数字或分数，例如 1/7、3/16、1.5');
-        this.inspectorKey = '';
-        this.renderInspector();
-        return;
-      }
-      this.updateProperty('duration', String(tick - note.tick));
+    const chartEvent = note ? undefined : this.chart.events.find(item => this.selection.has(item.id));
+    if (!note && (!chartEvent || this.selection.size !== 1)) return;
+    const edit = note
+      ? editEditorNoteProperty(this.chart, note.id, property, value)
+      : editEditorEventProperty(this.chart, chartEvent!.id, property, value);
+    if (!edit) return;
+    if ('rejected' in edit) {
+      this.setHint(PROPERTY_REJECTION[edit.rejected]);
+      this.inspectorKey = '';
+      this.renderInspector();
       return;
     }
-    const number = Number(value);
-    if (note) {
-      if (property === 'attr.ex') {
-        this.commit(setEditorEx(this.chart, note.id, Boolean(value)), value ? '设为 EX' : '取消 EX');
-        return;
-      }
-      if (property === 'nodeKind') {
-        this.commit(setEditorNodeKind(this.chart, note.id, value as EditorNodeKind), '修改节点类型');
-        return;
-      }
-      if (property === 'height' || property === 'endHeight') {
-        this.commit(setEditorAirHeight(this.chart, note.id, property, Math.max(0, number)), '修改 AIR 高度');
-        return;
-      }
-      if (['tick', 'lane', 'width'].includes(property) && boundEditorParent(this.chart, note.id)) {
-        this.setHint('AIR 绑定在地面音符的尾端，位置与宽度跟随父音符；请修改父音符');
-        this.inspectorKey = '';
-        this.renderInspector();
-        return;
-      }
-      let next: Note = { ...copyNote(note) };
-      if (property.startsWith('attr.')) {
-        (next.attributes as Record<string, Scalar>)[property.slice(5)] =
-          property === 'attr.interval' ? Math.max(0, number) : value;
-      } else if (property === 'type') {
-        next.type = value as NoteType;
-        if (LONG_NOTE_TYPES.has(next.type)) {
-          next.duration ??= this.chart.resolution / 4;
-          next.endLane ??= next.lane;
-          next.endWidth ??= next.width;
-        } else {
-          delete next.duration;
-          delete next.endLane;
-          delete next.endWidth;
-        }
-        if (next.type === 'AIR_SLIDE' || next.type === 'AIR_CRUSH') {
-          next.height ??= 1;
-          next.endHeight ??= 1;
-        }
-      } else {
-        if (!Number.isFinite(number)) return;
-        switch (property) {
-          case 'tick':
-            next.tick = Math.max(0, number);
-            break;
-          case 'lane':
-            next.lane = limitLane(this.chart, Math.round(number) - (this.chart.allowOutOfLane ? 0 : 1), next.width);
-            break;
-          case 'width':
-            next.width = limitWidth(this.chart, Math.round(number), next.lane);
-            break;
-          case 'duration':
-            next.duration = Math.max(
-              next.type === 'AIR_HOLD' || (next.type === 'AIR_SLIDE' && next.attributes.visible === false)
-                ? 0
-                : Number.EPSILON,
-              number,
-            );
-            break;
-          case 'endLane':
-            next.endLane = limitLane(
-              this.chart,
-              Math.round(number) - (this.chart.allowOutOfLane ? 0 : 1),
-              endWidth(next),
-            );
-            break;
-          case 'endWidth':
-            next.endWidth = limitWidth(this.chart, Math.round(number), endLane(next));
-            break;
-        }
-      }
-      if (next.type === 'HOLD' || next.type === 'AIR_HOLD') {
-        next.endLane = next.lane;
-        next.endWidth = next.width;
-      }
-      if (['duration', 'endLane', 'endWidth'].includes(property)) {
-        this.commit(this.reshape(this.chart, note, next, true, 1), this.selectedNode() ? '修改节点' : '修改音符属性');
-        return;
-      }
-      this.commit(
-        {
-          ...this.chart,
-          notes: this.chart.notes.map(item => (item.id === next.id ? next : item)),
-          events: alignAssignments(this.chart, note, next),
-        },
-        '修改音符属性',
-      );
+    if (chartEvent) {
+      this.commit(edit.chart, `修改 ${EVENT_LABEL[chartEvent.type]}`);
       return;
     }
-    const chartEvent = this.chart.events.find(item => this.selection.has(item.id));
-    if (!chartEvent || this.selection.size !== 1 || !Number.isFinite(number)) return;
-    const next = { ...chartEvent };
-    if (property === 'tick') next.tick = Math.max(0, number);
-    else if (property === 'value') {
-      if (next.type === 'NOTE_SPEED' && number === 0) {
-        this.setHint('音符速度不能为 0；停谱请使用谱面滚速事件');
-        this.inspectorKey = '';
-        this.renderInspector();
-        return;
-      }
-      next.value = next.type === 'BPM' ? Math.max(1, number) : number;
-    } else if (property === 'duration') next.duration = Math.max(0, number);
-    else if (property === 'numerator') next.numerator = Math.max(0, Math.round(number));
-    else if (property === 'denominator') next.denominator = Math.max(0, Math.round(number));
-    else if (property === 'group') {
-      next.group = Math.max(0, Math.round(number));
-      if (next.type === 'SCROLL_ASSIGNMENT') next.value = next.group;
-    } else if (property === 'lane')
-      next.lane = limitLane(this.chart, Math.round(number) - (this.chart.allowOutOfLane ? 0 : 1), next.width ?? 1);
-    else if (property === 'width') next.width = limitWidth(this.chart, Math.round(number), next.lane ?? 0);
-    if (next.type === 'METER')
-      next.value = next.numerator === 0 || next.denominator === 0 ? 0 : (next.numerator ?? 4) / (next.denominator ?? 4);
-    this.commit(
-      { ...this.chart, events: this.chart.events.map(item => (item.id === next.id ? next : item)) },
-      `修改 ${EVENT_LABEL[next.type]}`,
-    );
+    const label =
+      property === 'attr.ex'
+        ? value
+          ? '设为 EX'
+          : '取消 EX'
+        : property === 'nodeKind'
+          ? '修改节点类型'
+          : property === 'height' || property === 'endHeight'
+            ? '修改 AIR 高度'
+            : edit.reshaped && this.selectedNode()
+              ? '修改节点'
+              : '修改音符属性';
+    this.commit(edit.chart, label);
   }
 
   private addEvent(type: EventType): void {
@@ -1790,63 +1671,15 @@ export class ChartEditor {
         next.endLane = next.lane;
         next.endWidth = next.width;
       }
-      this.preview = this.reshape(drag.chart, note, next, drag.kind === 'end' || drag.kind === 'endWidth');
+      this.preview = reshapeEditorNote(
+        drag.chart,
+        note,
+        next,
+        drag.kind === 'end' || drag.kind === 'endWidth',
+        this.step,
+      );
     }
     this.draw();
-  }
-
-  /** Put a reshaped note back: segments sharing the edited node follow it, the end node when `end`, the start otherwise.
-   * `gap` is the shortest length left to the segment after a moved end node.
-   */
-  private reshape(base: Chart, note: Note, next: Note, end: boolean, gap = this.step): Chart {
-    const outgoing = end
-      ? base.notes.filter(
-          item =>
-            item.id !== note.id &&
-            item.type === note.type &&
-            sameTick(item.tick, endTick(note)) &&
-            item.lane === endLane(note) &&
-            item.width === endWidth(note),
-        )
-      : [];
-    const outgoingIds = new Set(outgoing.map(item => item.id));
-    // A resized chain start keeps the joint of the segment that ends on it.
-    const incomingIds = new Set(
-      !end
-        ? base.notes
-            .filter(
-              item =>
-                item.id !== note.id &&
-                CHAIN_NOTE_TYPES.has(note.type) &&
-                item.type === note.type &&
-                sameTick(endTick(item), note.tick) &&
-                endLane(item) === note.lane &&
-                endWidth(item) === note.width,
-            )
-            .map(item => item.id)
-        : [],
-    );
-    const latestEnd = outgoing.length ? Math.min(...outgoing.map(endTick)) - gap : Infinity;
-    if (endTick(next) > latestEnd) next = { ...next, duration: Math.max(gap, latestEnd - next.tick) };
-    return syncEditorAirBindings(base, {
-      ...base,
-      events: alignAssignments(base, note, next),
-      notes: base.notes.map(item =>
-        item.id === next.id
-          ? next
-          : outgoingIds.has(item.id)
-            ? {
-                ...item,
-                tick: endTick(next),
-                duration: Math.max(gap, endTick(item) - endTick(next)),
-                lane: endLane(next),
-                width: endWidth(next),
-              }
-            : incomingIds.has(item.id)
-              ? { ...item, endLane: next.lane, endWidth: next.width }
-              : item,
-      ),
-    });
   }
 
   private pointerUp(event: PointerEvent): void {

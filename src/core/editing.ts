@@ -11,6 +11,7 @@ import {
   type ChartEvent,
   type Note,
   type NoteType,
+  type Scalar,
 } from './model';
 import { getNoteScrollGroup } from './timing';
 import { noteNativeKind } from './validation';
@@ -900,4 +901,238 @@ export function copyEditorSelection(chart: Chart, selected: Set<string>): Clipbo
     });
   }
   return { notes, events, firstTick: Math.min(...notes.map(note => note.tick), ...events.map(event => event.tick)) };
+}
+
+/** Paste a clipboard so that its first item lands on `tick`; every pasted item gets a new id and loses its native record. */
+export function pasteEditorClipboard(
+  chart: Chart,
+  clipboard: Clipboard,
+  tick: number,
+  mirrored = false,
+): { chart: Chart; ids: Set<string> } {
+  const dt = tick - clipboard.firstTick;
+  const notes = clipboard.notes.map(note => {
+    const item = { ...copyNote(note), id: makeId('note'), tick: note.tick + dt };
+    delete item.native;
+    return item;
+  });
+  const events = clipboard.events.map(event => {
+    const item = { ...event, id: makeId('event'), tick: event.tick + dt };
+    delete item.native;
+    return item;
+  });
+  const ids = new Set([...notes, ...events].map(item => item.id));
+  const pasted = { ...chart, notes: [...chart.notes, ...notes], events: [...chart.events, ...events] };
+  return { chart: mirrored ? mirrorEditorSelection(pasted, ids) : pasted, ids };
+}
+
+/** Put a reshaped note back: segments sharing the edited node follow it, the end node when `end`, the start otherwise.
+ * `gap` is the shortest length left to the segment after a moved end node.
+ */
+export function reshapeEditorNote(base: Chart, note: Note, next: Note, end: boolean, gap: number): Chart {
+  const outgoing = end
+    ? base.notes.filter(
+        item =>
+          item.id !== note.id &&
+          item.type === note.type &&
+          sameTick(item.tick, endTick(note)) &&
+          item.lane === endLane(note) &&
+          item.width === endWidth(note),
+      )
+    : [];
+  const outgoingIds = new Set(outgoing.map(item => item.id));
+  // A resized chain start keeps the joint of the segment that ends on it.
+  const incomingIds = new Set(
+    !end
+      ? base.notes
+          .filter(
+            item =>
+              item.id !== note.id &&
+              CHAIN_NOTE_TYPES.has(note.type) &&
+              item.type === note.type &&
+              sameTick(endTick(item), note.tick) &&
+              endLane(item) === note.lane &&
+              endWidth(item) === note.width,
+          )
+          .map(item => item.id)
+      : [],
+  );
+  const latestEnd = outgoing.length ? Math.min(...outgoing.map(endTick)) - gap : Infinity;
+  if (endTick(next) > latestEnd) next = { ...next, duration: Math.max(gap, latestEnd - next.tick) };
+  return syncEditorAirBindings(base, {
+    ...base,
+    events: alignAssignments(base, note, next),
+    notes: base.notes.map(item =>
+      item.id === next.id
+        ? next
+        : outgoingIds.has(item.id)
+          ? {
+              ...item,
+              tick: endTick(next),
+              duration: Math.max(gap, endTick(item) - endTick(next)),
+              lane: endLane(next),
+              width: endWidth(next),
+            }
+          : incomingIds.has(item.id)
+            ? { ...item, endLane: next.lane, endWidth: next.width }
+            : item,
+    ),
+  });
+}
+
+/** The lane number the editor shows for lane 0: lanes count from 1, except on charts that may leave the track. */
+export const editorLaneBase = (chart: Chart) => (chart.allowOutOfLane ? 0 : 1);
+
+/** Why a property edit was refused; the editor turns it into a hint. */
+export type PropertyRejection = 'fraction' | 'node-position' | 'bound-air' | 'zero-note-speed';
+/** A property edit: the new chart, a refusal, or undefined when the input is ignored. `reshaped` marks an edit of a long note's end. */
+export type PropertyEdit = { chart: Chart; reshaped?: boolean } | { rejected: PropertyRejection } | undefined;
+
+/** Turn `positionFraction` / `durationFraction` (in whole notes, e.g. "1/7") into `tick` / `duration`. */
+function fromFraction(
+  chart: Chart,
+  property: string,
+  value: string | boolean,
+): { property: string; value: string | boolean } | { rejected: PropertyRejection } {
+  if (property !== 'positionFraction' && property !== 'durationFraction') return { property, value };
+  const parsed = parseEditorFraction(String(value));
+  if (parsed === undefined || parsed < 0) return { rejected: 'fraction' };
+  return { property: property === 'positionFraction' ? 'tick' : 'duration', value: String(parsed * chart.resolution) };
+}
+
+/** Apply one inspector field to a note. Lanes are given as the editor shows them (see `editorLaneBase`). */
+export function editEditorNoteProperty(
+  chart: Chart,
+  id: string,
+  property: string,
+  value: string | boolean,
+): PropertyEdit {
+  const note = chart.notes.find(item => item.id === id);
+  if (!note) return undefined;
+  const input = fromFraction(chart, property, value);
+  if ('rejected' in input) return input;
+  ({ property, value } = input);
+  // A node is placed by its own time; the segment before it takes whatever length that leaves.
+  if (property === 'nodeTick' || property === 'nodePositionFraction') {
+    const tick =
+      property === 'nodeTick' ? Number(value) : (parseEditorFraction(String(value)) ?? NaN) * chart.resolution;
+    if (!Number.isFinite(tick) || tick < 0) return { rejected: 'node-position' };
+    property = 'duration';
+    value = String(tick - note.tick);
+  }
+  const number = Number(value);
+  if (property === 'attr.ex') return { chart: setEditorEx(chart, note.id, Boolean(value)) };
+  if (property === 'nodeKind') return { chart: setEditorNodeKind(chart, note.id, value as EditorNodeKind) };
+  if (property === 'height' || property === 'endHeight')
+    return { chart: setEditorAirHeight(chart, note.id, property, Math.max(0, number)) };
+  if (['tick', 'lane', 'width'].includes(property) && boundEditorParent(chart, note.id))
+    return { rejected: 'bound-air' };
+  const next: Note = { ...copyNote(note) };
+  if (property.startsWith('attr.')) {
+    (next.attributes as Record<string, Scalar>)[property.slice(5)] =
+      property === 'attr.interval' ? Math.max(0, number) : value;
+  } else if (property === 'type') {
+    next.type = value as NoteType;
+    if (LONG_NOTE_TYPES.has(next.type)) {
+      next.duration ??= chart.resolution / 4;
+      next.endLane ??= next.lane;
+      next.endWidth ??= next.width;
+    } else {
+      delete next.duration;
+      delete next.endLane;
+      delete next.endWidth;
+    }
+    if (HEIGHT_NOTE_TYPES.has(next.type)) {
+      next.height ??= 1;
+      next.endHeight ??= 1;
+    }
+  } else {
+    if (!Number.isFinite(number)) return undefined;
+    const lane = Math.round(number) - editorLaneBase(chart);
+    switch (property) {
+      case 'tick':
+        next.tick = Math.max(0, number);
+        break;
+      case 'lane':
+        next.lane = limitLane(chart, lane, next.width);
+        break;
+      case 'width':
+        next.width = limitWidth(chart, Math.round(number), next.lane);
+        break;
+      case 'duration':
+        next.duration = Math.max(
+          next.type === 'AIR_HOLD' || (next.type === 'AIR_SLIDE' && next.attributes.visible === false)
+            ? 0
+            : Number.EPSILON,
+          number,
+        );
+        break;
+      case 'endLane':
+        next.endLane = limitLane(chart, lane, endWidth(next));
+        break;
+      case 'endWidth':
+        next.endWidth = limitWidth(chart, Math.round(number), endLane(next));
+        break;
+    }
+  }
+  if (next.type === 'HOLD' || next.type === 'AIR_HOLD') {
+    next.endLane = next.lane;
+    next.endWidth = next.width;
+  }
+  if (['duration', 'endLane', 'endWidth'].includes(property))
+    return { chart: reshapeEditorNote(chart, note, next, true, 1), reshaped: true };
+  return {
+    chart: {
+      ...chart,
+      notes: chart.notes.map(item => (item.id === next.id ? next : item)),
+      events: alignAssignments(chart, note, next),
+    },
+  };
+}
+
+/** Apply one inspector field to an event. Lanes are given as the editor shows them (see `editorLaneBase`). */
+export function editEditorEventProperty(
+  chart: Chart,
+  id: string,
+  property: string,
+  value: string | boolean,
+): PropertyEdit {
+  const event = chart.events.find(item => item.id === id);
+  if (!event) return undefined;
+  const input = fromFraction(chart, property, value);
+  if ('rejected' in input) return input;
+  const number = Number(input.value);
+  if (!Number.isFinite(number)) return undefined;
+  const next = { ...event };
+  switch (input.property) {
+    case 'tick':
+      next.tick = Math.max(0, number);
+      break;
+    case 'value':
+      if (next.type === 'NOTE_SPEED' && number === 0) return { rejected: 'zero-note-speed' };
+      next.value = next.type === 'BPM' ? Math.max(1, number) : number;
+      break;
+    case 'duration':
+      next.duration = Math.max(0, number);
+      break;
+    case 'numerator':
+      next.numerator = Math.max(0, Math.round(number));
+      break;
+    case 'denominator':
+      next.denominator = Math.max(0, Math.round(number));
+      break;
+    case 'group':
+      next.group = Math.max(0, Math.round(number));
+      if (next.type === 'SCROLL_ASSIGNMENT') next.value = next.group;
+      break;
+    case 'lane':
+      next.lane = limitLane(chart, Math.round(number) - editorLaneBase(chart), next.width ?? 1);
+      break;
+    case 'width':
+      next.width = limitWidth(chart, Math.round(number), next.lane ?? 0);
+      break;
+  }
+  if (next.type === 'METER')
+    next.value = next.numerator === 0 || next.denominator === 0 ? 0 : (next.numerator ?? 4) / (next.denominator ?? 4);
+  return { chart: { ...chart, events: chart.events.map(item => (item.id === next.id ? next : item)) } };
 }

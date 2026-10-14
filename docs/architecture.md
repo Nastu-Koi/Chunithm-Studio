@@ -24,7 +24,7 @@ Chuni Studio 是 Electron 桌面程序：主进程负责文件、游戏资源与
 - `quantization.ts`：分数 tick 对齐到整数 tick 的分析。
 - `validation.ts`：谱面与工程校验，产出错误与提示。
 - `judgement.ts`：判定时间表，供计分、打击音和统计使用。
-- `editing.ts`：与界面无关的谱面编辑操作，编辑页的谱面变换（移动、镜像、翻转、复制、节点拆分与删除、AIR 绑定、SLIDE 造型、EX 等）都在这里，每个函数返回新的 `Chart`、不修改输入。
+- `editing.ts`：与界面无关的谱面编辑操作，编辑页的谱面变换（移动、镜像、翻转、复制粘贴、节点拆分与删除、AIR 绑定、SLIDE 造型、EX、属性面板的字段规则等）都在这里，每个函数返回新的 `Chart`、不修改输入。属性编辑被拒绝时返回原因码，提示文字由编辑器决定，核心层不含界面文字。
 - `xml-metadata.ts`：Music.xml 与 CueFile.xml 的可编辑信息。
 - `game-assets.ts`、`game-effects.ts`、`game-sounds.ts`、`stage-animation.ts`、`stage-program.ts`：资源副本清单、特效、打击音和舞台数据的类型与解释逻辑。
 
