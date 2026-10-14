@@ -2,6 +2,7 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import { appTemplate } from '../src/renderer/app-template';
 import { editorTemplate } from '../src/renderer/editor-template';
+import { ICON } from '../src/renderer/icons';
 
 test('the status bar holds only the status text and the shortcut hints', () => {
   const footer = appTemplate.slice(
@@ -69,4 +70,10 @@ test('buttons use Lucide icons instead of symbol characters', () => {
   const shell = appTemplate.replace(/<span class="brand-mark">.*?<\/span><\/span>/, '') + editorTemplate({ zoom: 1 });
   assert.deepEqual(shell.match(/[↶↷↻■▥▶▷◀♫⛶✓↔↕↖↗↑∿⌁⌖⌫▣▱◇☷⧉＋]/g), null);
   assert.ok((shell.match(/<svg class="icon"/g)?.length ?? 0) >= 25);
+});
+
+test('the mirror icon reflects across a vertical axis and the flip icon across a horizontal one', () => {
+  // Both icons draw their axis as a dashed centreline: x = 12 is vertical (left-right mirror), y = 12 horizontal (front-back flip).
+  assert.ok(ICON.mirror.includes('d="M12 2v2"'), 'mirror axis is vertical');
+  assert.ok(ICON.flip.includes('d="M4 12H2"'), 'flip axis is horizontal');
 });
