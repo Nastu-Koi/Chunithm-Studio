@@ -2,7 +2,7 @@ import packager from '@electron/packager';
 import { access, cp, mkdir, readFile, readdir, rm } from 'node:fs/promises';
 import { execFileSync } from 'node:child_process';
 import path from 'node:path';
-import { isPackagedPath } from './package-files.mjs';
+import { findLinks, isPackagedPath, removeEmptyDirectories } from './package-files.mjs';
 
 const root = process.cwd();
 const { version } = JSON.parse(await readFile(path.join(root, 'package.json'), 'utf8'));
@@ -47,9 +47,10 @@ for (const packagePath of paths) {
       await rm(path.join(modules, '@img', name), { recursive: true, force: true });
   await rm(path.join(modules, 'ffmpeg-static/ffmpeg'), { force: true });
   // Pruning leaves the emptied folders of development packages behind, and nothing in the package may be a link.
-  execFileSync('find', [modules, '-type', 'd', '-empty', '-delete']);
-  const links = execFileSync('find', [packagePath, '-type', 'l'], { encoding: 'utf8' }).trim();
-  if (links) throw new Error(`打包结果中有符号链接：\n${links}`);
+  // Done in Node: on Windows `find` is the text search of System32, not the Unix one.
+  await removeEmptyDirectories(modules);
+  const links = await findLinks(packagePath);
+  if (links.length) throw new Error(`打包结果中有符号链接：\n${links.join('\n')}`);
   await access(path.join(windowsSharp, 'lib/sharp-win32-x64.node'));
   await access(path.join(packagePath, 'resources/app/native/win-x64/ChunithmAudio.exe'));
   await access(path.join(packagePath, 'resources/app/assets/game/manifest.json'));

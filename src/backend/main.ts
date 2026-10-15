@@ -269,9 +269,13 @@ app.whenReady().then(() => {
     height: 960,
     minWidth: 1050,
     minHeight: 700,
-    backgroundColor: '#0a0f19',
+    backgroundColor: '#1e1e1e',
     title: 'Chuni Studio',
     show: false,
+    // No native title bar: the app header is the top strip and Windows draws its three buttons over its right end
+    // (colours match --bg-1 / --text-2 in src/renderer/tokens.css, height matches .app-header).
+    titleBarStyle: 'hidden',
+    titleBarOverlay: { color: '#1e1e1e', symbolColor: '#a6a6a6', height: 40 },
     webPreferences: {
       preload: path.join(__dirname, 'preload.cjs'),
       contextIsolation: true,

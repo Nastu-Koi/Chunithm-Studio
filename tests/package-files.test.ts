@@ -1,7 +1,10 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 // @ts-expect-error plain script module without type declarations
-import { isPackagedPath } from '../scripts/package-files.mjs';
+import { findLinks, isPackagedPath, removeEmptyDirectories } from '../scripts/package-files.mjs';
+import { mkdir, mkdtemp, readdir, rm, symlink, writeFile } from 'node:fs/promises';
+import { tmpdir } from 'node:os';
+import path from 'node:path';
 
 test('the Windows package holds only what the app loads at run time', () => {
   for (const kept of [
@@ -53,4 +56,21 @@ test('the Windows package holds only what the app loads at run time', () => {
     '/package-lock.json',
   ])
     assert.equal(isPackagedPath(left), false, left);
+});
+
+test('package clean-up removes nested empty folders, keeps filled ones and finds links without external tools', async () => {
+  const root = await mkdtemp(path.join(tmpdir(), 'chuni-package-'));
+  try {
+    await mkdir(path.join(root, 'pruned/lib/deep'), { recursive: true });
+    await mkdir(path.join(root, 'kept/empty'), { recursive: true });
+    await writeFile(path.join(root, 'kept/index.js'), '');
+    await removeEmptyDirectories(root);
+    assert.deepEqual(await readdir(root), ['kept']);
+    assert.deepEqual(await readdir(path.join(root, 'kept')), ['index.js']);
+    assert.deepEqual(await findLinks(root), []);
+    await symlink(path.join(root, 'kept'), path.join(root, 'kept/loop'), 'junction');
+    assert.deepEqual(await findLinks(root), [path.join(root, 'kept/loop')]);
+  } finally {
+    await rm(root, { recursive: true, force: true });
+  }
 });

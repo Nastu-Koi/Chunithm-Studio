@@ -60,6 +60,7 @@ Chuni Studio 是 Electron 桌面程序：主进程负责文件、游戏资源与
 - `transport.ts`：音频时钟，负责音乐播放、打击音、节拍器、变速和循环。
 - `ui-settings.ts`：界面设置的读写。应用壳和编辑器的显示与监听偏好都经它存入 localStorage，不进工程，也不经过桥接接口。
 - `browser-bridge.ts`：浏览器开发预览用的 `StudioBridge` 替身。
+- `tokens.css`、`style.css`、`editor.css`：样式表。`tokens.css` 定义全部颜色、控件高度、圆角等设计变量；`style.css` 是应用壳、播放页工具条与对话框的样式，`editor.css` 是编辑器的样式，两者都只经变量取色，并各自 `@import` 一份 `tokens.css`，因此编辑器单独装载（如交互测试）时样式也完整。画布与播放器 HUD 的颜色由绘制代码自己决定。
 
 ## 进程边界
 

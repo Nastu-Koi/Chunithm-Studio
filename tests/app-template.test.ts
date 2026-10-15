@@ -77,3 +77,15 @@ test('the mirror icon reflects across a vertical axis and the flip icon across a
   assert.ok(ICON.mirror.includes('d="M12 2v2"'), 'mirror axis is vertical');
   assert.ok(ICON.flip.includes('d="M4 12H2"'), 'flip axis is horizontal');
 });
+
+test('the header groups every action on the left so the right end stays free for the window controls', () => {
+  const header = appTemplate.slice(0, appTemplate.indexOf('</header>'));
+  const order = ['class="file-actions"', 'data-action="redo"', 'class="header-right"', 'data-action="export"'].map(
+    text => header.indexOf(text),
+  );
+  assert.ok(
+    order.every((index, i) => index >= 0 && (i === 0 || index > order[i - 1])),
+    `header order: ${order}`,
+  );
+  assert.ok(!header.includes('margin-left'), 'nothing is pushed to the right edge inline');
+});

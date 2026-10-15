@@ -1,0 +1,28 @@
+/* Design tokens shared by style.css (app shell and dialogs) and editor.css (the editor is also used on its own). */
+:root {
+  /* Surfaces, darkest to lightest: content backing, app chrome, panels, controls, hover. */
+  --bg-0: #161616;
+  --bg-1: #1e1e1e;
+  --bg-2: #252525;
+  --bg-3: #2d2d2d;
+  --bg-4: #383838;
+  /* Lines: separators, control borders, emphasised borders. */
+  --line-1: #2e2e2e;
+  --line-2: #3d3d3d;
+  --line-3: #5a5a5a;
+  /* Text: primary, secondary, tertiary. */
+  --text-1: #e4e4e4;
+  --text-2: #a6a6a6;
+  --text-3: #767676;
+  /* One restrained accent for selection, focus and progress; warning, error and ok stay muted. */
+  --accent: #8fb5dc;
+  --accent-soft: #8fb5dc24;
+  --warn: #d6b472;
+  --danger: #e08c8c;
+  --ok: #93c4a4;
+  --radius: 3px;
+  --ctl: 24px;
+  --ctl-lg: 30px;
+  --mono: 'Cascadia Code', Consolas, 'JetBrains Mono', monospace;
+  --shadow: 0 12px 40px #0009;
+}
