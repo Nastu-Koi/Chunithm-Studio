@@ -1,6 +1,7 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import { chromium } from '@playwright/test';
+import { canvasGeometry } from './editor-canvas';
 
 // Stacked notes on the real canvas. Run against Vite: CHUNI_UI_URL=http://127.0.0.1:5173 node --import tsx tests/editor-stack-ui.test.ts
 test(
@@ -34,18 +35,12 @@ test(
       );
       await page.goto(`${process.env.CHUNI_UI_URL}/__editor_stack_test__`);
       await page.waitForFunction(() => Boolean((window as any).testEditor));
-      const canvas = page.locator('.editor-viewport canvas'),
-        box = await canvas.boundingBox();
-      assert.ok(box);
-      const left = Number(await canvas.getAttribute('data-track-left')),
-        laneWidth = Number(await canvas.getAttribute('data-lane-width'));
-      const zoom = Number(await page.locator('[data-option="zoom"]').inputValue());
-      const point = (tick: number, lane: number) => ({
-        x: box.x + left + lane * laneWidth,
-        y: box.y + box.height - 30 - tick * zoom,
-      });
+      const point = async (tick: number, lane: number) => {
+        const { box, trackLeft, laneWidth, zoom } = await canvasGeometry(page);
+        return { x: box.x + trackLeft + lane * laneWidth, y: box.y + box.height - 30 - tick * zoom };
+      };
       const click = async (tick: number, lane: number) => {
-        const p = point(tick, lane);
+        const p = await point(tick, lane);
         await page.mouse.click(p.x, p.y);
       };
       const drag = async (from: { x: number; y: number }, to: { x: number; y: number }) => {
@@ -102,7 +97,7 @@ test(
         editor.setChart(state.chart);
       });
       await click(96, 4);
-      await drag(point(96, 4), point(96, 9));
+      await drag(await point(96, 4), await point(96, 9));
       assert.deepEqual(await notes(), [
         ['SLIDE', 96, 2, false],
         ['TAP', 96, 7, false],
@@ -124,7 +119,7 @@ test(
         };
         editor.setChart(state.chart);
       }, placed.width);
-      await drag(point(48, placed.lane + placed.width / 2), point(96, 2 + placed.width / 2));
+      await drag(await point(48, placed.lane + placed.width / 2), await point(96, 2 + placed.width / 2));
       assert.deepEqual(await notes(), [
         ['SLIDE', 96, 2, true],
         ['TAP', 96, 7, false],

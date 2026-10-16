@@ -2,6 +2,13 @@
 
 本记录区分程序测试、资源结构验证和原游戏实机验收。资源目录为用户提供的 `D:\chunithm`，检查期间不写入原游戏文件。
 
+## 0.1.24 之后（编辑器交互测试与 CI 字体）
+
+- 现象：CI 上 `npm test` 2 项失败（282 通过、35 跳过），本机 0 失败。35 项跳过只是 CI 没有 `/mnt/d/chunithm`。
+- 原因：CI 的 `npx playwright install --with-deps chromium` 会安装 `fonts-wqy-zenhei`、`fonts-ipafont-gothic`，无头 Chromium 用 CJK 字体渲染中文，本机 WSL 没有 CJK 字体。在 1280 宽度下选中 AIR 后工具行多出左右方向按钮，CI 字体下放不下而换行，画布下移 26 px，高度要到编辑器的 ResizeObserver 在下一帧执行后才更新。编辑器交互测试原先在启动时缓存画布几何，点击因此偏离预期位置。界面改版前的提交在 CI 字体下同样失败。
+- 改动：新增 `tests/editor-canvas.ts`，等两帧后读取当前画布框、轨道左沿、轨道宽与缩放；`editor-ui`、`editor-margrete-ui`、`air-binding-ui`、`chain-editor-ui`、`editor-stack-ui` 每次换算点击坐标都重新读取。
+- 本机模拟 CI：用 `apt-get download` 取上述字体包，`dpkg-deb -x` 解到临时目录，写一份包含 `/etc/fonts/fonts.conf` 与该目录的 `fonts.conf`，测试进程加 `FONTCONFIG_FILE=<该文件>`，不改动本机字体；再用 `unshare -rm sh -c 'mount -t tmpfs none /mnt/d && …'` 隐藏游戏资源。改动后本机 317 通过、2 跳过；模拟 CI 284 通过、35 跳过，均 0 失败；7 项交互测试在 CI 字体下连跑 3 次全部通过。
+
 ## 0.1.23 之后（代码整理与重构）
 
 - 程序测试：`npm run format:check`、`npm run check`、`npx vite build` 通过；`npm test` 316 项，307 通过、9 项按环境跳过、失败 0；设置 `CHUNI_UI_URL` 后 314 通过、2 项跳过（需要 `CHUNI_GAME_ROOT`）。CI 改为启动 Vite 运行全部 7 项编辑器交互测试（含改写自旧脚本的 `air-binding-ui.test.ts`、`chain-editor-ui.test.ts`）。

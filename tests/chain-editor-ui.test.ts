@@ -1,6 +1,7 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import { chromium } from '@playwright/test';
+import { canvasGeometry } from './editor-canvas';
 
 // Long-note chains on the real canvas. Run against Vite: CHUNI_UI_URL=http://127.0.0.1:5173
 test(
@@ -28,15 +29,12 @@ test(
       );
       await page.goto(`${process.env.CHUNI_UI_URL || 'http://127.0.0.1:5173'}/__chain_editor_test__`);
       await page.waitForFunction(() => Boolean((window as any).test));
-      const box = (await page.locator('canvas').boundingBox())!;
-      const trackLeft = Number(await page.locator('canvas').getAttribute('data-track-left')),
-        laneWidth = Number(await page.locator('canvas').getAttribute('data-lane-width'));
-      const point = (tick: number, lane: number) => ({
-        x: box.x + trackLeft + (lane + 0.5) * laneWidth,
-        y: box.y + box.height - 30 - tick * 0.75,
-      });
+      const point = async (tick: number, lane: number) => {
+        const { box, trackLeft, laneWidth, zoom } = await canvasGeometry(page);
+        return { x: box.x + trackLeft + (lane + 0.5) * laneWidth, y: box.y + box.height - 30 - tick * zoom };
+      };
       const click = async (tick: number, lane: number) => {
-        const p = point(tick, lane);
+        const p = await point(tick, lane);
         await page.mouse.click(p.x, p.y);
       };
       await page.evaluate(() => {

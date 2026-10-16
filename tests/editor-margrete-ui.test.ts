@@ -1,6 +1,7 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import { chromium } from '@playwright/test';
+import { canvasGeometry } from './editor-canvas';
 
 // Margrete-style tools and default keys on the real canvas. Run against Vite, with CHUNI_BROWSER when using installed Edge.
 test(
@@ -32,19 +33,14 @@ test(
       );
       await page.goto(`${process.env.CHUNI_UI_URL}/__editor_margrete_test__`);
       await page.waitForFunction(() => Boolean((window as any).testEditor));
-      const canvas = page.locator('.editor-viewport canvas'),
-        box = await canvas.boundingBox();
-      assert.ok(box);
-      const left = Number(await canvas.getAttribute('data-track-left')),
-        laneWidth = Number(await canvas.getAttribute('data-lane-width'));
-      const zoom = Number(await page.locator('[data-option="zoom"]').inputValue());
+      const canvas = page.locator('.editor-viewport canvas');
       // `lane` is a coordinate across the track: 2.5 is the middle of the third lane, 2 its left edge.
-      const point = (tick: number, lane: number) => ({
-        x: box.x + left + lane * laneWidth,
-        y: box.y + box.height - 30 - tick * zoom,
-      });
+      const point = async (tick: number, lane: number) => {
+        const { box, trackLeft, laneWidth, zoom } = await canvasGeometry(page);
+        return { x: box.x + trackLeft + lane * laneWidth, y: box.y + box.height - 30 - tick * zoom };
+      };
       const click = async (tick: number, lane: number) => {
-        const p = point(tick, lane);
+        const p = await point(tick, lane);
         await page.mouse.click(p.x, p.y);
       };
       const drag = async (from: { x: number; y: number }, to: { x: number; y: number }) => {
@@ -99,7 +95,7 @@ test(
       assert.match(String(await status()), /橡皮擦/);
       // The AIR arrow floats above its parent, so it is erased by its own arrow and the TAP stays.
       {
-        const arrow = point(96, 2.5);
+        const arrow = await point(96, 2.5);
         await page.mouse.click(arrow.x, arrow.y - 11);
       }
       assert.deepEqual(
@@ -114,7 +110,7 @@ test(
       await click(48, 6.5);
       await click(144, 10.5);
       await page.keyboard.press('e');
-      await drag(point(24, 1.2), point(168, 12.8));
+      await drag(await point(24, 1.2), await point(168, 12.8));
       assert.deepEqual(await notes(), []);
 
       // Front-back flip and left-right mirror act on the selection.
@@ -144,8 +140,8 @@ test(
       await page.keyboard.press('Control+Shift+a');
       await frame();
       assert.doesNotMatch(String(await status()), /已选/);
-      const edge = point(48, 10);
-      await drag({ x: edge.x + 1, y: edge.y }, { x: point(48, 8).x, y: edge.y });
+      const edge = await point(48, 10);
+      await drag({ x: edge.x + 1, y: edge.y }, { x: (await point(48, 8)).x, y: edge.y });
       assert.deepEqual(
         (await notes()).map(n => [n.lane, n.width]),
         [
@@ -156,7 +152,7 @@ test(
 
       // 5 draws a SLIDE whose joints are relay points; R turns the straight segment into a control-point curve.
       await page.keyboard.press('5');
-      await drag(point(288, 0.5), point(480, 6.5));
+      await drag(await point(288, 0.5), await point(480, 6.5));
       assert.deepEqual(
         (await notes()).filter(n => n.type === 'SLIDE').map(n => [n.tick, n.duration, n.lane, n.endLane, n.visible]),
         [[288, 192, 0, 6, true]],
@@ -199,7 +195,7 @@ test(
       await page.keyboard.press('s');
       const made = await slideIds(),
         joint = made[1],
-        jointAt = point(joint.tick + joint.duration, joint.endLane + 1);
+        jointAt = await point(joint.tick + joint.duration, joint.endLane + 1);
       await page.mouse.click(jointAt.x, jointAt.y);
       assert.deepEqual(await selectedIds(), [joint.id]);
       await page.mouse.click(jointAt.x, jointAt.y, { button: 'right' });
@@ -216,7 +212,7 @@ test(
       );
       // A picked node is edited as a node: its kind, and a position the segments on both sides follow.
       const first = closed[0],
-        nodeAt = point(first.tick + first.duration, first.endLane + 1);
+        nodeAt = await point(first.tick + first.duration, first.endLane + 1);
       await page.mouse.click(nodeAt.x, nodeAt.y);
       assert.equal(await page.locator('[data-property="type"]').count(), 0);
       await page.locator('[data-property="nodeKind"]').selectOption('normal');
@@ -227,7 +223,7 @@ test(
       const moved = await slideIds();
       assert.deepEqual([moved[0].endLane, moved[1].lane, moved.length], [8, 8, closed.length]);
       // The body picks the segment, which has no node kind of its own, and cannot be deleted: only nodes are.
-      const bodyAt = point(moved[1].tick + moved[1].duration / 2, (moved[1].lane + moved[1].endLane) / 2 + 1);
+      const bodyAt = await point(moved[1].tick + moved[1].duration / 2, (moved[1].lane + moved[1].endLane) / 2 + 1);
       await page.mouse.click(bodyAt.x, bodyAt.y);
       assert.deepEqual(await selectedIds(), [moved[1].id]);
       assert.equal(await page.locator('[data-property="nodeKind"]').count(), 0);
@@ -307,7 +303,7 @@ test(
       assert.ok((await ex()).every(value => !value));
       // Insert-node mode: K, then click a long note's body; no selection or cursor is needed, and it stays on until Esc.
       await page.keyboard.press('5');
-      await drag(point(576, 11), point(672, 11));
+      await drag(await point(576, 11), await point(672, 11));
       await page.keyboard.press('k');
       await click(624, 11);
       await click(648, 11);
@@ -326,7 +322,8 @@ test(
           .evaluate(element => element.classList.contains('editor-active')),
         false,
       );
-      await page.mouse.move(point(300, 8).x, point(300, 8).y);
+      const wheelAt = await point(300, 8);
+      await page.mouse.move(wheelAt.x, wheelAt.y);
       await page.keyboard.down('Shift');
       await page.mouse.wheel(0, 100);
       await page.keyboard.up('Shift');
@@ -334,19 +331,23 @@ test(
 
       // HOLD / SLIDE bodies are opaque: the gradient uses the joint texture's colours, and a supplied texture replaces it.
       await page.keyboard.press('6');
-      await drag(point(672, 12.5), point(864, 12.5));
+      await drag(await point(672, 12.5), await point(864, 12.5));
       await page.keyboard.press('s');
-      await page.mouse.move(box.x + 40, box.y + 40);
+      const corner = (await canvasGeometry(page)).box;
+      await page.mouse.move(corner.x + 40, corner.y + 40);
       await frame();
-      const pixel = (tick: number, lane: number): Promise<number[]> =>
-        page.evaluate(
+      const pixel = async (tick: number, lane: number): Promise<number[]> => {
+        const { box } = await canvasGeometry(page),
+          p = await point(tick, lane);
+        return page.evaluate(
           ([x, y]) => {
             const element = document.querySelector<HTMLCanvasElement>('.editor-viewport canvas')!,
               ratio = element.width / element.getBoundingClientRect().width;
             return [...element.getContext('2d')!.getImageData(Math.round(x * ratio), Math.round(y * ratio), 1, 1).data];
           },
-          [point(tick, lane).x - box.x, point(tick, lane).y - box.y],
+          [p.x - box.x, p.y - box.y],
         );
+      };
       assert.equal(await canvas.getAttribute('data-body-textures'), null);
       const hold = await pixel(768, 12.5),
         slide = await pixel(384, 5.6);
@@ -371,8 +372,8 @@ test(
       const curved = async () => (await slideIds()).filter(n => n.tick < 480);
       const whole = await curved(),
         last = whole.at(-1)!,
-        lastAt = point(last.tick + last.duration, last.endLane + 1),
-        headAt = point(whole[0].tick, whole[0].lane + 1);
+        lastAt = await point(last.tick + last.duration, last.endLane + 1),
+        headAt = await point(whole[0].tick, whole[0].lane + 1);
       await page.mouse.click(lastAt.x, lastAt.y, { button: 'right' });
       assert.deepEqual(
         (await curved()).map(n => n.id),

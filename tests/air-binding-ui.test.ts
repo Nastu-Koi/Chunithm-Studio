@@ -1,6 +1,7 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import { chromium } from '@playwright/test';
+import { canvasGeometry } from './editor-canvas';
 
 // AIR binding on the real canvas. Run against Vite: CHUNI_UI_URL=http://127.0.0.1:5173
 test(
@@ -30,16 +31,13 @@ test(
       );
       await page.goto(`${process.env.CHUNI_UI_URL || 'http://127.0.0.1:5173'}/__air_binding_test__`);
       await page.waitForFunction(() => Boolean((window as any).test));
-      const box = (await page.locator('canvas').boundingBox())!;
-      const trackLeft = Number(await page.locator('canvas').getAttribute('data-track-left')),
-        laneWidth = Number(await page.locator('canvas').getAttribute('data-lane-width'));
       // lane may be fractional: 2.5 is the middle of lane 2, 6 the boundary between lanes 5 and 6.
-      const point = (tick: number, lane: number) => ({
-        x: box.x + trackLeft + lane * laneWidth,
-        y: box.y + box.height - 30 - tick * 0.75,
-      });
+      const point = async (tick: number, lane: number) => {
+        const { box, trackLeft, laneWidth, zoom } = await canvasGeometry(page);
+        return { x: box.x + trackLeft + lane * laneWidth, y: box.y + box.height - 30 - tick * zoom };
+      };
       const click = async (tick: number, lane: number, options: Parameters<typeof page.mouse.click>[2] = {}) => {
-        const p = point(tick, lane);
+        const p = await point(tick, lane);
         await page.mouse.click(p.x, p.y, options);
       };
       // An AIR is picked by its arrow, drawn above the ground note it sits on; the note's own row picks the note.
@@ -49,13 +47,14 @@ test(
         width: number,
         options: Parameters<typeof page.mouse.click>[2] = {},
       ) => {
-        const p = point(tick, lane),
+        const p = await point(tick, lane),
+          { laneWidth } = await canvasGeometry(page),
           lift: number = await page.evaluate(span => (window as any).test.airArrowLift(span), width * laneWidth - 2);
         await page.mouse.click(p.x, p.y - lift, options);
       };
       const drag = async (from: [number, number], to: [number, number]) => {
-        const a = point(...from),
-          b = point(...to);
+        const a = await point(...from),
+          b = await point(...to);
         await page.mouse.move(a.x, a.y);
         await page.mouse.down();
         await page.mouse.move((a.x + b.x) / 2, (a.y + b.y) / 2, { steps: 4 });

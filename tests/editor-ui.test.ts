@@ -1,6 +1,7 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import { chromium } from '@playwright/test';
+import { canvasGeometry } from './editor-canvas';
 
 // Run against the real Vite modules: CHUNI_UI_URL=http://127.0.0.1:5173 node --import tsx tests/editor-ui.test.ts
 test(
@@ -43,24 +44,20 @@ test(
         .catch(error => {
           throw new Error(`${error.message}\nBrowser errors: ${errors.join('\n')}`);
         });
-      const canvas = page.locator('.editor-viewport canvas');
-      const box = await canvas.boundingBox();
-      assert.ok(box);
-      const trackLeft = Number(await canvas.getAttribute('data-track-left'));
-      const laneWidth = Number(await canvas.getAttribute('data-lane-width'));
-      const zoom = Number(await page.locator('[data-option="zoom"]').inputValue());
-      const point = (tick: number, lane: number) => ({
-        x: box.x + trackLeft + (lane + 0.5) * laneWidth,
-        y: box.y + box.height - 30 - tick * zoom,
-      });
+      // Fractional lane offsets from the track's left edge, e.g. 6 is the boundary between lanes 5 and 6.
+      const trackPoint = async (tick: number, laneOffset: number) => {
+        const { box, trackLeft, laneWidth, zoom } = await canvasGeometry(page);
+        return { x: box.x + trackLeft + laneOffset * laneWidth, y: box.y + box.height - 30 - tick * zoom };
+      };
+      const point = (tick: number, lane: number) => trackPoint(tick, lane + 0.5);
       const state = () => page.evaluate(() => (window as any).testEditor.state.chart);
       const click = async (tick: number, lane: number) => {
-        const p = point(tick, lane);
+        const p = await point(tick, lane);
         await page.mouse.click(p.x, p.y);
       };
       const drag = async (fromTick: number, fromLane: number, toTick: number, toLane: number) => {
-        const start = point(fromTick, fromLane),
-          end = point(toTick, toLane);
+        const start = await point(fromTick, fromLane),
+          end = await point(toTick, toLane);
         await page.mouse.move(start.x, start.y);
         await page.mouse.down();
         await page.mouse.move(end.x, end.y, { steps: 8 });
@@ -73,14 +70,15 @@ test(
       await drag(96, 2, 144, 4);
       assert.equal((await state()).notes[0].tick, 144);
       assert.equal((await state()).notes[0].lane, 4);
-      const p = point(144, 4);
-      await page.mouse.move(box.x + trackLeft + 6 * laneWidth - 2, p.y);
+      const rightEdge = await trackPoint(144, 6),
+        widened = await trackPoint(144, 8);
+      await page.mouse.move(rightEdge.x - 2, rightEdge.y);
       await page.mouse.down();
-      await page.mouse.move(box.x + trackLeft + 8 * laneWidth, p.y, { steps: 8 });
+      await page.mouse.move(widened.x, widened.y, { steps: 8 });
       await page.mouse.up();
       assert.equal((await state()).notes[0].width, 4);
       await page.keyboard.press('Control+c');
-      await page.mouse.click(box.x + 15, point(240, 0).y);
+      await page.mouse.click((await canvasGeometry(page)).box.x + 15, (await point(240, 0)).y);
       await page.keyboard.press('Control+v');
       assert.equal((await state()).notes.length, 2);
       assert.equal((await state()).notes[1].tick, 240);
@@ -106,8 +104,8 @@ test(
       await page.keyboard.press('Escape');
       slides = (await state()).notes.filter((note: any) => note.type === 'SLIDE');
       assert.equal(slides.length, 3);
-      const boundary = point(168, slides[0].endLane);
-      const destination = point(192, slides[0].endLane + 1);
+      const boundary = await point(168, slides[0].endLane);
+      const destination = await point(192, slides[0].endLane + 1);
       await page.mouse.move(boundary.x, boundary.y);
       await page.mouse.down();
       await page.mouse.move(destination.x, destination.y, { steps: 8 });
@@ -163,7 +161,7 @@ test(
       await page.locator('[data-event="BPM"]').click();
       await page.locator('[data-property="value"]').fill('210');
       await page.locator('[data-property="value"]').press('Tab');
-      await page.mouse.click(box.x + 15, point((384 * 2) / 7, 0).y);
+      await page.mouse.click((await canvasGeometry(page)).box.x + 15, (await point((384 * 2) / 7, 0)).y);
       await page.locator('[data-event="BPM"]').click();
       await page.locator('[data-property="value"]').fill('150');
       await page.locator('[data-property="value"]').press('Tab');
@@ -215,7 +213,7 @@ test(
       const offstagePoint = async (tick: number, lane: number) => {
         const start = Number(await page.locator('[data-option="view-start"]').inputValue());
         const end = Number(await page.locator('[data-option="view-end"]').inputValue());
-        const wideLane = Number(await canvas.evaluate(element => element.dataset.laneWidth));
+        const { box, trackLeft, laneWidth: wideLane, zoom } = await canvasGeometry(page);
         // Lanes outside the stage extend the track; the lane width only shrinks when the canvas runs out of room.
         assert.equal(wideLane, Math.min(15, (box.width - trackLeft - 18) / (end - start)));
         return { x: box.x + trackLeft + (lane - start + 0.5) * wideLane, y: box.y + box.height - 30 - tick * zoom };
