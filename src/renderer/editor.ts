@@ -1253,8 +1253,27 @@ export class ChartEditor {
   private headAt(id: string, kind: DragKind, point: Position): boolean {
     return isChainHeadPick(this.view, this.chart, id, kind, point);
   }
-  /** Delete what was picked: a head node takes its whole long note, any other node goes alone, a chain body takes nothing. */
+  /**
+   * Delete what was picked: a head node takes its whole long note, any other node goes alone, a chain body takes nothing.
+   * The head of an EX HOLD / SLIDE first sheds its EX, as if the ExTAP lying on it were erased; the next erase takes the note.
+   */
   private erase(hit: { id: string; kind: DragKind }, point: Position): void {
+    const note = this.chart.notes.find(item => item.id === hit.id);
+    if (
+      note &&
+      (note.type === 'HOLD' || note.type === 'SLIDE') &&
+      note.attributes.ex &&
+      hit.kind !== 'end' &&
+      hit.kind !== 'endWidth' &&
+      Math.abs(point.y - this.view.y(note.tick)) < 10 &&
+      (note.type === 'HOLD' || editorChain(this.chart, note)[0].id === note.id)
+    ) {
+      this.selection = new Set([note.id]);
+      this.commit(setEditorEx(this.chart, note.id, false), '取消 EX');
+      this.setHint(`已取消 ${LABEL[note.type]} 的 EX；再次删除可移除整条`);
+      this.refreshSelection();
+      return;
+    }
     this.selection = new Set([hit.id]);
     this.pickedJoint = hit.kind === 'end' || hit.kind === 'endWidth' ? hit.id : undefined;
     this.pickedHead = this.headAt(hit.id, hit.kind, point) ? hit.id : undefined;

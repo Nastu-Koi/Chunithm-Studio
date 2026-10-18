@@ -9,7 +9,7 @@ Chuni Studio 是 Electron 桌面程序：主进程负责文件、游戏资源与
 | `src/core` | 两个进程共用 | 谱面与工程的数据模型、C2S 读写、时间轴、量化、校验、判定时间表，以及资源清单的类型定义。纯逻辑，不访问文件、DOM 或 Electron。 |
 | `src/backend` | 主进程 | 工程文件夹读写、曲库扫描、音频转换、OPT 导出、资源副本的装载与提供。 |
 | `src/renderer` | 渲染进程 | 应用壳、俯视编辑器、透视播放器、音频时钟与对话框。 |
-| `src/bridge.ts` | 两个进程共用 | `StudioBridge`：渲染进程能向主进程请求的全部操作，以及跨进程传递的数据形状；`IPC_CHANNELS`：每个操作的 IPC 通道名。 |
+| `src/bridge.ts` | 两个进程共用 | `StudioBridge`：渲染进程能向主进程请求的全部操作（含 `saveImage`：把渲染进程画好的 PNG 字节经保存对话框写入磁盘），以及跨进程传递的数据形状；`IPC_CHANNELS`：每个操作的 IPC 通道名。 |
 | `native` | 独立子进程 | 音频助手 `ChunithmAudio`（基于 VGAudio）与 FFmpeg，由主进程按需启动。 |
 | `scripts` | 开发时 | 构建、打包，以及把游戏资源转换复制到 `assets/game` 的一次性脚本。 |
 
@@ -26,6 +26,7 @@ Chuni Studio 是 Electron 桌面程序：主进程负责文件、游戏资源与
 - `judgement.ts`：判定时间表，供计分、打击音和统计使用。
 - `editing.ts`：与界面无关的谱面编辑操作，编辑页的谱面变换（移动、镜像、翻转、复制粘贴、节点拆分与删除、AIR 绑定、SLIDE 造型、EX、属性面板的字段规则等）都在这里，每个函数返回新的 `Chart`、不修改输入。属性编辑被拒绝时返回原因码，提示文字由编辑器决定，核心层不含界面文字。
 - `xml-metadata.ts`：Music.xml 与 CueFile.xml 的可编辑信息。
+- `chart-image.ts`：俯视图片的版面：小节分列（每列 16 拍、每行若干列）、按 BPM 反比的像素换算、tick 与轨道到图上坐标、跨列时间段的切分。纯几何，不绘制。方法见 [implementation/chart-image.md](implementation/chart-image.md)。
 - `game-assets.ts`、`game-effects.ts`、`game-sounds.ts`、`stage-animation.ts`、`stage-program.ts`：资源副本清单、特效、打击音和舞台数据的类型与解释逻辑。
 
 ### `src/backend`
@@ -51,11 +52,12 @@ Chuni Studio 是 Electron 桌面程序：主进程负责文件、游戏资源与
 - `app-context.ts`：`AppContext`，对话框访问工程、播放器和应用壳操作的唯一入口。
 - `dialogs/`：设置、曲库、最近项目、导出、小节定位、信息类对话框。
 - `editor.ts`：俯视编辑器 `ChartEditor`。持有选区、工具、拖动与交互模式（普通、插入节点、接续、对齐音乐、SLIDE 形状，同一时刻只有一个，经 `setMode` 切换），处理指针、键盘、工具栏与提交；谱面变换调用 `src/core/editing.ts`。它依赖下列模块，这些模块不反向引用它：
-  - `editor-view.ts`：画布版面、缩放与滚动，以及 tick、轨道与像素之间的换算。
+  - `editor-view.ts`：画布版面、缩放与滚动，tick、轨道与像素之间的换算，以及 AIR 高度在原生镜头下的可见度（高度 5 以内完整可见、15 起全程出屏，数值来自播放页投影核对）。
   - `editor-hit.ts`：命中测试，找出指针下的音符、事件、节点与可插入位置。
   - `editor-paint.ts`：整帧绘制。输入是 `ChartEditor` 每帧组装的只读 `PaintScene`。
   - `editor-inspector.ts`：属性面板的标记。
   - `editor-template.ts`：工具栏与画布的页面标记、音符与事件的显示名。
+- `chart-image.ts`：俯视图片的绘制：页头、列与小节线，音符按 `native-notes.ts` 的选型规则用资源副本贴图画出，输出 PNG。
 - `player.ts`：透视播放器。HUD 在 `player-hud.ts`，原生模型绘制在 `game-mesh-renderer.ts`、`native-notes.ts`、`native-air-geometry.ts`、`native-effects.ts` 等文件。
 - `transport.ts`：音频时钟，负责音乐播放、打击音、节拍器、变速和循环。
 - `ui-settings.ts`：界面设置的读写。应用壳和编辑器的显示与监听偏好都经它存入 localStorage，不进工程，也不经过桥接接口。

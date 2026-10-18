@@ -21,8 +21,22 @@ import { getGrid, getNotePlaybackPoints, tickToSeconds } from '../core/timing';
 import { clamp, endLane, endTick, endWidth, formatTick, hasNodeKind, long } from '../core/editing';
 import { getSlideUvSpans, slideUvProgress } from './slide-timing';
 import { noteColor } from './editor-template';
-import { airHeightMaximum, type EditorView, type Position } from './editor-view';
+import {
+  AIR_HIDDEN_HEIGHT,
+  airHeightMaximum,
+  airHeightVisibility,
+  type EditorView,
+  type Position,
+} from './editor-view';
 import type { InsertTarget } from './editor-hit';
+
+/** `#rrggbb` with an alpha in 0..1 as a CSS colour. */
+function colorWithAlpha(color: string, alpha: number): string {
+  const hex = Math.round(Math.max(0, Math.min(1, alpha)) * 255)
+    .toString(16)
+    .padStart(2, '0');
+  return `${color}${hex}`;
+}
 
 export type AudioSamples = { data: Float32Array; sampleRate: number };
 export type Waveform = { peaks: Float32Array; duration: number; offset: number; samples?: AudioSamples };
@@ -394,6 +408,25 @@ export class EditorPainter {
       ctx.lineTo(x + 0.5, bottom);
       ctx.stroke();
     }
+    // The game camera loses an AIR above this height everywhere on the track; beyond it the column is out of view.
+    if (maximum >= AIR_HIDDEN_HEIGHT) {
+      const limit = Math.round(view.airHeightX(AIR_HIDDEN_HEIGHT, maximum)) + 0.5;
+      ctx.fillStyle = 'rgba(200, 80, 80, 0.08)';
+      ctx.fillRect(limit, 0, view.airLeft + view.airWidth - limit, bottom);
+      ctx.strokeStyle = '#8a4a4a';
+      ctx.lineWidth = 1;
+      ctx.setLineDash([4, 3]);
+      ctx.beginPath();
+      ctx.moveTo(limit, 0);
+      ctx.lineTo(limit, bottom);
+      ctx.stroke();
+      ctx.setLineDash([]);
+      ctx.fillStyle = '#b06a6a';
+      ctx.font = '9px "Segoe UI", sans-serif';
+      ctx.textAlign = 'right';
+      ctx.fillText('实机可见上限', limit - 3, 11);
+      ctx.textAlign = 'left';
+    }
     const notes = chart.notes.filter(
       note => HEIGHT_NOTE_TYPES.has(note.type) && endTick(note) >= lo && note.tick <= hi,
     );
@@ -529,8 +562,19 @@ export class EditorPainter {
       airborne = AIR_NOTE_TYPES.has(note.type);
     if (body) {
       if (!long(note)) return;
-      ctx.fillStyle = `${color}35`;
-      ctx.strokeStyle = `${color}88`;
+      // An AIR SLIDE / CRUSH fades with its height as the game camera loses it, but never past the point of being selectable.
+      const fading = HEIGHT_NOTE_TYPES.has(note.type),
+        startShown = fading ? 0.25 + 0.75 * airHeightVisibility(note.height ?? 1) : 1,
+        endShown = fading ? 0.25 + 0.75 * airHeightVisibility(note.endHeight ?? note.height ?? 1) : 1;
+      const shade = (alpha: number): string | CanvasGradient => {
+        if (startShown === 1 && endShown === 1) return colorWithAlpha(color, alpha);
+        const gradient = ctx.createLinearGradient(0, y, 0, finishY);
+        gradient.addColorStop(0, colorWithAlpha(color, alpha * startShown));
+        gradient.addColorStop(1, colorWithAlpha(color, alpha * endShown));
+        return gradient;
+      };
+      ctx.fillStyle = shade(0x35 / 255);
+      ctx.strokeStyle = shade(0x88 / 255);
       ctx.lineWidth = selected ? 2 : 1;
       ctx.beginPath();
       ctx.moveTo(x, y);
@@ -552,7 +596,7 @@ export class EditorPainter {
         const interval = Math.max(1, Number(note.attributes.interval) || 24);
         const minimum = Math.max(1, Math.ceil(8 / (interval * view.zoom)));
         const count = Math.min(5000, Math.floor((note.duration ?? 0) / interval));
-        ctx.strokeStyle = `${color}9a`;
+        ctx.strokeStyle = shade(0x9a / 255);
         ctx.lineWidth = 1;
         const first = Math.max(minimum, Math.floor((view.scroll - note.tick) / interval / minimum) * minimum);
         for (let index = first; index < count; index += minimum) {
@@ -571,7 +615,7 @@ export class EditorPainter {
         // AIR HOLD / AIR SLIDE read as one solid centre line, like Margrete; a CRUSH keeps a dashed guide in its own colour.
         const line = note.type !== 'AIR_CRUSH';
         if (!line) ctx.setLineDash([5, 5]);
-        ctx.strokeStyle = line ? color : `${color}b0`;
+        ctx.strokeStyle = shade(line ? 1 : 0xb0 / 255);
         ctx.lineWidth = line ? 2 : 1;
         ctx.beginPath();
         ctx.moveTo(x + width / 2, y);

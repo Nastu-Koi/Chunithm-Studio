@@ -4,6 +4,7 @@ import { createChart, createNote, type Chart } from '../src/core/model';
 import { parseC2S, serializeC2S } from '../src/core/c2s';
 import { getNotePlaybackPoints } from '../src/core/timing';
 import { setEditorAirHeight } from '../src/core/editing';
+import { AIR_HIDDEN_HEIGHT, airHeightMaximum, airHeightVisibility } from '../src/renderer/editor-view';
 
 function connectedSlides(): Chart {
   const first = { ...createNote('AIR_SLIDE', 96, 2, 3), id: 'first', duration: 96, height: 1, endHeight: 2 };
@@ -78,4 +79,24 @@ test('unsupported notes and invalid AIR height edits leave the chart untouched',
   assert.equal(setEditorAirHeight(chart, 'missing', 'height', 1), chart);
   assert.equal(setEditorAirHeight(chart, 'hold', 'height', 1), chart);
   for (const height of [NaN, Infinity, -1]) assert.equal(setEditorAirHeight(chart, 'first', 'height', height), chart);
+});
+
+test('the editor fades AIR by height the way the game camera loses it: full to 5, gone at 15, never negative', () => {
+  assert.equal(airHeightVisibility(1), 1);
+  assert.equal(airHeightVisibility(5), 1);
+  assert.equal(airHeightVisibility(10), 0.5);
+  assert.equal(airHeightVisibility(15), 0);
+  assert.equal(airHeightVisibility(99), 0);
+  assert.equal(AIR_HIDDEN_HEIGHT, 15);
+});
+
+test('the AIR-height column reaches the visible limit once any AIR rises above the normal plane', () => {
+  const chart = createChart();
+  assert.equal(airHeightMaximum(chart), 5);
+  chart.notes = [{ ...createNote('AIR_SLIDE', 0, 0, 4), duration: 96, height: 5, endHeight: 5 }];
+  assert.equal(airHeightMaximum(chart), 5);
+  chart.notes = [{ ...createNote('AIR_SLIDE', 0, 0, 4), duration: 96, height: 5, endHeight: 6.2 }];
+  assert.equal(airHeightMaximum(chart), 15);
+  chart.notes = [{ ...createNote('AIR_CRUSH', 0, 0, 4), duration: 96, height: 20, endHeight: 20 }];
+  assert.equal(airHeightMaximum(chart), 20);
 });

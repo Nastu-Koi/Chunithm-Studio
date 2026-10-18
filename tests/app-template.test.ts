@@ -35,7 +35,19 @@ test('the loop button sits directly to the right of measure navigation', () => {
   );
   assert.deepEqual(
     [...options.matchAll(/<(?:button|select|input) id="([^"]+)"/g)].map(match => match[1]),
-    ['measure-button', 'loop-button', 'playback-rate', 'sfx', 'sfx-volume', 'metronome', 'metronome-volume', 'volume'],
+    [
+      'measure-button',
+      'loop-button',
+      'playback-rate-down',
+      'playback-rate',
+      'playback-rate-up',
+      'playback-rate-custom',
+      'sfx',
+      'sfx-volume',
+      'metronome',
+      'metronome-volume',
+      'volume',
+    ],
   );
 });
 

@@ -522,6 +522,18 @@ h1 {
 .transport-options select {
   padding-right: 2px;
 }
+.rate-control {
+  gap: 3px;
+}
+.rate-control .rate-step {
+  min-width: 0;
+  padding: 0 6px;
+  line-height: 1;
+}
+.rate-control input[type='number'] {
+  width: 56px;
+  margin-left: 3px;
+}
 .volume-control input {
   width: 56px;
 }

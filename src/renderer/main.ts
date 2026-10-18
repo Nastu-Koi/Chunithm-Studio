@@ -8,7 +8,15 @@ import { buildJudgementTimeline } from '../core/judgement';
 import { ChartEditor } from './editor';
 import { ChartPlayer } from './player';
 import { NOTE_SPEEDS } from './player-scene';
+import type { GameTextures } from '../core/game-assets';
 import { readBoolean, readChoice, readNumber, writeSetting } from './ui-settings';
+import {
+  MAX_PLAYBACK_RATE,
+  MIN_PLAYBACK_RATE,
+  PLAYBACK_RATES,
+  clampPlaybackRate,
+  stepPlaybackRate,
+} from './playback-rate';
 import { Transport } from './transport';
 import { browserBridge } from './browser-bridge';
 import { openXmlSettings } from './xml-settings';
@@ -69,6 +77,7 @@ async function loadGameResources(): Promise<void> {
   }
   try {
     const assets = await bridge.loadGameResources();
+    gameTextures = assets.textures;
     const [visuals, sounds] = await Promise.all([
       player.setGameTextures(assets.textures),
       transport.setGameSounds(assets.sounds, file => bridge.readAudio(file)),
@@ -87,6 +96,7 @@ async function loadGameResources(): Promise<void> {
     status.dataset.sounds = String(sounds.loaded);
     resourceDescription = `已从程序目录载入 ${Object.keys(assets.textures.models).length} 个原始音符模型、${visuals.loaded} 项贴图映射、${sounds.loaded} 类打击音。音符、AIR、CRUSH 与打击效果使用原始模型、材质和动画数据；游玩文字使用复制的游戏字体，顶部 HUD 使用原判定条、默认 Frame 与名牌布局。演示背景为纯黑，分数和 COMBO 按判定时间表计算；技能槽按已判定比例填充，不模拟技能与槽数。`;
   } catch (error) {
+    gameTextures = undefined;
     player.clearGameTextures();
     transport.clearGameSounds();
     editor.setBodyTextures(undefined);
@@ -230,6 +240,7 @@ async function loadAudio(): Promise<void> {
     message(`读取音乐失败：${e instanceof Error ? e.message : e}`, true);
   }
 }
+let gameTextures: GameTextures | undefined;
 let coverGeneration = 0;
 async function loadCover(): Promise<void> {
   const generation = ++coverGeneration;
@@ -266,6 +277,9 @@ function switchView(next: 'edit' | 'player'): void {
   }
 }
 const ctx: AppContext = {
+  get gameTextures() {
+    return gameTextures;
+  },
   bridge,
   transport,
   player,
@@ -408,13 +422,44 @@ $<HTMLInputElement>('#seek').oninput = event => {
 };
 // Monitoring and display preferences belong to this machine, not to the project: each control starts from what was
 // last set and writes its change back. See ui-settings.ts.
-const playbackRate = $<HTMLSelectElement>('#playback-rate');
-playbackRate.value = String(readChoice('playback-rate', [0.25, 0.5, 0.75, 1, 1.25, 1.5, 2], 1));
-transport.setRate(Number(playbackRate.value));
-playbackRate.onchange = () => {
-  transport.setRate(Number(playbackRate.value));
+// Playback rate: a preset from the list, or the custom value typed next to it; − / + step through the presets from
+// whichever is current, so a custom 0.63× goes to 0.75× and back to 0.50×.
+const playbackRate = $<HTMLSelectElement>('#playback-rate'),
+  playbackRateCustom = $<HTMLInputElement>('#playback-rate-custom'),
+  playbackRateUnit = $('#playback-rate-custom-unit');
+let customRate = clampPlaybackRate(readNumber('playback-rate-custom', 1, MIN_PLAYBACK_RATE, MAX_PLAYBACK_RATE));
+const currentRate = () => (playbackRate.value === 'custom' ? customRate : Number(playbackRate.value));
+const applyRate = () => {
+  const custom = playbackRate.value === 'custom';
+  playbackRateCustom.hidden = playbackRateUnit.hidden = !custom;
+  if (custom) playbackRateCustom.value = customRate.toFixed(2);
+  transport.setRate(currentRate());
   writeSetting('playback-rate', playbackRate.value);
+  writeSetting('playback-rate-custom', String(customRate));
 };
+playbackRate.value = String(readChoice('playback-rate', [...PLAYBACK_RATES, 'custom'], 1));
+applyRate();
+playbackRate.onchange = applyRate;
+// Typing takes effect at once while the value is in range; leaving the field clamps and rewrites it.
+playbackRateCustom.oninput = () => {
+  const typed = Number(playbackRateCustom.value);
+  if (!Number.isFinite(typed) || typed < MIN_PLAYBACK_RATE || typed > MAX_PLAYBACK_RATE) return;
+  customRate = clampPlaybackRate(typed);
+  transport.setRate(customRate);
+  writeSetting('playback-rate-custom', String(customRate));
+};
+playbackRateCustom.onchange = () => {
+  customRate = clampPlaybackRate(Number(playbackRateCustom.value), customRate);
+  applyRate();
+};
+const stepRate = (direction: 1 | -1) => {
+  const next = stepPlaybackRate(currentRate(), direction);
+  if (next === currentRate()) return;
+  playbackRate.value = String(next);
+  applyRate();
+};
+$<HTMLButtonElement>('#playback-rate-down').onclick = () => stepRate(-1);
+$<HTMLButtonElement>('#playback-rate-up').onclick = () => stepRate(1);
 const musicVolume = $<HTMLInputElement>('#volume');
 musicVolume.value = String(readNumber('volume', 0.8, 0, 1));
 transport.setVolume(Number(musicVolume.value));

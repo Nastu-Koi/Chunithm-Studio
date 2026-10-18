@@ -58,6 +58,7 @@ test(
         endLane: number;
         direction?: string;
         visible?: boolean;
+        ex: boolean;
       };
       const notes = (): Promise<Row[]> =>
         page.evaluate(() =>
@@ -70,6 +71,7 @@ test(
             endLane: n.endLane,
             direction: n.attributes.direction,
             visible: n.attributes.visible,
+            ex: Boolean(n.attributes.ex),
           })),
         );
       const status = () => page.locator('.editor-status').textContent();
@@ -186,11 +188,20 @@ test(
       // Clicking a joint picks the segment that ends there, so the joint itself is edited; a right click removes it and the path closes up.
       const selectedIds = (): Promise<string[]> =>
         page.evaluate(() => [...(window as any).testEditor.editor.selection]);
-      const slideIds = (): Promise<{ id: string; tick: number; duration: number; lane: number; endLane: number }[]> =>
+      const slideIds = (): Promise<
+        { id: string; tick: number; duration: number; lane: number; endLane: number; ex: boolean }[]
+      > =>
         page.evaluate(() =>
           (window as any).testEditor.state.chart.notes
             .filter((n: any) => n.type === 'SLIDE')
-            .map((n: any) => ({ id: n.id, tick: n.tick, duration: n.duration, lane: n.lane, endLane: n.endLane })),
+            .map((n: any) => ({
+              id: n.id,
+              tick: n.tick,
+              duration: n.duration,
+              lane: n.lane,
+              endLane: n.endLane,
+              ex: Boolean(n.attributes.ex),
+            })),
         );
       await page.keyboard.press('s');
       const made = await slideIds(),
@@ -379,8 +390,32 @@ test(
         (await curved()).map(n => n.id),
         whole.slice(0, -1).map(n => n.id),
       );
+      // An EX head is erased in two steps: the first right click only drops the EX, the second takes the long note.
+      await page.keyboard.press('2');
+      await page.mouse.click(headAt.x, headAt.y);
+      assert.ok((await curved()).length > 0 && (await curved()).every(n => n.ex));
+      await page.mouse.click(headAt.x, headAt.y, { button: 'right' });
+      assert.deepEqual(
+        (await curved()).map(n => [n.id, n.ex]),
+        whole.slice(0, -1).map(n => [n.id, false]),
+      );
       await page.mouse.click(headAt.x, headAt.y, { button: 'right' });
       assert.deepEqual(await curved(), []);
+      // The same for a HOLD, whose head is not a chain node.
+      const holdHead = await point(672, 12.5);
+      const holds = async () => (await notes()).filter(n => n.type === 'HOLD');
+      await page.mouse.click(holdHead.x, holdHead.y);
+      assert.deepEqual(
+        (await holds()).map(n => n.ex),
+        [true],
+      );
+      await page.mouse.click(holdHead.x, holdHead.y, { button: 'right' });
+      assert.deepEqual(
+        (await holds()).map(n => n.ex),
+        [false],
+      );
+      await page.mouse.click(holdHead.x, holdHead.y, { button: 'right' });
+      assert.deepEqual(await holds(), []);
       assert.deepEqual(errors, []);
     } finally {
       await browser.close();

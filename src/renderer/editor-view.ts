@@ -71,10 +71,25 @@ export class EditorView {
   }
 }
 
-/** Full scale of the AIR-height column: at least the normal air plane (5), more when the chart goes higher. */
+/**
+ * What the game camera makes of AIR height: 5 is the normal air plane, and from there up an AIR climbs toward the top
+ * of the screen; at 15 it is above the frame along the whole track (player projection check, issue 036).
+ */
+export const AIR_VISIBLE_HEIGHT = 5;
+export const AIR_HIDDEN_HEIGHT = 15;
+/** How much of an AIR at this height the game still shows: 1 up to the normal plane, falling to 0 at the hidden height. */
+export function airHeightVisibility(height: number): number {
+  const fraction = (AIR_HIDDEN_HEIGHT - height) / (AIR_HIDDEN_HEIGHT - AIR_VISIBLE_HEIGHT);
+  return Math.max(0, Math.min(1, fraction));
+}
+/**
+ * Full scale of the AIR-height column: the normal air plane (5) alone, the hidden height (15) as soon as anything rises
+ * above the plane so the visible-limit line is in view, and more when the chart goes higher still.
+ */
 export function airHeightMaximum(chart: Chart): number {
-  return Math.max(
-    5,
-    Math.ceil(chart.notes.reduce((maximum, note) => Math.max(maximum, note.height ?? 0, note.endHeight ?? 0), 0)),
+  const highest = Math.ceil(
+    chart.notes.reduce((maximum, note) => Math.max(maximum, note.height ?? 0, note.endHeight ?? 0), 0),
   );
+  if (highest <= AIR_VISIBLE_HEIGHT) return AIR_VISIBLE_HEIGHT;
+  return Math.max(AIR_HIDDEN_HEIGHT, highest);
 }

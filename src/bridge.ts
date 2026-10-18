@@ -47,6 +47,8 @@ export interface StudioBridge {
   importC2s(): Promise<LoadedProject | null>;
   saveProject(project: Project, path: string | null, saveAs?: boolean): Promise<LoadedProject | null>;
   exportC2s(project: Project, allowQuantization?: boolean): Promise<string | null>;
+  /** Ask where to save a PNG the renderer drew (the top-down chart image) and write it; null when cancelled. */
+  saveImage(defaultName: string, png: Uint8Array): Promise<string | null>;
   pickAudio(): Promise<string | null>;
   pickCover(): Promise<string | null>;
   readAudio(path: string): Promise<Uint8Array>;
@@ -72,6 +74,7 @@ export const IPC_CHANNELS = {
   importC2s: 'chart:import',
   saveProject: 'project:save',
   exportC2s: 'chart:export',
+  saveImage: 'image:save',
   pickAudio: 'audio:pick',
   pickCover: 'cover:pick',
   readAudio: 'audio:read',

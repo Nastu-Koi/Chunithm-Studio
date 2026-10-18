@@ -1,3 +1,4 @@
+import type { GameTextures } from '../core/game-assets';
 import type { Project } from '../core/model';
 import type { StudioBridge, LibraryEntry, LoadedProject } from '../bridge';
 import type { Transport } from './transport';
@@ -16,6 +17,8 @@ export interface AppContext {
   library: LibraryEntry[];
   readonly coverUrl: string;
   readonly resources: { description: string; warnings: string[] };
+  /** The loaded resource copy, for drawing with the game's textures outside the player; undefined until it loads. */
+  readonly gameTextures: GameTextures | undefined;
   commit(next: Project, label?: string): void;
   showModal(title: string, content: string): void;
   message(text: string, error?: boolean): void;

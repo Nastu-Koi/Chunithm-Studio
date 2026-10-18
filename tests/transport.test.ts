@@ -616,7 +616,7 @@ test('AIR-CRUSH boundary sounds occur once, belong to the next shape and interva
   assert.equal(new Set(hits.map(hit => hit.time)).size, 3);
 });
 
-for (const rate of [0.25, 0.5, 0.75, 1, 2]) {
+for (const rate of [0.1, 0.25, 0.5, 0.75, 1, 2]) {
   test(`${rate}x advances chart time by the audio clock and sets the same music playback rate`, async () => {
     const fake = fakeAudio(),
       transport = new Transport();
@@ -664,7 +664,7 @@ test('changing rate during playback preserves position and replaces one source a
     fake.resumes[0].resolve();
     await playing;
     fake.context.currentTime = 3;
-    for (const rate of [0.25, 0.5, 0.75, 1, 2]) {
+    for (const rate of [0.1, 0.25, 0.5, 0.75, 1, 2]) {
       const position = transport.seconds,
         previous = fake.sources.at(-1)!;
       transport.setRate(rate);

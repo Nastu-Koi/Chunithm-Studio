@@ -170,6 +170,16 @@ function attachHandlers() {
     await writeFile(r.filePath, text, 'utf8');
     return r.filePath;
   });
+  handle('saveImage', async (defaultName, png) => {
+    const r = await dialog.showSaveDialog(win, {
+      title: '导出俯视图片',
+      defaultPath: defaultName.replace(/[\\/:*?"<>|]+/g, '_'),
+      filters: [{ name: 'PNG 图片', extensions: ['png'] }],
+    });
+    if (r.canceled || !r.filePath) return null;
+    await writeFile(r.filePath, Buffer.from(png.buffer, png.byteOffset, png.byteLength));
+    return r.filePath;
+  });
   handle('pickAudio', async () => {
     const file = await selectFile('选择音乐', ['wav', 'mp3', 'ogg', 'flac', 'm4a', 'aac']);
     allowRead(file ?? undefined);

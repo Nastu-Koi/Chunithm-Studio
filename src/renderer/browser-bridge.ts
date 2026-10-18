@@ -16,8 +16,8 @@ function pick(accept: string): Promise<File | null> {
     input.click();
   });
 }
-function download(data: string, name: string): void {
-  const url = URL.createObjectURL(new Blob([data], { type: 'application/octet-stream' }));
+function download(data: string | Uint8Array, name: string): void {
+  const url = URL.createObjectURL(new Blob([data as BlobPart], { type: 'application/octet-stream' }));
   const a = document.createElement('a');
   a.href = url;
   a.download = name;
@@ -68,6 +68,10 @@ export const browserBridge: StudioBridge = {
       filename,
     );
     return filename;
+  },
+  async saveImage(defaultName, png) {
+    download(png, defaultName);
+    return defaultName;
   },
   pickAudio: () => asset('audio/*'),
   pickCover: () => asset('image/*'),
