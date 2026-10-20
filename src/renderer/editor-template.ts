@@ -1,5 +1,6 @@
 import { NOTE_TYPES, type EventType, type Note, type NoteType } from '../core/model';
 import { ICON } from './icons';
+import { LANE_DIVISIONS } from './editor-view';
 
 export const LABEL: Record<NoteType, string> = {
   TAP: 'TAP',
@@ -101,6 +102,7 @@ export function editorTemplate(options: { zoom: number }): string {
   return `<div class="editor-toolbar" role="toolbar" aria-label="制谱工具">
       <div class="editor-options"><span class="editor-command-group"><button class="editor-tool editor-active" data-tool="select" title="选择 / 框选 (S)">${ICON.select} 选择</button><button class="editor-tool" data-tool="erase" title="橡皮擦：点击删除，拖动框选后删除 (E)">${ICON.erase} 橡皮</button><button data-action="copy" title="复制 (Ctrl+C)" aria-label="复制">${ICON.copy}</button><button data-action="paste" title="粘贴到光标 (Ctrl+V)" aria-label="粘贴">${ICON.paste}</button></span><label class="editor-quantize">音符间隔 1/<input data-option="snap" type="number" min="0" max="4096" step="1" value="16" list="editor-snap-divisions" aria-label="音符间隔分母" title="任意等分：例如 7 或 11；0 为自由"></label><datalist id="editor-snap-divisions">${[0, 4, 7, 8, 11, 12, 16, 24, 32, 48, 64, 96, 192, 384].map(value => `<option value="${value}">`).join('')}</datalist>
       <label>音符宽度 <input data-option="width" type="number" min="1" max="16" value="2" aria-label="新音符宽度"></label>
+      <label title="每隔几条轨道画一条轨道线；只改变显示">横向分割 <select data-option="lane-division" aria-label="横向分割：每隔几条轨道画一条轨道线">${LANE_DIVISIONS.map(value => `<option value="${value}">${value}</option>`).join('')}</select></label>
       <label class="editor-zoom">缩放 <input data-option="zoom" type="range" min="0.2" max="5" step="0.05" value="${options.zoom}" aria-label="时间轴缩放"></label>
       <span class="editor-toolbar-divider"></span>
       <button data-action="mirror" title="左右镜像选中音符 (H)">${ICON.mirror} 镜像</button><button data-action="flip" title="前后翻转选中音符 (V)">${ICON.flip} 翻转</button><span class="editor-toolbar-divider"></span><button data-action="align" title="对齐音乐：先把光标放在目标小节线上，再点击波形上对应的起音；Esc 退出">${ICON.align} 对齐音乐</button><span class="editor-align-controls" hidden><button data-action="nudge" data-ms="-10" title="音乐提前 10 毫秒">−10</button><button data-action="nudge" data-ms="-1" title="音乐提前 1 毫秒">−1</button><output data-align-offset title="音乐时间偏移，正数表示延迟音乐">0.0 ms</output><button data-action="nudge" data-ms="1" title="音乐延后 1 毫秒">+1</button><button data-action="nudge" data-ms="10" title="音乐延后 10 毫秒">+10</button></span>

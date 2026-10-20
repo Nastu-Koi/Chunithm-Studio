@@ -12,7 +12,7 @@ import {
   type ChartImageLayout,
   type ChartImageOptions,
 } from '../core/chart-image';
-import { getNativeHeadModel } from './native-notes';
+import { getNativeBodyDrawOrder, getNativeDrawOrder, getNativeHeadModel } from './native-notes';
 import { getNativeAirCrushLineV, getNativeAirSlideTextures } from './native-air-geometry';
 
 /**
@@ -55,6 +55,99 @@ const BRIGHT_DIVISION = 12;
 const BODY_DIM = 0.4;
 
 type ImageMap = Map<string, HTMLImageElement>;
+
+/** Something the image draws over the bodies: a ground head or end node, an AIR arrow, an AIR action ring or a CRUSH rung. */
+export interface ChartImageMark {
+  note: Note;
+  kind: 'head' | 'end' | 'air' | 'ring' | 'rung';
+  tick: number;
+  lane: number;
+  width: number;
+  /** End node model; for a CRUSH rung, the wider top model of the first one. */
+  endpoint: boolean;
+}
+/**
+ * Long notes whose bodies the image draws, in the game's layer order (HOLD under SLIDE, the AIR strips above them,
+ * AIR HOLD last); equal ones go by time. Every body stays under the marks, unlike the game, so ground notes stay readable.
+ */
+export function chartImageBodies(chart: Chart): Note[] {
+  return [...chart.notes]
+    .filter(note => ['HOLD', 'SLIDE', 'AIR_HOLD', 'AIR_SLIDE', 'AIR_CRUSH'].includes(note.type))
+    .sort((a, b) => getNativeBodyDrawOrder(a) - getNativeBodyDrawOrder(b) || a.tick - b.tick);
+}
+/** A segment that starts where another of its kind ends continues that chain: no head of its own. */
+function continued(chart: Chart, note: Note): boolean {
+  return chart.notes.some(
+    other =>
+      other !== note &&
+      other.type === note.type &&
+      Math.abs(endTick(other) - note.tick) < 1e-6 &&
+      endLane(other) === note.lane &&
+      endWidth(other) === note.width,
+  );
+}
+/**
+ * Every mark in the game's draw order (`getNativeDrawOrder`), so notes on the same spot overlap as in the game: an EX
+ * SLIDE head over a TAP, a TAP over a SLIDE head or end node, the AIR family above them. Equal ones go by time.
+ */
+export function chartImageMarks(chart: Chart): ChartImageMark[] {
+  const marks: (ChartImageMark & { order: number })[] = [];
+  const add = (note: Note, kind: ChartImageMark['kind'], tick: number, lane: number, width: number, endpoint = false) =>
+    marks.push({
+      note,
+      kind,
+      tick,
+      lane,
+      width,
+      endpoint,
+      order:
+        kind === 'air'
+          ? getNativeDrawOrder({ ...note, type: 'AIR' }, width)
+          : getNativeDrawOrder(note, width, endpoint || kind === 'ring'),
+    });
+  for (const note of [...chart.notes].sort((a, b) => a.tick - b.tick)) {
+    const node = note.duration && (!hasNodeKind(note) || note.attributes.visible !== false);
+    switch (note.type) {
+      case 'TAP':
+      case 'EXTAP':
+      case 'FLICK':
+      case 'DAMAGE':
+        add(note, 'head', note.tick, note.lane, note.width);
+        break;
+      case 'HOLD':
+        add(note, 'head', note.tick, note.lane, note.width);
+        if (note.duration) add(note, 'end', endTick(note), note.lane, note.width, true);
+        break;
+      case 'SLIDE':
+        if (!continued(chart, note)) add(note, 'head', note.tick, note.lane, note.width);
+        if (node) add(note, 'end', endTick(note), endLane(note), endWidth(note), true);
+        break;
+      case 'AIR':
+        add(note, 'air', note.tick, note.lane, note.width);
+        break;
+      case 'AIR_HOLD':
+      case 'AIR_SLIDE':
+        if (!continued(chart, note)) add(note, 'air', note.tick, note.lane, note.width);
+        if (node) add(note, 'ring', endTick(note), endLane(note), endWidth(note));
+        break;
+      case 'AIR_CRUSH': {
+        const interval = Number(note.attributes.interval ?? 0),
+          duration = note.duration ?? 0;
+        if (!(interval > 0) || !duration) break;
+        for (
+          let tick = note.tick, count = 0;
+          tick <= note.tick + duration + 1e-9 && count < 5000;
+          tick += interval, count++
+        ) {
+          const { lane, width } = laneAt(note, (tick - note.tick) / duration);
+          add(note, 'rung', tick, lane, width, count === 0);
+        }
+        break;
+      }
+    }
+  }
+  return marks.sort((a, b) => a.order - b.order).map(({ order: _order, ...mark }) => mark);
+}
 
 function laneAt(note: Note, fraction: number): { lane: number; width: number } {
   return {
@@ -228,47 +321,15 @@ export class ChartImagePainter {
     }
   }
   notes(): void {
-    const notes = [...this.chart.notes].sort((a, b) => a.tick - b.tick);
-    // Bodies first, then heads, ends and nodes, then the AIR family on top, as the game layers them.
-    for (const note of notes) if (note.type === 'HOLD' || note.type === 'SLIDE') this.groundBody(note);
-    for (const note of notes) if (note.type === 'AIR_HOLD' || note.type === 'AIR_SLIDE') this.airBody(note);
-    for (const note of notes) if (note.type === 'AIR_CRUSH') this.crush(note);
-    for (const note of notes)
-      switch (note.type) {
-        case 'TAP':
-        case 'EXTAP':
-        case 'FLICK':
-        case 'DAMAGE':
-          this.head(note, note.tick, note.lane, note.width, false);
-          break;
-        case 'HOLD':
-          this.head(note, note.tick, note.lane, note.width, false);
-          if (note.duration) this.head(note, endTick(note), note.lane, note.width, true);
-          break;
-        case 'SLIDE':
-          if (!this.continued(note)) this.head(note, note.tick, note.lane, note.width, false);
-          if (note.duration && (!hasNodeKind(note) || note.attributes.visible !== false))
-            this.head(note, endTick(note), endLane(note), endWidth(note), true);
-          break;
-      }
-    for (const note of notes) {
-      if (note.type === 'AIR') this.air(note, note.tick, note.lane, note.width);
-      if (note.type === 'AIR_HOLD' || note.type === 'AIR_SLIDE') {
-        if (!this.continued(note)) this.air(note, note.tick, note.lane, note.width);
-        if (note.duration && (!hasNodeKind(note) || note.attributes.visible !== false)) this.ring(note);
-      }
-    }
-  }
-  /** A segment that starts where another of its kind ends continues that chain: no head of its own. */
-  private continued(note: Note): boolean {
-    return this.chart.notes.some(
-      other =>
-        other !== note &&
-        other.type === note.type &&
-        Math.abs(endTick(other) - note.tick) < 1e-6 &&
-        endLane(other) === note.lane &&
-        endWidth(other) === note.width,
-    );
+    // Bodies first, then everything on them, both in the game's layer order.
+    for (const note of chartImageBodies(this.chart))
+      if (note.type === 'HOLD' || note.type === 'SLIDE') this.groundBody(note);
+      else if (note.type === 'AIR_CRUSH') this.crush(note);
+      else this.airBody(note);
+    for (const mark of chartImageMarks(this.chart))
+      if (mark.kind === 'air') this.air(mark.note, mark.tick, mark.lane, mark.width);
+      else if (mark.kind === 'ring') this.ring(mark.note);
+      else this.head(mark.note, mark.tick, mark.lane, mark.width, mark.endpoint);
   }
   private barHeight(x0: number, x1: number): number {
     return Math.max(MIN_BAR, Math.min(MAX_BAR, (x1 - x0) * NOTE_DEPTH));
@@ -411,7 +472,7 @@ export class ChartImagePainter {
   }
   /**
    * AIR CRUSH: the ladder line along the centre in the colour row the game picks from the line atlas (NON draws no
-   * line), and a rung at each judgement interval, the first one the wider top model.
+   * line). Its rungs, one at each judgement interval, are marks (`chartImageMarks`).
    */
   private crush(note: Note): void {
     const line = this.texture('AirLadderLine'),
@@ -437,17 +498,6 @@ export class ChartImagePainter {
           piece.alpha,
         );
       }
-    }
-    const interval = Number(note.attributes.interval ?? 0),
-      duration = note.duration;
-    if (!(interval > 0)) return;
-    for (
-      let tick = note.tick, count = 0;
-      tick <= note.tick + duration + 1e-9 && count < 5000;
-      tick += interval, count++
-    ) {
-      const { lane, width } = laneAt(note, (tick - note.tick) / duration);
-      this.head(note, tick, lane, width, count === 0);
     }
   }
 }

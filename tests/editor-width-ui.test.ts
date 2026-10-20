@@ -134,6 +134,34 @@ test(
       await page.locator('[data-tool="TAP"]').click();
       await click(96, 14);
       assert.equal((await state()).notes.at(-1).lane, 14);
+      // 横向分割: a line every 1 (the default), 2, 4, 8 or 16 lanes; the choice is kept on this machine.
+      const division = page.locator('[data-option="lane-division"]');
+      assert.equal(await division.inputValue(), '1');
+      assert.deepEqual(
+        await division.locator('option').evaluateAll(options => options.map(o => (o as HTMLOptionElement).value)),
+        ['1', '2', '4', '8', '16'],
+      );
+      await page.mouse.move(0, 0);
+      // The canvas pixel `offset` px right of a lane's left boundary, on a row between beat lines.
+      const shade = async (lane: number, offset: number) => {
+        await page.evaluate(() => new Promise(resolve => requestAnimationFrame(() => requestAnimationFrame(resolve))));
+        const l = await layout(),
+          y = (await point(36, 0)).y - (await canvas.boundingBox())!.y;
+        return canvas.evaluate(
+          (element: HTMLCanvasElement, [x, y]) => {
+            const ratio = element.width / element.getBoundingClientRect().width;
+            return [...element.getContext('2d')!.getImageData(Math.floor(x * ratio), Math.floor(y * ratio), 1, 1).data];
+          },
+          [l.left + lane * l.laneWidth + offset, y],
+        );
+      };
+      assert.notDeepEqual(await shade(1, 0.5), await shade(1, 5), 'one line per lane by default');
+      await division.selectOption('4');
+      assert.deepEqual(await shade(1, 0.5), await shade(1, 5), 'no line inside a group of four lanes');
+      assert.notDeepEqual(await shade(4, 0.5), await shade(4, 5));
+      await page.reload();
+      await page.waitForFunction(() => Boolean((window as any).testEditor));
+      assert.equal(await page.locator('[data-option="lane-division"]').inputValue(), '4');
       assert.deepEqual(errors, []);
       if (process.env.CHUNI_EDITOR_WIDTH_SCREENSHOT)
         await page.screenshot({ path: process.env.CHUNI_EDITOR_WIDTH_SCREENSHOT });

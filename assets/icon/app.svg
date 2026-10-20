@@ -1,0 +1,9 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 256 256">
+  <!-- Chuni Studio icon, 48 px and up. The 16-lane field in perspective, a ground note, and the AIR arrow above it. -->
+  <rect x="8" y="8" width="240" height="240" rx="52" fill="#1e1e1e"/>
+  <rect x="9.5" y="9.5" width="237" height="237" rx="50.5" fill="none" stroke="#3d3d3d" stroke-width="3"/>
+  <polygon points="34,200 222,200 166,120 90,120" fill="#e4e4e4" stroke="#e4e4e4" stroke-width="10" stroke-linejoin="round"/>
+  <path d="M77.5,210 L112.5,110 M128,210 L128,110 M178.5,210 L143.5,110" stroke="#1e1e1e" stroke-width="5"/>
+  <polygon points="90.8,172 165.2,172 158.9,154 97.1,154" fill="#8fb5dc" stroke="#1e1e1e" stroke-width="6" stroke-linejoin="round" paint-order="stroke"/>
+  <path d="M94,94 L128,60 L162,94" fill="none" stroke="#8fb5dc" stroke-width="18" stroke-linecap="round" stroke-linejoin="round"/>
+</svg>

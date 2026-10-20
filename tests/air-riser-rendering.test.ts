@@ -44,8 +44,24 @@ function render(type: 'AHD' | 'ASD', tick: number) {
       return true;
     },
     nativeHead: () => true,
-    ribbon: (note: any, segment: any, _points: any, _color: any, _extent: any, _tick: number, headRiser: boolean) => {
-      if (note.type === 'AIR_SLIDE' && headRiser && segment.startTick === Math.max(tick, note.tick))
+    airNodeModel: () => true,
+    // The lift is part of the joint and centre line; the strip's ground layer is drawn in a step of its own.
+    ribbon: (
+      note: any,
+      segment: any,
+      _points: any,
+      _color: any,
+      _extent: any,
+      _tick: number,
+      headRiser: boolean,
+      parts?: ReadonlySet<string>,
+    ) => {
+      if (
+        note.type === 'AIR_SLIDE' &&
+        headRiser &&
+        (!parts || parts.has('joint')) &&
+        segment.startTick === Math.max(tick, note.tick)
+      )
         risers.push(note.tick);
     },
   });

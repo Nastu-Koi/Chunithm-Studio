@@ -26,6 +26,7 @@
 
 - 背景黑色；列边框与小节线灰 85，拍线灰 34，轨道线为 10% 白（每 4 轨 18%）；小节号画在列左侧。小节线画在音符之下，起拍的音符不被切开。
 - 音符贴图的选型与播放页相同（`getNativeHeadModel`）：按宽度取 `_NN`，EX 用 `NotesChara`，HOLD／SLIDE 端点用 `_point`，AIR 按方向取 `NotesAirU/D(R)`、按颜色取 `_P/_G`。短音符与端点把贴图整张拉伸到轨道跨度，高度按原网格纵横比（10.09 ÷ 15.68）取在 6–12 像素之间。
+- 叠放按原游戏的绘制图层（[native-note-assets.md](../native-note-assets.md)「绘制图层」），与谱面记录顺序无关：先画全部带体（`chartImageBodies`：HOLD、SLIDE、AIR-SLIDE 与 CRUSH 中心线、AIR-HOLD），再画头部、端点、AIR 箭头、动作环与 CRUSH 横档（`chartImageMarks`），同层按时间。因此 SXD 头盖住同处的 TAP，TAP 盖住 SLIDE 头与端点。带体全部压在头部之下是为了看清地面音符，原游戏里 AIR 条带在地面头部之上。
 - HOLD／SLIDE 带体贴 `HoldJoint`／`SlideJoint`，贴图顶行在终点、底行在起点；宽度不变时一次仿射变换，变化时逐像素行拉伸（与编辑页 `paintGroundBody` 相同）。SLIDE 链的后续段不再画头，控制节点不画节点条。
 - 长条带体（HOLD／SLIDE／AIR-HOLD／AIR-SLIDE 的顶面与中线、AIR-CRUSH 的连线）从所在链的起点起一个 12 分音符（`resolution ÷ 12` tick）内全亮，之后以 40% 不透明度画（`BODY_DIM`）。链起点沿「起点与前一段终点相接」回溯；边界落在一段中间时该段切成亮、暗两块，贴图 V 连续。
 - AIR 箭头取 `NotesAirU/D` 贴图上方 36% 的彩色横条，画在父音符上方 2 像素处，高 9 像素；斜向箭头横向偏移。AIR-HOLD／AIR-SLIDE 的头画同样的箭头，动作节点末端画 `NotesAirHold_Ring_NN`。

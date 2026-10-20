@@ -30,7 +30,10 @@ import { buildJudgementTimeline, getAutoScoreAtTick, type JudgementTimeline } fr
 import { drawPlayerHud, type HudSprite } from './player-hud';
 import { GameMeshRenderer, type MeshPaint } from './game-mesh-renderer';
 import {
+  getNativeBodyDrawOrder,
+  getNativeDrawOrder,
   getNativeHeadModel,
+  getNativeModelDrawOrder,
   projectNativeNotePoint,
   projectNativeScrollPoint,
   nativeAirBaseHeight,
@@ -46,6 +49,7 @@ import {
   getNativeAirSlideGeometry,
   getNativeAirCrushGeometry,
   getNativeAirHoldMaterialColors,
+  type NativeAirSurface,
 } from './native-air-geometry';
 const colors: Record<Note['type'], string> = {
   TAP: '#fb4769',
@@ -354,8 +358,22 @@ interface Frame {
   /** AIR-CRUSH markers still allowed this frame. */
   crushMarkerBudget: number;
 }
-/** One depth-sorted drawing step; `layer` breaks ties: -1 ground bodies, 0 AIR bodies, 1 ground heads, 2 AIR heads. */
-type Primitive = { depth: number; layer: number; draw(): void };
+/**
+ * One drawing step. `order` is the game's sort key of what it draws, `layer × 256 + in-layer priority`
+ * (`getNativeDrawOrder`, `getNativeBodyDrawOrder`); `depth` its scroll distance.
+ */
+type Primitive = { depth: number; order: number; draw(): void };
+/**
+ * Sorts in place into drawing order: by the game's layer first, whatever the distance (HOLD / SLIDE bodies under every
+ * head, an EX head over every TAP, the AIR family over the ground notes), then far before near inside a layer, then by
+ * the in-layer priority. Layer before distance, and the direction inside a layer, are an unconfirmed reading of the game
+ * (docs/native-note-assets.md, “绘制图层”).
+ */
+export function sortPlayerPrimitives<T extends Primitive>(primitives: T[]): T[] {
+  return primitives.sort(
+    (a, b) => Math.floor(a.order / 256) - Math.floor(b.order / 256) || b.depth - a.depth || a.order - b.order,
+  );
+}
 /** A hold effect that keeps running while its SLIDE is held. */
 type EffectKeep = { event: NoteEffectEvent; age: number };
 function noteColor(note: Note): string {
@@ -706,6 +724,22 @@ export class ChartPlayer {
     }
     return true;
   }
+  /** One model of an AIR HOLD / AIR SLIDE action node: the shadow or the ring. */
+  private airNodeModel(
+    note: Note,
+    family: 'Shadow' | 'Ring',
+    lane: number,
+    width: number,
+    distance: number,
+    height = 1,
+  ): boolean {
+    const size = Math.max(1, Math.min(16, Math.round(width))),
+      base = (note.type === 'AIR_HOLD' ? AIR_LINE_HEIGHT : nativeAirBaseHeight(height)) + 0.15;
+    const key = `NotesAirHold_${family}_${String(size).padStart(2, '0')}`;
+    const nominal = this.nativeModels.get(key)?.model.nominalWidth ?? size;
+    const yScale = family === 'Shadow' && note.type === 'AIR_SLIDE' ? base / 15.724 : 1;
+    return this.nativeModel(key, lane + width / 2, distance, base, nominal > 0 ? width / nominal : 1, yScale);
+  }
   private nativeHead(
     note: Note,
     lane: number,
@@ -715,19 +749,6 @@ export class ChartPlayer {
     endpoint = false,
     scaleY = 1,
   ): boolean {
-    if (endpoint && (note.type === 'AIR_HOLD' || note.type === 'AIR_SLIDE')) {
-      const size = Math.max(1, Math.min(16, Math.round(width))),
-        center = lane + width / 2;
-      const base = (note.type === 'AIR_HOLD' ? AIR_LINE_HEIGHT : nativeAirBaseHeight(height)) + 0.15;
-      let drawn = false;
-      for (const family of ['Shadow', 'Ring']) {
-        const key = `NotesAirHold_${family}_${String(size).padStart(2, '0')}`;
-        const nominal = this.nativeModels.get(key)?.model.nominalWidth ?? size;
-        const yScale = family === 'Shadow' && note.type === 'AIR_SLIDE' ? base / 15.724 : 1;
-        drawn = this.nativeModel(key, center, distance, base, nominal > 0 ? width / nominal : 1, yScale) || drawn;
-      }
-      return drawn;
-    }
     const model = getNativeHeadModel(note, width, endpoint);
     if (!model) return false;
     const baseY =
@@ -795,8 +816,12 @@ export class ChartPlayer {
     airExtent?: [number, number],
     currentTick = 0,
     headRiser = false,
+    parts?: ReadonlySet<NativeAirSurface['part']>,
   ): void {
-    if ((note.type === 'AIR_SLIDE' || note.type === 'AIR_CRUSH') && this.textureLayer?.active) {
+    const nativeStrip = (note.type === 'AIR_SLIDE' || note.type === 'AIR_CRUSH') && this.textureLayer?.active;
+    // Without the native strip the whole body is drawn once, with the joint step.
+    if (parts && !parts.has('joint') && !nativeStrip) return;
+    if (nativeStrip && this.textureLayer) {
       const zUnit = nativeScrollWorldUnit(this.speed);
       const at = (tick: number, distance: number) => {
         const t = (tick - note.tick) / note.duration!,
@@ -833,6 +858,7 @@ export class ChartPlayer {
         },
       );
       for (const surface of surfaces) {
+        if (parts && !parts.has(surface.part)) continue;
         const image = this.bodySprites.get(surface.texture)?.image;
         if (!image) continue;
         this.textureLayer.mesh(
@@ -970,12 +996,9 @@ export class ChartPlayer {
     };
     this.drawField(frame);
     const { primitives, keeps } = this.collectPrimitives(frame);
-    // Flat ground bodies cannot occlude any raised note head, regardless of segment length.
-    primitives.sort(
-      (a, b) => Number(b.layer === -1) - Number(a.layer === -1) || b.depth - a.depth || a.layer - b.layer,
-    );
-    for (const primitive of primitives) primitive.draw();
+    // The judgement line (GoalLine, layer 13) is under every note.
     this.drawJudgementLine();
+    for (const primitive of sortPlayerPrimitives(primitives)) primitive.draw();
     this.canvas.dataset.nativeEffectPrimitives = String(this.drawEffects(seconds, keeps));
     if (this.textureLayer) c.drawImage(this.textureLayer.finish(), 0, 0, w, h);
     c.restore();
@@ -1142,17 +1165,13 @@ export class ChartPlayer {
     const headRiser =
       !!headPoint && tick <= note.tick && ribbon.length > 0 && Math.abs(ribbon[0].startTick - note.tick) < 1e-7;
     if (note.type === 'AIR_HOLD' && headRiser) {
-      const distance = ribbon[0].startDistance;
+      const distance = ribbon[0].startDistance,
+        key = `NotesAirHold_Line${note.attributes.color === 'PNK' ? '_P' : ''}`;
       primitives.push({
         depth: distance,
-        layer: 1,
+        order: getNativeModelDrawOrder(key, 1),
         draw: () => {
-          this.nativeModel(
-            `NotesAirHold_Line${note.attributes.color === 'PNK' ? '_P' : ''}`,
-            note.lane + note.width / 2,
-            distance,
-            nativeAirBaseHeight(note.height ?? 1),
-          );
+          this.nativeModel(key, note.lane + note.width / 2, distance, nativeAirBaseHeight(note.height ?? 1));
         },
       });
     }
@@ -1204,26 +1223,36 @@ export class ChartPlayer {
         airborne,
       );
     };
+    // An AIR SLIDE strip has its ground layer in a lower layer than its joint and centre line.
+    const steps: [number, ReadonlySet<NativeAirSurface['part']> | undefined][] =
+      note.type === 'AIR_SLIDE'
+        ? [
+            [getNativeBodyDrawOrder(note, note.width, true), new Set(['ground'])],
+            [getNativeBodyDrawOrder(note), new Set(['joint', 'line'])],
+          ]
+        : [[getNativeBodyDrawOrder(note), undefined]];
     for (const segment of ribbon)
-      primitives.push({
-        depth: (segment.startDistance + segment.endDistance) / 2,
-        layer: airborne ? 0 : -1,
-        draw: () =>
-          this.ribbon(
-            note,
-            segment,
-            [
-              at(segment.startTick, segment.startDistance, false),
-              at(segment.startTick, segment.startDistance, true),
-              at(segment.endTick, segment.endDistance, true),
-              at(segment.endTick, segment.endDistance, false),
-            ],
-            color,
-            airExtent,
-            tick,
-            headRiser,
-          ),
-      });
+      for (const [order, parts] of steps)
+        primitives.push({
+          depth: (segment.startDistance + segment.endDistance) / 2,
+          order,
+          draw: () =>
+            this.ribbon(
+              note,
+              segment,
+              [
+                at(segment.startTick, segment.startDistance, false),
+                at(segment.startTick, segment.startDistance, true),
+                at(segment.endTick, segment.endDistance, true),
+                at(segment.endTick, segment.endDistance, false),
+              ],
+              color,
+              airExtent,
+              tick,
+              headRiser,
+              parts,
+            ),
+        });
   }
   /** AIR-CRUSH judgement markers along the visible ribbon, within the frame's marker budget. */
   private crushPrimitives(
@@ -1253,7 +1282,7 @@ export class ChartPlayer {
       frame.crushMarkerBudget--;
       primitives.push({
         depth: distance,
-        layer: 2,
+        order: getNativeDrawOrder(note, width),
         draw: () => {
           if (
             !this.nativeHead(
@@ -1280,11 +1309,26 @@ export class ChartPlayer {
     primitives: Primitive[],
   ): void {
     const endpoint = { ...note, attributes: { ...note.attributes, ex: false } };
+    const nodeHeight = note.endHeight ?? note.height ?? 1;
+    // An AIR HOLD / AIR SLIDE action node is a shadow, below the AIR arrows, and a ring above them.
+    const air = note.type === 'AIR_HOLD' || note.type === 'AIR_SLIDE';
+    if (air)
+      primitives.push({
+        depth: tail,
+        order: getNativeModelDrawOrder('NotesAirHold_Shadow', endPoint.width),
+        draw: () => {
+          this.airNodeModel(note, 'Shadow', endPoint.lane, endPoint.width, tail, nodeHeight);
+        },
+      });
     primitives.push({
       depth: tail,
-      layer: note.type.startsWith('AIR') ? 2 : 1,
+      order: getNativeDrawOrder(endpoint, endPoint.width, true),
       draw: () => {
-        if (!this.nativeHead(endpoint, endPoint.lane, endPoint.width, tail, note.endHeight ?? note.height ?? 1, true))
+        if (
+          !(air
+            ? this.airNodeModel(note, 'Ring', endPoint.lane, endPoint.width, tail, nodeHeight)
+            : this.nativeHead(endpoint, endPoint.lane, endPoint.width, tail, nodeHeight, true))
+        )
           this.bar(
             this.point(endPoint.lane, tail, endPoint.height ?? height),
             this.point(endPoint.lane + endPoint.width, tail, endPoint.height ?? height),
@@ -1318,7 +1362,7 @@ export class ChartPlayer {
       displayColor = headPoint.type === note.type ? headColor : colors[headPoint.type];
     primitives.push({
       depth: head,
-      layer: note.type.startsWith('AIR') ? 2 : 1,
+      order: getNativeDrawOrder(displayNote),
       draw: () => {
         const airSlideHead = note.type === 'AIR_SLIDE' && displayNote.type === 'AIR';
         if (

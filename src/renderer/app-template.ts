@@ -2,7 +2,7 @@ import { ICON } from './icons';
 
 /** Static page markup for the app shell; behaviour lives in main.ts. */
 export const appTemplate = `
-  <header class="app-header"><div class="brand"><span class="brand-mark">C<span>↗</span></span><div><strong>CHUNI<span>STUDIO</span></strong><small>CHART EDITOR & PREVIEW</small></div></div>
+  <header class="app-header"><div class="brand"><svg class="brand-mark" viewBox="12 10 232 232" aria-hidden="true"><polygon class="brand-field" points="20,212 236,212 172,124 84,124"/><path class="brand-lane" d="M128,222V114"/><path class="brand-air" d="M80,96 128,48 176,96"/></svg><div><strong>CHUNI<span>STUDIO</span></strong><small>CHART EDITOR & PREVIEW</small></div></div>
   <nav class="file-actions" aria-label="文件操作"><button data-action="new" title="新建 Ctrl+N">新建</button><button data-action="open" title="打开 Ctrl+O">打开</button><button data-action="import">导入 C2S</button><button data-action="save" title="保存 Ctrl+S">保存<span class="shortcut">Ctrl S</span></button><button data-action="undo" title="撤销 Ctrl+Z">${ICON.undo}</button><button data-action="redo" title="重做 Ctrl+Y">${ICON.redo}</button></nav>
   <span class="header-divider"></span><div class="header-right"><button data-action="library" class="quiet">本地曲库</button><button data-action="settings" class="quiet">乐曲设置</button><button data-action="xml" class="quiet">XML 信息</button><button data-action="export" class="primary">导出 OPT ${ICON.open}</button></div></header>
   <section class="project-bar"><div class="project-identity"><div class="jacket-mini" id="jacket-mini">${ICON.music}</div><div><h1 id="project-title"></h1><p><span id="project-artist">未设置作者</span><span class="dot">·</span><span id="project-details"></span><span id="dirty-indicator"></span></p></div></div>

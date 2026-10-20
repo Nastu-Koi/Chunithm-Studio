@@ -81,6 +81,67 @@ export function getNativeHeadModel(note: Note, width = note.width, endpoint = fa
   return prefix ? { key: `${prefix}_${size}${suffix}`, width: nativeWidth, mirror } : undefined;
 }
 
+/**
+ * Draw order of each note model family: the LayerTableRecord value of its ModelSetTableRecord layer (BG 0 "最背面" …
+ * TopMost 36 "最前面"), and the in-layer priority `base + (width - 1) * step`. See docs/native-note-assets.md.
+ */
+const NATIVE_DRAW_ORDER: Record<string, readonly [layer: number, base: number, step: number]> = {
+  NotesHold_point: [17, 31, -2],
+  NotesSlide_point: [18, 30, -2],
+  NotesHold: [20, 30, -2],
+  NotesSlide: [20, 31, -2],
+  NotesTap: [23, 15, -1],
+  NotesCharaNoEff: [23, 15, -1],
+  NotesFlick: [24, 15, -1],
+  NotesChara: [25, 15, -1],
+  NotesMine: [27, 15, -1],
+  NotesAirHold_Shadow: [28, 255, 0],
+  NotesAirU: [30, 255, 0],
+  NotesAirUR: [30, 255, 0],
+  NotesAirD: [30, 255, 0],
+  NotesAirDR: [30, 255, 0],
+  NotesAirHold_Line: [30, 0, 0],
+  NotesAirHold_LineTop: [31, 1, 0],
+  NotesAirHold_Ring: [31, 255, 0],
+  NotesAirLadder: [31, 255, 0],
+  NotesAirLadderTop: [31, 255, 0],
+};
+/** The game's sort key `layer << 8 | priority` of a note model; lower keys are drawn first. Unknown models give 0. */
+export function getNativeModelDrawOrder(key: string, width: number): number {
+  const order = NATIVE_DRAW_ORDER[key.replace(/_\d\d(?=_|$)/, '').replace(/_[PG]$/, '')];
+  if (!order) return 0;
+  const [layer, base, step] = order;
+  return layer * 256 + Math.max(0, Math.min(255, base + (Math.round(width) - 1) * step));
+}
+/**
+ * Layers of the long-note bodies, which are strips rather than ModelSet models; their in-layer priority is
+ * `16 - width` (0xc3f880). The ground layer of an AIR SLIDE strip is in AirNotesShadow (28), its joint and line in
+ * AirNotes (30).
+ */
+const NATIVE_BODY_LAYER: Partial<Record<Note['type'], number>> = {
+  HOLD: 15,
+  SLIDE: 16,
+  AIR_SLIDE: 30,
+  AIR_CRUSH: 30,
+};
+/**
+ * Draw order of a long note's body, or with `ground` of an AIR SLIDE strip's ground layer; an AIR HOLD body is its top
+ * surface (`NotesAirHold_LineTop`).
+ */
+export function getNativeBodyDrawOrder(note: Note, width = note.width, ground = false): number {
+  if (note.type === 'AIR_HOLD') return getNativeModelDrawOrder('NotesAirHold_LineTop', width);
+  const layer = ground && note.type === 'AIR_SLIDE' ? 28 : NATIVE_BODY_LAYER[note.type];
+  return layer === undefined ? 0 : layer * 256 + Math.max(0, Math.min(255, 16 - Math.round(width)));
+}
+/** Draw order of a note's head, or of its end node; an AIR HOLD / AIR SLIDE node is the ring the game draws there. */
+export function getNativeDrawOrder(note: Note, width = note.width, endpoint = false): number {
+  const key =
+    endpoint && (note.type === 'AIR_HOLD' || note.type === 'AIR_SLIDE')
+      ? 'NotesAirHold_Ring'
+      : getNativeHeadModel(note, width, endpoint)?.key;
+  return key ? getNativeModelDrawOrder(key, width) : 0;
+}
+
 /** Project source geometry in the native note-camera orientation, retaining the
  * separately documented, screenshot-calibrated ground-track anchor. One lane = 4 source units. */
 export function projectNativeNotePoint(

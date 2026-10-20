@@ -25,10 +25,13 @@ import {
   AIR_HIDDEN_HEIGHT,
   airHeightMaximum,
   airHeightVisibility,
+  laneLine,
   type EditorView,
+  type LaneDivision,
   type Position,
 } from './editor-view';
 import type { InsertTarget } from './editor-hit';
+import { getNativeBodyDrawOrder, getNativeDrawOrder } from './native-notes';
 
 /** `#rrggbb` with an alpha in 0..1 as a CSS colour. */
 function colorWithAlpha(color: string, alpha: number): string {
@@ -53,6 +56,8 @@ export interface PaintScene {
   cursor: number;
   /** Grid division per whole note; 0 means free placement. */
   snap: number;
+  /** 横向分割: a lane line every this many lanes. */
+  laneDivision: LaneDivision;
   hover?: Position;
   dragging: boolean;
   /** The rubber band of a box selection that has moved. */
@@ -126,6 +131,34 @@ function eventText(event: ChartEvent): string {
   }
 }
 
+/**
+ * Long-note bodies in the game's layer order: HOLD under SLIDE (both opaque here), then the translucent AIR strips,
+ * AIR HOLD last. Unlike the game, every body stays under the nodes and heads so the ground notes remain readable.
+ */
+export function editorBodies(notes: readonly Note[]): Note[] {
+  return notes
+    .filter(long)
+    .map(note => ({ note, order: getNativeBodyDrawOrder(note) }))
+    .sort((a, b) => a.order - b.order)
+    .map(({ note }) => note);
+}
+/** A node or head the editor draws over the long-note bodies. */
+export type EditorMark = { note: Note; part: 'node' | 'head' };
+/**
+ * Nodes and heads in the game's draw order, so notes on the same spot overlap as in the game (an EX SLIDE head over a
+ * TAP, a TAP over a SLIDE head or end node) whatever their record order. Equal ones keep the record order.
+ */
+export function editorMarks(notes: readonly Note[]): EditorMark[] {
+  return [
+    ...notes
+      .filter(long)
+      .map(note => ({ note, part: 'node' as const, order: getNativeDrawOrder(note, endWidth(note), true) })),
+    ...notes.map(note => ({ note, part: 'head' as const, order: getNativeDrawOrder(note) })),
+  ]
+    .sort((a, b) => a.order - b.order)
+    .map(({ note, part }) => ({ note, part }));
+}
+
 /** Draws the editor canvas. */
 export class EditorPainter {
   readonly noteSprites = new MargreteNoteSprites();
@@ -155,19 +188,22 @@ export class EditorPainter {
       hi = view.scroll + bottom / view.zoom;
     ctx.fillStyle = '#080808';
     ctx.fillRect(view.rulerLeft, 0, view.rulerWidth, bottom);
-    // Lightly alternate the four sensor banks while retaining all sixteen lane boundaries.
+    // Lightly alternate the groups of lanes (the four sensor banks, or the wider groups of the lane division) and draw
+    // a lane line every `laneDivision` lanes.
+    const lanes = scene.laneDivision,
+      bank = Math.max(4, lanes);
     ctx.save();
     ctx.beginPath();
     ctx.rect(view.left, 0, right - view.left, bottom);
     ctx.clip();
     for (let lane = Math.floor(view.viewStart); lane < Math.ceil(view.viewEnd); lane++) {
-      const outside = lane < 0 || lane >= LANES;
-      ctx.fillStyle = outside ? '#151015' : Math.floor(lane / 4) % 2 ? '#050505' : '#000000';
+      const outside = lane < 0 || lane >= LANES,
+        line = laneLine(lane, lanes);
+      ctx.fillStyle = outside ? '#151015' : Math.floor(lane / bank) % 2 ? '#050505' : '#000000';
       ctx.fillRect(view.x(lane), 0, view.laneWidth, bottom);
-      if (outside && view.laneWidth < 8 && lane % 4 !== 0) continue;
-      ctx.strokeStyle =
-        lane === 0 || lane === LANES ? '#777777' : outside ? '#383038' : lane % 4 === 0 ? '#464646' : '#242424';
-      ctx.lineWidth = lane === 0 || lane === LANES ? 1.5 : 1;
+      if (!line || (outside && view.laneWidth < 8 && lane % 4 !== 0)) continue;
+      ctx.strokeStyle = line === 'edge' ? '#777777' : outside ? '#383038' : line === 'major' ? '#464646' : '#242424';
+      ctx.lineWidth = line === 'edge' ? 1.5 : 1;
       ctx.beginPath();
       ctx.moveTo(view.x(lane) + 0.5, 0);
       ctx.lineTo(view.x(lane) + 0.5, bottom);
@@ -238,8 +274,8 @@ export class EditorPainter {
     const visible = chart.notes.filter(
       note => endTick(note) >= lo - 20 / view.zoom && note.tick <= hi + 32 / view.zoom,
     );
-    for (const note of visible.filter(long)) this.paintNote(ctx, note, true);
-    for (const note of visible) this.paintNote(ctx, note, false);
+    for (const note of editorBodies(visible)) this.paintNote(ctx, note, 'body');
+    for (const { note, part } of editorMarks(visible)) this.paintNote(ctx, note, part);
     ctx.restore();
     this.paintEvents(ctx, chart);
     ctx.save();
@@ -249,14 +285,12 @@ export class EditorPainter {
     if (scene.insert) this.paintInsertNode(ctx, scene.insert);
     if (scene.placement) {
       ctx.globalAlpha = 0.45;
-      this.paintNote(ctx, scene.placement, true, true);
-      this.paintNote(ctx, scene.placement, false, true);
+      for (const part of ['body', 'node', 'head'] as const) this.paintNote(ctx, scene.placement, part, true);
       ctx.globalAlpha = 1;
     }
     if (scene.continuation) {
       ctx.globalAlpha = 0.45;
-      this.paintNote(ctx, scene.continuation, true);
-      this.paintNote(ctx, scene.continuation, false);
+      for (const part of ['body', 'node', 'head'] as const) this.paintNote(ctx, scene.continuation, part);
       ctx.globalAlpha = 1;
     }
     ctx.restore();
@@ -545,8 +579,11 @@ export class EditorPainter {
     }
   }
 
-  /** `ghost` paints a placement preview: it is not in the chart, so its chain head cannot be looked up and is always drawn. */
-  private paintNote(ctx: CanvasRenderingContext2D, note: Note, body: boolean, ghost = false): void {
+  /**
+   * One part of a note: a long note's body, the node that ends a long segment, or the head.
+   * `ghost` paints a placement preview: it is not in the chart, so its chain head cannot be looked up and is always drawn.
+   */
+  private paintNote(ctx: CanvasRenderingContext2D, note: Note, part: EditorMark['part'] | 'body', ghost = false): void {
     const view = this.view,
       { selection, pickedJoint } = this.scene;
     const x = view.x(note.lane) + 1,
@@ -560,7 +597,7 @@ export class EditorPainter {
       picked = selection.has(note.id),
       selected = picked && !(selection.size === 1 && pickedJoint === note.id),
       airborne = AIR_NOTE_TYPES.has(note.type);
-    if (body) {
+    if (part === 'body') {
       if (!long(note)) return;
       // An AIR SLIDE / CRUSH fades with its height as the game camera loses it, but never past the point of being selectable.
       const fading = HEIGHT_NOTE_TYPES.has(note.type),
@@ -625,7 +662,8 @@ export class EditorPainter {
       }
       return;
     }
-    if (long(note)) {
+    if (part === 'node') {
+      if (!long(note)) return;
       const control = hasNodeKind(note) && note.attributes.visible === false;
       ctx.fillStyle = color;
       ctx.strokeStyle = picked ? '#fff' : color;
@@ -653,6 +691,7 @@ export class EditorPainter {
         ctx.strokeRect(finishX, finishY - 3, finishWidth, 6);
       }
       if (picked) this.handle(ctx, finishX + finishWidth, finishY, color);
+      return;
     }
     if (
       !ghost &&

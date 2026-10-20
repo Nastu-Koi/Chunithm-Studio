@@ -43,7 +43,10 @@ test(
       const flick = createNote('FLICK', 1152, 4, 4);
       const far = createNote('TAP', 384 * 6, 2, 2);
       const airHold = createNote('AIR_HOLD', 1536, 12, 4); airHold.duration = 192; airHold.attributes = { ...airHold.attributes, parent: downTap.id };
-      chart.notes = [tap, extap, hold, air, slide, downTap, down, flick, far, airHold];
+      // An EX SLIDE head with a TAP on it, the TAP recorded later: the EX head is still drawn on top.
+      const stackSlide = createNote('SLIDE', 1920, 0, 4); stackSlide.attributes = { ...stackSlide.attributes, ex: true };
+      const stackTap = createNote('TAP', 1920, 0, 4);
+      chart.notes = [tap, extap, hold, air, slide, downTap, down, flick, far, airHold, stackSlide, stackTap];
       const { canvas, missing } = await renderChartImage(project, copy);
       document.body.appendChild(canvas);
       const layout = layoutChartImage(chart), top = CHART_IMAGE_HEADER_HEIGHT;
@@ -58,6 +61,7 @@ test(
         tap: px(a.x(2), a.y), extap: px(b.x(6), b.y), holdBody: px(c.x(10) + 3, c.y), holdBright: px(at(400).x(10) + 3, at(400).y), holdCap: px(a.x(10), a.y - 2),
         airUp: brightest(a.x(0), a.y - 20, a.x(4), a.y - 8), airDown: brightest(d.x(12), d.y - 20, d.x(16), d.y - 8),
         slideBody: px(at(960).x(6) + 3, at(960).y), slideEnd: px(at(1152).x(12) - 10, at(1152).y - 2), airHoldLine: px(f.x(14), f.y),
+        stacked: px(at(1920).x(2), at(1920).y),
         measureLine: px(a.x(14) + 3, a.y), header: brightest(24, 30, 400, 52), farTap: px(e.x(3), e.y),
         pngHead: [...bytes.slice(0, 8)], pngSize: bytes.length,
       };
@@ -77,6 +81,7 @@ test(
       assert.ok(near(r.tap, [255, 0, 0]), `TAP texture ${r.tap}`);
       assert.ok(near(r.extap, [255, 255, 0]), `ExTAP texture ${r.extap}`);
       assert.ok(near(r.farTap, [255, 0, 0]), `2-lane TAP in the second column ${r.farTap}`);
+      assert.ok(near(r.stacked, [255, 255, 0]), `EX SLIDE head over the TAP on it ${r.stacked}`);
       // A body is full brightness for a twelfth note from its start, then dimmed to 40%.
       assert.ok(near(r.holdBright, [136, 0, 255]), `HOLD body near its start ${r.holdBright}`);
       assert.ok(near(r.holdBody, [54, 0, 102]), `HOLD body later on, dimmed ${r.holdBody}`);

@@ -129,6 +129,8 @@ npm test
 
 代码格式由 Prettier 统一（配置见 `.prettierrc.json`）：`npm run format` 格式化全部代码，`npm run format:check` 只检查，CI 会运行后者。
 
+应用图标的源文件是 `assets/icon/app.svg`（48 px 及以上）和 `app-small.svg`（32 px 及以下，标题栏左上角的标志也按它绘制）。修改后运行 `node scripts/build-icon.mjs` 重新生成 `app.ico`（exe 与 Windows 窗口图标）和 `app.png`（其他系统的窗口图标），两者随仓库提交。
+
 音频助手的构建和许可见 `native/README.md`。`native/win-x64`（ffmpeg 与 .NET 自包含助手，约 155 MB）不进入仓库，由 `npm run prepare:native` 从固定版本的上游下载并发布，需要网络和 .NET SDK；`npm run package:win` 会先执行它。打包还需要匹配 sharp 版本的 Windows 包，准备步骤见 `scripts/package-win.mjs`。进入包内的只有 `scripts/package-files.mjs` 列出的运行时文件（`package.json`、`dist`、`dist-electron`、`node_modules`、`assets`、`native/win-x64`），新增运行时目录时要在那里登记；整包约 600 MB。打包输出位于 `release/<版本号>/`。
 
 浏览器仅用于开发 UI，完整曲库和 OPT 功能应在桌面程序中使用。`npm run dev` 后可用 Playwright 执行 `tests/player.e2e.mjs`、`tests/rhythm.e2e.mjs`。设置 `CHUNI_UI_URL` 会启用编辑器交互测试；设置 `CHUNI_GAME_ROOT` 会启用全库原生往返测试。

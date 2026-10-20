@@ -2,6 +2,13 @@
 
 本记录区分程序测试、资源结构验证和原游戏实机验收。资源目录为用户提供的 `D:\chunithm`，检查期间不写入原游戏文件。
 
+## 0.1.25 之后（绘制图层与横向分割）
+
+- 原生核对：从 `LayerTableRecord.bin`、`ModelSetTableRecord.bin` 与 `chusanApp.exe` 只读反汇编列出全部音符部件的图层与层内优先级（表与地址见 [native-note-assets.md](native-note-assets.md) 的“绘制图层”）。SXD / HXD 的头部是 ExTAP 模型（层值 25），盖住 TAP（23）；普通 SLIDE / HOLD 头（20）在 TAP 之下。改动前编辑页、播放页与俯视图片在同一位置都按谱面记录顺序叠放，带体之间也按记录或时间顺序。
+- 程序测试：`npm run format:check`、`npm run check`、`npx vite build` 通过；`npm test` 346 项，334 通过、12 项按环境跳过、失败 0；设置 `CHUNI_UI_URL` 后 344 通过、2 项跳过。新增 `tests/note-draw-order.test.ts`（图层顺序；播放页、编辑页、俯视图片在两种记录顺序下的叠放，编辑页点击顺序；带体层序；同一距离 AIR 条带盖住地面头部；动作节点影子与动作环分层）和 `tests/editor-lanes.test.ts`（横向分割的轨道线）；`editor-width-ui.test.ts` 增加横向分割下拉、画布像素与重开后沿用的断言；`chart-image-ui.test.ts` 增加 SXD 盖住记录在后的 TAP 的像素断言（改动前失败）。`air-riser-rendering`、`air-trail-brightness` 两项测试的播放器替身补上新的 `airNodeModel`；AIR-SLIDE 条带分两步画后，`air-riser-rendering` 只在 Joint／中心线那一步统计抬升段。
+- 播放页改为先比层、层内由远到近，判定线移到全部音符之下。这一排序是未经实机确认的假设（依据与验证方法见 native-note-assets.md）。
+- 未做：没有在原游戏中对照叠放画面，层优先的假设待实机确认；HUD 场内连击数仍在音符之上（原生为 14 层，在音符之下）；Windows 桌面程序里的显示未看过，需在 Windows 上人工执行。
+
 ## 0.1.24 之后（编辑器交互测试与 CI 字体）
 
 - 现象：CI 上 `npm test` 2 项失败（282 通过、35 跳过），本机 0 失败。35 项跳过只是 CI 没有 `/mnt/d/chunithm`。

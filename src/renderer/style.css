@@ -208,19 +208,29 @@ kbd {
   min-width: 150px;
   user-select: none;
 }
+/* The small app icon (assets/icon/app-small.svg) without its tile, which would match the header anyway. */
 .brand-mark {
   width: 20px;
   height: 20px;
-  display: grid;
-  place-items: center;
-  border-radius: 4px;
-  background: var(--text-1);
-  color: var(--bg-1);
-  font-size: 13px;
-  font-weight: 800;
-  line-height: 1;
+  flex: none;
 }
-.brand-mark > span,
+.brand-field {
+  fill: var(--text-1);
+  stroke: var(--text-1);
+  stroke-width: 12;
+  stroke-linejoin: round;
+}
+.brand-lane {
+  stroke: var(--bg-1);
+  stroke-width: 12;
+}
+.brand-air {
+  fill: none;
+  stroke: var(--accent);
+  stroke-width: 30;
+  stroke-linecap: round;
+  stroke-linejoin: round;
+}
 .brand small {
   display: none;
 }

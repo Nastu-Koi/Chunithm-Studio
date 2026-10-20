@@ -97,6 +97,50 @@ Trace 分支 `0xc28c69..0xc29029` 生成四面菱形细管。它按 Z 把近端�
 
 HOLD 初始化 `0xc4f110` 的尾端对象默认从表 `0x1c1f238` 取 `NotesHold_NN_point`；SLIDE 可见节点 `0xc33ab0` 检查 visible 标志后，默认从表 `0x1c1e1a4` 取 `NotesSlide_NN_point`。控制节点不创建此模型。两者有另一分支选择 `NotesAirTap_NN_point`，由运行时 `+0xb5` 及 SLIDE 节点标志共同控制；尚未将该标志对外命名或将它错误等同于所有显式 AIR。
 
+## 绘制图层：位置相同的音符谁在上层
+
+原游戏不按谱面记录顺序叠放音符，而是按模型所属的图层。证据来自本地 `data/db/LayerTableRecord.bin`、`ModelSetTableRecord.bin` 与 `bin/chusanApp.exe` 的只读反汇编。
+
+- `LayerTableRecord` 每条为 id、名称、说明、层值。层值从 `BG`（0，说明“最背面”）到 `TopMost`（36，“最前面”），层值大的在上面。与音符有关的几层：`HoldJoint` 15、`SlideJoint` 16（两种带体）、`HoldEnd` 17、`SlideEnd` 18、`AirTapNotes` 19、`NormalNotesHold` 20（“HOLD先頭時用通常Tap”）、`NormalNotes` 23（通常ノーツ）、`FlickNotes` 24、`ExTapNotes` 25、`MineNotes` 27、`AirNotesShadow` 28、`AirNotes` 30、`AirNotesRing` 31。
+- `ModelSetTableRecord` 每条为 id、名称、说明和 9 个整数，第 4 个是图层 id，第 7 个是排序方式（`ModelSortModeTableRecord`：0 不排序、1 反转、2 距离近的在前、3 距离远的在前），第 8、9 个是层内优先级的基数与每宽度增量。各音符模型族：`NotesTap`、`NotesCharaNoEff` 在 `NormalNotes`；`NotesChara` 在 `ExTapNotes`；`NotesFlick` 在 `FlickNotes`；`NotesMine` 在 `MineNotes`；`NotesHold`、`NotesSlide` 头部在 `NormalNotesHold`；`_point` 端点分别在 `HoldEnd`、`SlideEnd`；AIR 箭头与 `NotesAirHold_Line` 在 `AirNotes`，Ring、LineTop、Roof、Ladder 在 `AirNotesRing`，Shadow 在 `AirNotesShadow`。`FlickNotesHold`、`ExTapNotesHold`、`MineNotesHold` 三层没有任何模型集合使用，也没有找到运行时把音符改到这三层的代码（改层函数 `0xdad3e0` 唯一的调用 `0xd697c9` 属于特效）。
+- 模型实例创建 `0xdacd70` 在 `0xdacf2b..0xdacf8f` 取模型集合的图层，经 `0x4571ad` 查出层值，写进排序键 `+0x128` 的第 8–14 位；低 8 位由 `0xc402c0` 写入：`基数 + (宽度 − 1) × 增量`，限制在 0–255（经 `0xdad420`）。TAP、ExTAP、FLICK、DAMAGE 为 `15 − (宽度 − 1)`，SLIDE 头 `31 − 2(宽度 − 1)`，HOLD 头 `30 − 2(宽度 − 1)`，HOLD 端点 `31 − 2(宽度 − 1)`，SLIDE 端点 `30 − 2(宽度 − 1)`，AIR 系列为常数。同层内窄的音符优先级高。
+- 选模型：TAP 初始化 `0xc41c42..0xc41c76`、SLIDE 初始化 `0xc34adb..0xc34b04`、HOLD 初始化 `0xc4f0b4..0xc4f0d7` 都先看音符的 EX 标志 `+0x79`：有 EX 时调用 `0xc3f7f0`，取 `NotesChara_NN`（或 `+0x7a` 置位时取 `NotesCharaNoEff_NN`），否则取各自的普通模型。所以 **SXD / HXD 的头部就是 ExTAP 模型，在 `ExTapNotes`（25），盖在 TAP（23）和 FLICK（24）之上**；普通 SLIDE / HOLD 的头部（20）在 TAP 之下；DAMAGE（27）和 AIR 系列又在 EX 之上。
+- `+0x7a` 由 `0xc41383..0xc413a9` 设置：`0xb42ec0` 用时刻、轨道和宽度组成的键查一张表，同一键上已经登记过特效的 EX 音符改用 `NotesCharaNoEff`（`NormalNotes`，23），这时它与 TAP 同层。预览没有复现这条去重规则，EX 头一律用 `NotesChara`。
+
+- 带体不是模型集合，图层在代码里指定，层内优先级都是 `16 − 宽度`（`0xc3f880`）：HOLD 带体 `0xc4f311`／`0xb3dcc3` 用 `HoldJoint`（15）；SLIDE 带体 `0xb3ebb4` 用 `SlideJoint`（16），SlideJoint／SlideLine／SlideEffect 三条同层；AIR-SLIDE 条带 `0xc4d031..0xc4d077` 的 Joint 与中心线在 `AirNotes`（30），地面层 Field 在 `AirNotesShadow`（28）；AIR-CRUSH 中心线 `0xb3c86d` 在 `AirNotes`（30）。AIR-HOLD 的顶面 `NotesAirHold_LineTop` 与两翼是模型，在 `AirNotesRing`（31）。
+- HOLD 终点与 SLIDE 可见节点在音符 `+0xb5` 置位时改用 `NotesAirTap_NN_point`（`AirTapNotes`，19；`0xc4f119`、`0xc33b8a`）。`+0xb5` 由 `0xc41456..0xc41474` 按记录 `+0x14` 是否为 3、5、8 决定，含义未核清，预览仍用 `_point`。
+
+全部部件由下至上：
+
+| 层值 | 部件 | 层内优先级 |
+| --- | --- | --- |
+| 15 | HOLD 带体 | 16 − w |
+| 16 | SLIDE 带体 | 16 − w |
+| 17 | HOLD 终点 | 31 − 2(w − 1) |
+| 18 | SLIDE 可见节点 | 30 − 2(w − 1) |
+| 19 | 带 `+0xb5` 的 HOLD 终点、SLIDE 节点（预览未用） | 30 − 2(w − 1) |
+| 20 | HOLD 头、SLIDE 头 | 30 − 2(w − 1)、31 − 2(w − 1) |
+| 23 | TAP（去重后的 EX 也在此，预览未用） | 15 − (w − 1) |
+| 24 | FLICK | 15 − (w − 1) |
+| 25 | ExTAP、HXD／SXD 头 | 15 − (w − 1) |
+| 27 | DAMAGE | 15 − (w − 1) |
+| 28 | AIR-HOLD 动作节点影子、AIR-SLIDE 地面层 | 255、16 − w |
+| 30 | AIR 箭头、AIR-HOLD 前竖面、AIR-SLIDE 条带、AIR-CRUSH 中心线 | 255、0、16 − w、16 − w |
+| 31 | AIR-HOLD 顶面与两翼、AIR-HOLD／AIR-SLIDE 动作环、AIR-CRUSH 横档 | 1、255、255、255 |
+
+判定线 `GoalLine` 为 13，场内连击数 `ComboScore` 为 14，都在全部音符之下；打击特效在 32–35。
+
+尚未核清：排序比较函数本身，以及排序方式（地面音符为“距离近的在前”，AIR 为“距离远的在前”，写入实例标志第 16–17 位，`0xdacdbc..0xdace00`）与排序键怎样组合。间接证据倾向“先比层、层内再比距离”：层表有“最背面／最前面”的说明，场内连击数画在全部音符之下，地面带体必须整体压在头部之下（见下文 0.1.9），排序键里只有层与宽度。
+
+**播放页采用的“层优先、层内由远到近”是未经实机确认的假设。**“层优先”与层内的远近方向都没有在可执行文件里找到直接依据，也没有在原游戏里对照过。验证方法：在原游戏里看一条从 TAP 上方经过的 AIR-SLIDE，其地面层是否始终盖住 TAP；看一个较远的 ExTAP 与稍近的 TAP 在画面上重叠时谁在上面；或继续找读取实例标志第 16–17 位的排序代码。若实机不符，改 `sortPlayerPrimitives` 一处即可。
+
+预览的实现：`native-notes.ts` 的 `getNativeDrawOrder`（头部与端点）和 `getNativeBodyDrawOrder`（带体；AIR-SLIDE 条带的地面层为 28，Joint 与中心线为 30）给出 `层值 × 256 + 层内优先级`。
+
+- 播放页（`sortPlayerPrimitives`）：先比层，不论远近；同层由远到近；同层同距离再比层内优先级。因此 HOLD／SLIDE 带体在全部头部之下，EX 头在全部 TAP 之上，AIR 系列在全部地面音符之上；判定线（13）先于全部音符画出。AIR-HOLD／AIR-SLIDE 动作节点拆成影子与动作环两步，AIR-SLIDE 条带拆成地面层与 Joint、中心线两步（几何每段多算一次，约 2 µs）。打击特效仍在全部音符之后；HUD 的场内连击数仍画在音符之上，与原生的 14 层不同，没有处理。
+- 编辑页与俯视图片：带体按原生顺序（HOLD 在 SLIDE 下，AIR 条带在上，AIR-HOLD 最上），节点、头部、AIR 箭头、动作环、横档也按原生顺序且不分时刻（`editorBodies`、`editorMarks`、`chartImageBodies`、`chartImageMarks`）。为了看清地面音符，两者都把全部带体画在节点与头部之下，这与原游戏 AIR 条带盖住地面头部不同。编辑页点击叠放处时按同一顺序先选中上面的。
+
+`tests/note-draw-order.test.ts` 覆盖两种记录顺序下 SXD 盖住 TAP、TAP 盖住 SLIDE 头与端点、带体的层序、AIR 条带盖住地面头部、影子在 AIR 箭头之下而动作环在上，以及播放页按层优先绘制（较远的 ExTAP 盖住较近的 TAP、判定线在全部音符之下）。
+
 ## 材质枚举与着色
 
 原程序 Stevia 反射表直接给出命名：
@@ -140,7 +184,7 @@ AIR HOLD／SLIDE 播放到中间节点及接续节点时不再重新出现抬升
 
 JointHold 的构造使用 primitive `0x444cc4 → 0xc22550`；JointSlide 构造中的三项组件也使用同一 primitive。绘制配置 `0x453cdd → 0xdacb90` 将 blend 字段设为 4。JointHold setup `0xc270f0` 写入纹理与绘制标志，但不覆盖该字段；`0xdac9c0` 通过 `0x42a4be → 0x6cdaa0` 应用 blend。现有原生混合表解析将此模式映射为 SRC_ALPHA / ONE / ADD。普通不透明混合会使重叠的长条相互抹掉。
 
-Hold 几何 `0x450df3 → 0xc2dee0` 的源顶点为 24 字节（XYZ、RGBA、UV），U 横跨宽度，V 沿前后距离。最初“应当旋转贴图”的假设被这些赋值否定；最终没有旋转源贴图。播放端将地面长条作为先绘制的一组，再绘制头部，解决按长条平均距离排序时遮挡头部的问题。此分组是预览器的遮挡修复，不声称已经解码原游戏全部渲染队列。
+Hold 几何 `0x450df3 → 0xc2dee0` 的源顶点为 24 字节（XYZ、RGBA、UV），U 横跨宽度，V 沿前后距离。最初“应当旋转贴图”的假设被这些赋值否定；最终没有旋转源贴图。播放端将地面长条作为先绘制的一组，再绘制头部，解决按长条平均距离排序时遮挡头部的问题。此分组是预览器的遮挡修复，不声称已经解码原游戏全部渲染队列；后来解出的图层表（见上文“绘制图层”）中两种带体确实低于所有头部与端点。
 
 `tests/ground-ribbon.test.ts` 在修复前对 HOLD / SLIDE 都失败，修复后通过。`tests/windows-native-notes.mjs` 实际渲染重叠 HOLD、双向交叉 SLIDE、TAP 和变 BPM，并记录提交顺序；`tests/mesh-gpu-browser.ts` 读取实际 GPU 像素验证两层不透明纹理的加法和顺序无关性。测试只证明这些具体行为，未覆盖全部 WORLD’S END 材质演出。
 

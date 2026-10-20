@@ -11,7 +11,7 @@ Chuni Studio 是 Electron 桌面程序：主进程负责文件、游戏资源与
 | `src/renderer` | 渲染进程 | 应用壳、俯视编辑器、透视播放器、音频时钟与对话框。 |
 | `src/bridge.ts` | 两个进程共用 | `StudioBridge`：渲染进程能向主进程请求的全部操作（含 `saveImage`：把渲染进程画好的 PNG 字节经保存对话框写入磁盘），以及跨进程传递的数据形状；`IPC_CHANNELS`：每个操作的 IPC 通道名。 |
 | `native` | 独立子进程 | 音频助手 `ChunithmAudio`（基于 VGAudio）与 FFmpeg，由主进程按需启动。 |
-| `scripts` | 开发时 | 构建、打包，以及把游戏资源转换复制到 `assets/game` 的一次性脚本。 |
+| `scripts` | 开发时 | 构建、打包，把游戏资源转换复制到 `assets/game` 的一次性脚本，以及从 `assets/icon` 的 SVG 生成应用图标的 `build-icon.mjs`。 |
 
 依赖方向：`src/renderer` 和 `src/backend` 都依赖 `src/core`，彼此不直接引用，只通过 `src/bridge.ts` 的类型约定与通道表对接；`src/core` 不依赖另外两者。`scripts` 可以引用 `src/backend` 和 `src/core`。
 
@@ -52,13 +52,13 @@ Chuni Studio 是 Electron 桌面程序：主进程负责文件、游戏资源与
 - `app-context.ts`：`AppContext`，对话框访问工程、播放器和应用壳操作的唯一入口。
 - `dialogs/`：设置、曲库、最近项目、导出、小节定位、信息类对话框。
 - `editor.ts`：俯视编辑器 `ChartEditor`。持有选区、工具、拖动与交互模式（普通、插入节点、接续、对齐音乐、SLIDE 形状，同一时刻只有一个，经 `setMode` 切换），处理指针、键盘、工具栏与提交；谱面变换调用 `src/core/editing.ts`。它依赖下列模块，这些模块不反向引用它：
-  - `editor-view.ts`：画布版面、缩放与滚动，tick、轨道与像素之间的换算，以及 AIR 高度在原生镜头下的可见度（高度 5 以内完整可见、15 起全程出屏，数值来自播放页投影核对）。
-  - `editor-hit.ts`：命中测试，找出指针下的音符、事件、节点与可插入位置。
-  - `editor-paint.ts`：整帧绘制。输入是 `ChartEditor` 每帧组装的只读 `PaintScene`。
+  - `editor-view.ts`：画布版面、缩放与滚动，tick、轨道与像素之间的换算，横向分割下哪些轨道线要画，以及 AIR 高度在原生镜头下的可见度（高度 5 以内完整可见、15 起全程出屏，数值来自播放页投影核对）。
+  - `editor-hit.ts`：命中测试，找出指针下的音符、事件、节点与可插入位置；叠放时按绘制图层先给出画在上面的。
+  - `editor-paint.ts`：整帧绘制。输入是 `ChartEditor` 每帧组装的只读 `PaintScene`。节点与头部按 `native-notes.ts` 的绘制图层叠放。
   - `editor-inspector.ts`：属性面板的标记。
   - `editor-template.ts`：工具栏与画布的页面标记、音符与事件的显示名。
-- `chart-image.ts`：俯视图片的绘制：页头、列与小节线，音符按 `native-notes.ts` 的选型规则用资源副本贴图画出，输出 PNG。
-- `player.ts`：透视播放器。HUD 在 `player-hud.ts`，原生模型绘制在 `game-mesh-renderer.ts`、`native-notes.ts`、`native-air-geometry.ts`、`native-effects.ts` 等文件。
+- `chart-image.ts`：俯视图片的绘制：页头、列与小节线，音符按 `native-notes.ts` 的选型规则用资源副本贴图画出、按其绘制图层叠放，输出 PNG。
+- `player.ts`：透视播放器。HUD 在 `player-hud.ts`，原生模型绘制在 `game-mesh-renderer.ts`、`native-notes.ts`、`native-air-geometry.ts`、`native-effects.ts` 等文件。`native-notes.ts` 同时给出各音符模型的绘制图层，播放页与编辑页共用。
 - `transport.ts`：音频时钟，负责音乐播放、打击音、节拍器、变速和循环。
 - `ui-settings.ts`：界面设置的读写。应用壳和编辑器的显示与监听偏好都经它存入 localStorage，不进工程，也不经过桥接接口。
 - `browser-bridge.ts`：浏览器开发预览用的 `StudioBridge` 替身。

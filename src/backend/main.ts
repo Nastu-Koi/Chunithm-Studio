@@ -281,6 +281,8 @@ app.whenReady().then(() => {
     minHeight: 700,
     backgroundColor: '#1e1e1e',
     title: 'Chuni Studio',
+    // The packaged executable carries app.ico too; this covers `npm run desktop`, which runs Electron's own executable.
+    icon: path.join(app.getAppPath(), 'assets', 'icon', process.platform === 'win32' ? 'app.ico' : 'app.png'),
     show: false,
     // No native title bar: the app header is the top strip and Windows draws its three buttons over its right end
     // (colours match --bg-1 / --text-2 in src/renderer/tokens.css, height matches .app-header).

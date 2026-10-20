@@ -54,6 +54,7 @@ function render(type: 'AHD' | 'ASD', tick: number): number[] {
     stars: 0,
     frameNumber: 0,
     nativeHead: () => true,
+    airNodeModel: () => true,
     nativeModel: (name: string, ..._rest: unknown[]) => {
       const tint = _rest[_rest.length - 1];
       if (name.startsWith('NotesAirHold_JointRoof') && Array.isArray(tint)) alphas.push(tint[3]);

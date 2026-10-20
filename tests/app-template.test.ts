@@ -79,7 +79,7 @@ test('the editor toolbar keeps one zoom control, a fixed track width and the sha
 });
 
 test('buttons use Lucide icons instead of symbol characters', () => {
-  const shell = appTemplate.replace(/<span class="brand-mark">.*?<\/span><\/span>/, '') + editorTemplate({ zoom: 1 });
+  const shell = appTemplate + editorTemplate({ zoom: 1 });
   assert.deepEqual(shell.match(/[↶↷↻■▥▶▷◀♫⛶✓↔↕↖↗↑∿⌁⌖⌫▣▱◇☷⧉＋]/g), null);
   assert.ok((shell.match(/<svg class="icon"/g)?.length ?? 0) >= 25);
 });

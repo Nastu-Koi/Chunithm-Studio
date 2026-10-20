@@ -13,6 +13,7 @@ import {
   nextEditorSegment,
 } from '../core/editing';
 import { airHeightMaximum, type EditorView, type Position } from './editor-view';
+import { getNativeDrawOrder } from './native-notes';
 
 export type DragKind =
   'move' | 'end' | 'width' | 'widthLeft' | 'endWidth' | 'height' | 'endHeight' | 'box' | 'draw' | 'seek' | 'pan';
@@ -64,6 +65,16 @@ export function hitsAt(
   }
   // A joint is the end of the segment before it; the segment after it is picked by its body only.
   const joints = new Set(chart.notes.map(note => nextEditorSegment(chart, note)?.id));
+  // What is drawn on top is picked first: nodes and heads in the game's draw order (`editorMarks`), over every body.
+  const drawOrder = new Map<Hit, number>();
+  const push = (note: Note, kind: DragKind, part: 'node' | 'head' | 'body') => {
+    const hit = { id: note.id, kind };
+    found.push(hit);
+    drawOrder.set(
+      hit,
+      part === 'body' ? -1 : getNativeDrawOrder(note, part === 'node' ? endWidth(note) : note.width, part === 'node'),
+    );
+  };
   for (const note of order(chart.notes)) {
     const startY = view.y(note.tick),
       finishY = view.y(endTick(note));
@@ -75,10 +86,7 @@ export function hitsAt(
       position.x >= finishX - 4 &&
       position.x <= finishX + endWidth(note) * view.laneWidth + 4
     ) {
-      found.push({
-        id: note.id,
-        kind: Math.abs(position.x - (finishX + endWidth(note) * view.laneWidth)) < 7 ? 'endWidth' : 'end',
-      });
+      push(note, Math.abs(position.x - (finishX + endWidth(note) * view.laneWidth)) < 7 ? 'endWidth' : 'end', 'node');
       continue;
     }
     const span = note.width * view.laneWidth;
@@ -93,25 +101,26 @@ export function hitsAt(
           position.x >= startX - 3 &&
           position.x <= startX + span + 3
     ) {
-      found.push({
-        id: note.id,
-        kind:
-          Math.abs(position.x - (startX + span)) < 7
-            ? 'width'
-            : span > 24 && Math.abs(position.x - startX) < 5
-              ? 'widthLeft'
-              : 'move',
-      });
+      push(
+        note,
+        Math.abs(position.x - (startX + span)) < 7
+          ? 'width'
+          : span > 24 && Math.abs(position.x - startX) < 5
+            ? 'widthLeft'
+            : 'move',
+        'head',
+      );
       continue;
     }
     if (long(note) && position.y < startY && position.y > finishY) {
       const t = (startY - position.y) / (startY - finishY);
       const left = startX + (finishX - startX) * t;
       const width = (note.width + (endWidth(note) - note.width) * t) * view.laneWidth;
-      if (position.x >= left && position.x <= left + width) found.push({ id: note.id, kind: 'move' });
+      if (position.x >= left && position.x <= left + width) push(note, 'move', 'body');
     }
   }
-  return found;
+  const selected = (hit: Hit) => Number(selectedFirst && selection.has(hit.id));
+  return found.sort((a, b) => selected(b) - selected(a) || drawOrder.get(b)! - drawOrder.get(a)!);
 }
 
 /** The chained long note whose body is under the pointer, and the node a click would insert. HOLD has no inner nodes. */

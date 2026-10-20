@@ -1,0 +1,7 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 256 256">
+  <!-- Chuni Studio icon, 32 px and below: app.svg with the lane lines and the note left out and the shapes enlarged. -->
+  <rect width="256" height="256" rx="44" fill="#1e1e1e"/>
+  <polygon points="20,212 236,212 172,124 84,124" fill="#e4e4e4" stroke="#e4e4e4" stroke-width="12" stroke-linejoin="round"/>
+  <path d="M128,222 L128,114" stroke="#1e1e1e" stroke-width="12"/>
+  <path d="M80,96 L128,48 L176,96" fill="none" stroke="#8fb5dc" stroke-width="30" stroke-linecap="round" stroke-linejoin="round"/>
+</svg>

@@ -15,7 +15,7 @@ import {
 import { getChartEndTick, secondsToTick, tickToSeconds } from '../core/timing';
 import { isBundledImageSource, type GameTexture } from '../core/game-assets';
 import { EVENT_LABEL, editorTemplate, LABEL } from './editor-template';
-import { EditorView, airHeightMaximum, type Position } from './editor-view';
+import { EditorView, LANE_DIVISIONS, airHeightMaximum, type LaneDivision, type Position } from './editor-view';
 import {
   groundHeadAt,
   groundTailAt,
@@ -136,6 +136,7 @@ export class ChartEditor {
   private readonly shapePanel: HTMLFormElement;
   private snap = Math.round(readNumber('editor-snap', 16, 0, 4096));
   private width = Math.round(readNumber('editor-width', 2, 1, LANES));
+  private laneDivision: LaneDivision = readChoice('editor-lane-division', LANE_DIVISIONS, 1);
   private nodeKind: EditorNodeKind | 'inherit' = readChoice(
     'editor-node-kind',
     ['inherit', 'normal', 'control'] as const,
@@ -178,6 +179,7 @@ export class ChartEditor {
     for (const [name, value] of [
       ['snap', this.snap],
       ['width', this.width],
+      ['lane-division', this.laneDivision],
       ['node-kind', this.nodeKind],
     ] as const)
       host.querySelector<HTMLInputElement | HTMLSelectElement>(`[data-option="${name}"]`)!.value = String(value);
@@ -826,6 +828,7 @@ export class ChartEditor {
     const options = {
       'editor-snap': this.snap,
       'editor-width': Math.min(this.width, LANES),
+      'editor-lane-division': this.laneDivision,
       'editor-node-kind': this.nodeKind,
       ...(this.mode.kind === 'align' ? {} : { 'editor-zoom': this.view.zoom }),
     };
@@ -918,6 +921,11 @@ export class ChartEditor {
       this.snap = clamp(Math.round(Number(input.value) || 0), 0, 4096);
       input.value = String(this.snap);
       this.updateNavigation();
+      this.draw();
+      return;
+    }
+    if (input.dataset.option === 'lane-division') {
+      this.laneDivision = LANE_DIVISIONS.find(value => String(value) === input.value) ?? 1;
       this.draw();
       return;
     }
@@ -1768,6 +1776,7 @@ export class ChartEditor {
       pickedJoint: this.pickedJoint,
       cursor: this.cursor,
       snap: this.snap,
+      laneDivision: this.laneDivision,
       hover,
       dragging: Boolean(this.drag),
       box: this.drag?.kind === 'box' && this.drag.moved ? this.drag : undefined,

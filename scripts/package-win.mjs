@@ -33,6 +33,8 @@ const paths = await packager({
   prune: true,
   ignore: file => !isPackagedPath(file),
   executableName: 'ChuniStudio',
+  // Written into the executable with resedit, so packaging on Linux needs no Wine.
+  icon: path.join(root, 'assets/icon/app.ico'),
 });
 for (const packagePath of paths) {
   const modules = path.join(packagePath, 'resources/app/node_modules');

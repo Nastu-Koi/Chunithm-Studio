@@ -3,6 +3,16 @@ import { LANES, type Chart } from '../core/model';
 /** Width of one lane on the canvas; lanes only get narrower when the view holds more of them than the canvas has room for. */
 const LANE_WIDTH = 15;
 
+/** 横向分割: the editor draws a lane line every this many lanes. */
+export const LANE_DIVISIONS = [1, 2, 4, 8, 16] as const;
+export type LaneDivision = (typeof LANE_DIVISIONS)[number];
+/** The line on the left boundary of `lane`: the track edges always, inner lines every `division` lanes, brighter every 4. */
+export function laneLine(lane: number, division: number): 'edge' | 'major' | 'minor' | undefined {
+  if (lane === 0 || lane === LANES) return 'edge';
+  if (lane % division !== 0) return undefined;
+  return lane % 4 === 0 ? 'major' : 'minor';
+}
+
 /** `lane` is the lane under the pointer; `laneAt` is the same place as a fractional lane coordinate. */
 export type Position = { x: number; y: number; tick: number; lane: number; laneAt: number };
 
