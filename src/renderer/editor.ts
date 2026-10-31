@@ -155,6 +155,8 @@ export class ChartEditor {
   private samples?: AudioSamples;
   private pendingDraw = 0;
   private inspectorKey = '';
+  /** The status bar markup as last written. */
+  private statusHtml = '';
   private bodyTextureGeneration = 0;
 
   constructor(
@@ -645,9 +647,13 @@ export class ChartEditor {
       this.cursor + this.chart.resolution * 2,
       this.view.scroll,
     );
-    this.minimap.max = String(Math.ceil(end));
-    this.minimap.step = String(this.step);
-    this.minimap.value = String(this.view.scroll);
+    // Written every playback frame: only touch the DOM when a value changed.
+    const max = String(Math.ceil(end)),
+      step = String(this.step),
+      value = String(this.view.scroll);
+    if (this.minimap.max !== max) this.minimap.max = max;
+    if (this.minimap.step !== step) this.minimap.step = step;
+    if (this.minimap.value !== value) this.minimap.value = value;
   }
 
   private onClick(event: MouseEvent): void {
@@ -1792,6 +1798,11 @@ export class ChartEditor {
       continuation,
       waveform: { peaks: this.peaks, duration: this.audioDuration, offset: this.audioOffset, samples: this.samples },
     });
-    this.status.innerHTML = `<span><i></i>${this.mode.kind === 'continue' ? '接续节点' : this.tool === 'select' ? '选择模式' : this.tool === 'erase' ? '橡皮擦' : LABEL[this.tool]}</span><span>光标 <b>${formatTick(this.cursor)}</b> tick · ${tickToSeconds(shown, this.cursor).toFixed(3)} s</span><span>${this.selection.size ? `已选 ${this.selection.size} · ` : ''}${shown.notes.length} 音符 · ${shown.events.length} 事件</span><span>${Math.round((view.zoom / 0.75) * 100)}% · ${this.snap ? `1/${this.snap} 全音符` : '自由'}</span>`;
+    const status = `<span><i></i>${this.mode.kind === 'continue' ? '接续节点' : this.tool === 'select' ? '选择模式' : this.tool === 'erase' ? '橡皮擦' : LABEL[this.tool]}</span><span>光标 <b>${formatTick(this.cursor)}</b> tick · ${tickToSeconds(shown, this.cursor).toFixed(3)} s</span><span>${this.selection.size ? `已选 ${this.selection.size} · ` : ''}${shown.notes.length} 音符 · ${shown.events.length} 事件</span><span>${Math.round((view.zoom / 0.75) * 100)}% · ${this.snap ? `1/${this.snap} 全音符` : '自由'}</span>`;
+    // The status bar is rebuilt every frame; parsing the same markup again would only cost layout work.
+    if (status !== this.statusHtml) {
+      this.statusHtml = status;
+      this.status.innerHTML = status;
+    }
   }
 }

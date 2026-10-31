@@ -249,10 +249,15 @@ export function moveEditorSelection(chart: Chart, ids: Set<string>, ticks: numbe
   let minDelta = -minTick,
     maxDelta = Infinity;
   const connections: { neighbor: Note; selected: Note; side: 'before' | 'after' }[] = [];
+  const position = segmentIndex(chart).position;
   for (const note of notes)
-    if (CHAIN_NOTE_TYPES.has(note.type))
-      for (const neighbor of chart.notes) {
-        if (ids.has(neighbor.id) || neighbor.type !== note.type) continue;
+    if (CHAIN_NOTE_TYPES.has(note.type)) {
+      // Unselected segments of the same type ending on this one's start or starting on its end, in chart order.
+      const candidates = [
+        ...editorNotesAt(chart, note.tick, true),
+        ...editorNotesAt(chart, endTick(note), false),
+      ].filter(neighbor => !ids.has(neighbor.id) && neighbor.type === note.type);
+      for (const neighbor of [...new Set(candidates)].sort((a, b) => position.get(a)! - position.get(b)!)) {
         if (
           sameTick(endTick(neighbor), note.tick) &&
           endLane(neighbor) === note.lane &&
@@ -270,6 +275,7 @@ export function moveEditorSelection(chart: Chart, ids: Set<string>, ticks: numbe
           maxDelta = Math.min(maxDelta, endTick(neighbor) - endTick(note) - 1e-7);
         }
       }
+    }
   const dt = clamp(ticks, minDelta, maxDelta);
   const assignments = events.filter(event => event.type === 'SCROLL_ASSIGNMENT');
   const minLane = Math.min(
@@ -688,14 +694,54 @@ export function mergeEditorExTaps(chart: Chart, ids: Set<string>): { chart: Char
   return { chart, merged };
 }
 
+/**
+ * The chart's notes by where they start and where they end, so adjoining segments are found without scanning the chart.
+ * Ticks are bucketed at 1e-6; a lookup reads the neighbouring buckets too, so it finds exactly what `sameTick` accepts.
+ */
+interface SegmentIndex {
+  starts: Map<number, Note[]>;
+  ends: Map<number, Note[]>;
+  /** Record position of every note, to return candidates in chart order like a linear scan would. */
+  position: Map<Note, number>;
+}
+const segmentIndexes = new WeakMap<Chart, SegmentIndex>();
+const tickBucket = (tick: number) => Math.round(tick * 1e6);
+function segmentIndex(chart: Chart): SegmentIndex {
+  const cached = segmentIndexes.get(chart);
+  if (cached) return cached;
+  const index: SegmentIndex = { starts: new Map(), ends: new Map(), position: new Map() };
+  const add = (map: Map<number, Note[]>, tick: number, note: Note) => {
+    const bucket = tickBucket(tick),
+      notes = map.get(bucket);
+    if (notes) notes.push(note);
+    else map.set(bucket, [note]);
+  };
+  chart.notes.forEach((note, at) => {
+    index.position.set(note, at);
+    add(index.starts, note.tick, note);
+    add(index.ends, endTick(note), note);
+  });
+  segmentIndexes.set(chart, index);
+  return index;
+}
+/** The notes that start (or, `atEnd`, end) within `sameTick` of `tick`, in chart order. */
+export function editorNotesAt(chart: Chart, tick: number, atEnd: boolean): Note[] {
+  const index = segmentIndex(chart),
+    map = atEnd ? index.ends : index.starts,
+    bucket = tickBucket(tick);
+  const found: Note[] = [];
+  for (let near = bucket - 1; near <= bucket + 1; near++)
+    for (const note of map.get(near) ?? []) if (sameTick(atEnd ? endTick(note) : note.tick, tick)) found.push(note);
+  if (found.length > 1) found.sort((a, b) => index.position.get(a)! - index.position.get(b)!);
+  return found;
+}
 /** The segment that continues from this segment's end: same type, time, lane, width and, in the air, height. */
 export function nextEditorSegment(chart: Chart, note: Note): Note | undefined {
   if (!long(note) || note.type === 'HOLD') return undefined;
-  return chart.notes.find(
+  return editorNotesAt(chart, endTick(note), false).find(
     item =>
       item.id !== note.id &&
       item.type === note.type &&
-      sameTick(item.tick, endTick(note)) &&
       item.lane === endLane(note) &&
       item.width === endWidth(note) &&
       (item.height === undefined || item.height === (note.endHeight ?? note.height)),
@@ -712,11 +758,10 @@ export function editorChain(chart: Chart, note: Note): Note[] {
   if (!long(note) || note.type === 'HOLD') return chain;
   for (;;) {
     const head = chain[0],
-      previous = chart.notes.find(
+      previous = editorNotesAt(chart, head.tick, true).find(
         item =>
           !seen.has(item.id) &&
           item.type === head.type &&
-          sameTick(endTick(item), head.tick) &&
           endLane(item) === head.lane &&
           endWidth(item) === head.width &&
           (head.height === undefined || head.height === (item.endHeight ?? item.height)),

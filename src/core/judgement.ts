@@ -133,6 +133,16 @@ export interface NativeAirBindings {
   /** First record of every AIR chain ScoreReader rejects with `pParent == NULL`. */
   orphans: readonly Note[];
 }
+const nativeRoots = new WeakMap<Chart, { notes: Note[]; roots: NativeRoot[]; orphanCount: number }>();
+/** The chart's notes in native record order and the roots ScoreReader builds from them, computed once per chart. */
+function nativeRootsFor(chart: Chart): { notes: Note[]; roots: NativeRoot[]; orphanCount: number } {
+  const cached = nativeRoots.get(chart);
+  if (cached) return cached;
+  const notes = getC2SEntityOrder(chart).entities.filter((entity): entity is Note => 'attributes' in entity);
+  const result = { notes, ...readNativeRoots(notes) };
+  nativeRoots.set(chart, result);
+  return result;
+}
 const bindings = new WeakMap<Chart, NativeAirBindings>();
 /** ScoreReader stores AIR as an attachment of a ground root, never as a free note:
  * the head must match a root's parent type, current tail time, lane and width, and
@@ -141,11 +151,10 @@ const bindings = new WeakMap<Chart, NativeAirBindings>();
 export function getNativeAirBindings(chart: Chart): NativeAirBindings {
   const old = bindings.get(chart);
   if (old) return old;
-  const notes = getC2SEntityOrder(chart).entities.filter((entity): entity is Note => 'attributes' in entity);
   const parentOf = new Map<string, Note>(),
     airOf = new Map<string, Note[]>(),
     orphans: Note[] = [];
-  for (const root of readNativeRoots(notes).roots) {
+  for (const root of nativeRootsFor(chart).roots) {
     if (!root.air.length) continue;
     if (!root.airParent) {
       orphans.push(root.air[0]);
@@ -160,11 +169,15 @@ export function getNativeAirBindings(chart: Chart): NativeAirBindings {
 }
 /** FIFO consumption prevents a single preceding segment from silently merging independent paths. */
 /** The same consumed-tail chains used by scoring, exposed for continuous SLIDE visuals. */
+const slideChains = new WeakMap<Chart, readonly (readonly Note[])[]>();
 export function getNativeSlideChains(chart: Chart): readonly (readonly Note[])[] {
-  const notes = getC2SEntityOrder(chart).entities.filter((entity): entity is Note => 'attributes' in entity);
-  return readNativeRoots(notes)
+  const cached = slideChains.get(chart);
+  if (cached) return cached;
+  const result = nativeRootsFor(chart)
     .roots.filter(root => root.ground[0]?.type === 'SLIDE')
     .map(root => root.ground);
+  slideChains.set(chart, result);
+  return result;
 }
 
 function chains(chart: Chart, type: Note['type']): Note[][] {
@@ -239,29 +252,28 @@ export function buildJudgementTimeline(chart: Chart): JudgementTimeline {
     diagnostics.push('BPM、分辨率或 PROGJUDGE_BPM 无效；没有生成判定时间表。');
   }
   let invalidNotes = 0;
-  const validNotes = getC2SEntityOrder(chart)
-    .entities.filter((entity): entity is Note => 'attributes' in entity)
-    .filter(note => {
-      const valid =
-        NOTE_TYPES.includes(note.type) &&
-        Number.isFinite(note.tick) &&
-        note.tick >= 0 &&
-        Number.isFinite(note.duration ?? 0) &&
-        (note.duration ?? 0) >= 0 &&
-        Number.isFinite(end(note)) &&
-        [
-          note.lane,
-          note.width,
-          note.endLane ?? note.lane,
-          note.endWidth ?? note.width,
-          note.height ?? 1,
-          note.endHeight ?? note.height ?? 1,
-        ].every(Number.isFinite) &&
-        (note.type !== 'AIR_CRUSH' ||
-          (Number.isFinite(Number(note.attributes.interval ?? 24)) && Number(note.attributes.interval ?? 24) >= 0));
-      if (!valid) invalidNotes++;
-      return valid;
-    });
+  const ordered = nativeRootsFor(chart);
+  const validNotes = ordered.notes.filter(note => {
+    const valid =
+      NOTE_TYPES.includes(note.type) &&
+      Number.isFinite(note.tick) &&
+      note.tick >= 0 &&
+      Number.isFinite(note.duration ?? 0) &&
+      (note.duration ?? 0) >= 0 &&
+      Number.isFinite(end(note)) &&
+      [
+        note.lane,
+        note.width,
+        note.endLane ?? note.lane,
+        note.endWidth ?? note.width,
+        note.height ?? 1,
+        note.endHeight ?? note.height ?? 1,
+      ].every(Number.isFinite) &&
+      (note.type !== 'AIR_CRUSH' ||
+        (Number.isFinite(Number(note.attributes.interval ?? 24)) && Number(note.attributes.interval ?? 24) >= 0));
+    if (!valid) invalidNotes++;
+    return valid;
+  });
   if (invalidNotes) {
     unsupported = true;
     diagnostics.push(`${invalidNotes} 个音符的时间、长度、几何坐标或 CRUSH 间隔无效，已跳过。`);
@@ -333,7 +345,8 @@ export function buildJudgementTimeline(chart: Chart): JudgementTimeline {
     for (let i = 0; i < count; i++)
       add(note, Math.min(stop, ticks[i]), category, normalEnd && i === count - 1 ? 'end' : 'sustain');
   };
-  const { roots, orphanCount } = readNativeRoots(workingChart.notes);
+  // With every note valid the working notes are the cached native order, so its roots serve again.
+  const { roots, orphanCount } = validTimebase && invalidNotes === 0 ? ordered : readNativeRoots(workingChart.notes);
   if (orphanCount) {
     unsupported = true;
     diagnostics.push(`${orphanCount} 个 AIR 记录在读取时缺少匹配的原生父音符；仅保留独立预览。`);

@@ -8,6 +8,8 @@ import {
   tickToSeconds,
   secondsToTick,
   getNoteScrollGroup,
+  noteSpeedAtTick,
+  scrollCoordinate,
   type NotePlaybackPoint,
 } from '../core/timing';
 import { getPlayerPlaybackPoints } from './playback-points';
@@ -244,6 +246,30 @@ export function getPlayerCrushMarkerTicks(
   }
   return result;
 }
+/**
+ * What a note's scroll distance needs besides the current time: its group and speed, and the scroll coordinates of its
+ * head, its tail and every motion boundary between them. None of these change from frame to frame, so the player
+ * computes them once per chart and a frame only looks up the coordinate of the current tick, once per group.
+ */
+export interface NoteScroll {
+  group: number;
+  speed: number;
+  coordinates: ReadonlyMap<number, number>;
+}
+export function getNoteScroll(chart: Chart, note: Note): NoteScroll {
+  const group = getNoteScrollGroup(chart, note),
+    speed = noteSpeedAtTick(chart, note.tick),
+    coordinates = new Map<number, number>();
+  const end = note.tick + (note.duration ?? 0);
+  for (const tick of [note.tick, end, ...cutsFor(chart, note).filter(cut => cut > note.tick && cut < end)])
+    if (!coordinates.has(tick)) coordinates.set(tick, scrollCoordinate(chart, tick, group));
+  return { group, speed, coordinates };
+}
+/** The value of `getScrollPosition(chart, tick, currentTick, note)`, given `scrollCoordinate(chart, currentTick, group)`. */
+export function scrollDistanceOf(chart: Chart, scroll: NoteScroll, tick: number, currentCoordinate: number): number {
+  const coordinate = scroll.coordinates.get(tick) ?? scrollCoordinate(chart, tick, scroll.group);
+  return (coordinate - currentCoordinate) * scroll.speed;
+}
 /** Break at every tempo/motion boundary before clipping. Endpoints alone cannot cull a reversing ribbon. */
 export function getPlayerRibbonSegments(
   chart: Chart,
@@ -255,9 +281,8 @@ export function getPlayerRibbonSegments(
 ): PlayerRibbonSegment[] {
   if (!(note.duration && note.duration > 0)) return [];
   return ribbonSegments(
-    chart,
-    note,
-    currentTick,
+    cutsFor(chart, note),
+    tick => getScrollPosition(chart, tick, currentTick, note),
     Math.max(note.tick, currentTick),
     note.tick + note.duration,
     far,
@@ -275,9 +300,51 @@ export function getPlayerPastRibbonSegments(
 ): PlayerRibbonSegment[] {
   if (!(note.duration && note.duration > 0)) return [];
   return ribbonSegments(
-    chart,
-    note,
-    currentTick,
+    cutsFor(chart, note),
+    tick => getScrollPosition(chart, tick, currentTick, note),
+    note.tick,
+    Math.min(currentTick, note.tick + note.duration),
+    0,
+    near,
+    piece,
+  );
+}
+/** `getPlayerRibbonSegments` from a note's precomputed scroll data; the same segments, without per-tick searches. */
+export function getNoteRibbonSegments(
+  chart: Chart,
+  note: Note,
+  scroll: NoteScroll,
+  currentTick: number,
+  currentCoordinate: number,
+  far: number,
+  near: number,
+  piece: number,
+): PlayerRibbonSegment[] {
+  if (!(note.duration && note.duration > 0)) return [];
+  return ribbonSegments(
+    cutsFor(chart, note),
+    tick => scrollDistanceOf(chart, scroll, tick, currentCoordinate),
+    Math.max(note.tick, currentTick),
+    note.tick + note.duration,
+    far,
+    near,
+    piece,
+  );
+}
+/** `getPlayerPastRibbonSegments` from a note's precomputed scroll data. */
+export function getNotePastRibbonSegments(
+  chart: Chart,
+  note: Note,
+  scroll: NoteScroll,
+  currentTick: number,
+  currentCoordinate: number,
+  near: number,
+  piece: number,
+): PlayerRibbonSegment[] {
+  if (!(note.duration && note.duration > 0)) return [];
+  return ribbonSegments(
+    cutsFor(chart, note),
+    tick => scrollDistanceOf(chart, scroll, tick, currentCoordinate),
     note.tick,
     Math.min(currentTick, note.tick + note.duration),
     0,
@@ -286,9 +353,8 @@ export function getPlayerPastRibbonSegments(
   );
 }
 function ribbonSegments(
-  chart: Chart,
-  note: Note,
-  currentTick: number,
+  cuts: readonly number[],
+  distanceAt: (tick: number) => number,
   firstTick: number,
   lastTick: number,
   far: number,
@@ -296,17 +362,16 @@ function ribbonSegments(
   piece: number,
 ): PlayerRibbonSegment[] {
   if (firstTick >= lastTick) return [];
-  const cuts = cutsFor(chart, note),
-    ticks = [firstTick];
+  const ticks = [firstTick];
   for (let index = upperBound(cuts, firstTick, tick => tick); index < cuts.length && cuts[index] < lastTick; index++)
     ticks.push(cuts[index]);
   ticks.push(lastTick);
   const result: PlayerRibbonSegment[] = [];
   let a = ticks[0],
-    da = getScrollPosition(chart, a, currentTick, note);
+    da = distanceAt(a);
   for (let index = 1; index < ticks.length; index++) {
     const b = ticks[index],
-      db = getScrollPosition(chart, b, currentTick, note);
+      db = distanceAt(b);
     if (Number.isFinite(da) && Number.isFinite(db) && Math.min(da, db) <= far && Math.max(da, db) >= near) {
       const delta = db - da;
       let low = 0,
@@ -357,6 +422,8 @@ interface Frame {
   airNear: number;
   /** AIR-CRUSH markers still allowed this frame. */
   crushMarkerBudget: number;
+  /** The scroll coordinate of the current tick in each scroll group met so far this frame. */
+  coordinates: Map<number, number>;
 }
 /**
  * One drawing step. `order` is the game's sort key of what it draws, `layer × 256 + in-layer priority`
@@ -402,7 +469,7 @@ export class ChartPlayer {
   private hostHeight = 0;
   private dpr = 1;
   private observer: ResizeObserver;
-  private sorted: { note: Note; start: number; end: number }[] = [];
+  private sorted: { note: Note; start: number; end: number; scroll: NoteScroll }[] = [];
   private textureGeneration = 0;
   private modelSprites = new Map<string, Sprite>();
   private bodySprites = new Map<string, Sprite>();
@@ -603,6 +670,7 @@ export class ChartPlayer {
         note,
         start: tickToSeconds(chart, note.tick),
         end: tickToSeconds(chart, note.tick + (note.duration ?? 0)),
+        scroll: getNoteScroll(chart, note),
       }))
       .sort((a, b) => b.start - a.start);
     this.effectEvents = buildNoteEffectEvents(chart);
@@ -993,6 +1061,7 @@ export class ChartPlayer {
       near: -40 / unit,
       airNear: -AIR_HOLD_NEAR_Z / unit,
       crushMarkerBudget: 512,
+      coordinates: new Map(),
     };
     this.drawField(frame);
     const { primitives, keeps } = this.collectPrimitives(frame);
@@ -1109,18 +1178,28 @@ export class ChartPlayer {
     for (const entry of this.sorted) this.notePrimitives(entry, frame, primitives, keeps);
     return { primitives, keeps };
   }
+  /** The scroll coordinate of the frame's tick in `group`, computed once per group and frame. */
+  private currentCoordinate(frame: Frame, group: number): number {
+    let coordinate = frame.coordinates.get(group);
+    if (coordinate === undefined) {
+      coordinate = scrollCoordinate(this.chart, frame.tick, group);
+      frame.coordinates.set(group, coordinate);
+    }
+    return coordinate;
+  }
   private notePrimitives(
-    { note, start, end }: { note: Note; start: number; end: number },
+    { note, start, end, scroll }: { note: Note; start: number; end: number; scroll: NoteScroll },
     frame: Frame,
     primitives: Primitive[],
     keeps: EffectKeep[],
   ): void {
     const { seconds, tick, unit, far, near, airNear } = frame;
     const live = end >= seconds;
+    const now = this.currentCoordinate(frame, scroll.group);
     // An AIR SLIDE keeps scrolling towards the camera with the shape it had, also after its end.
     const past =
       note.type === 'AIR_SLIDE' && tick > note.tick
-        ? getPlayerPastRibbonSegments(this.chart, note, tick, airNear, 170 / unit)
+        ? getNotePastRibbonSegments(this.chart, note, scroll, tick, now, airNear, 170 / unit)
         : [];
     if (end < seconds - 0.32 && !past.length) return;
     const points = note.type === 'AIR_CRUSH' ? [] : getPlayerPlaybackPoints(this.chart, note);
@@ -1142,9 +1221,9 @@ export class ChartPlayer {
       });
     }
     if (!live && !past.length) return;
-    const head = getScrollPosition(this.chart, note.tick, tick, note);
-    const tail = getScrollPosition(this.chart, note.tick + (note.duration ?? 0), tick, note);
-    const ribbon = live ? getPlayerRibbonSegments(this.chart, note, tick, far, near, 170 / unit) : [];
+    const head = scrollDistanceOf(this.chart, scroll, note.tick, now);
+    const tail = scrollDistanceOf(this.chart, scroll, note.tick + (note.duration ?? 0), now);
+    const ribbon = live ? getNoteRibbonSegments(this.chart, note, scroll, tick, now, far, near, 170 / unit) : [];
     // A held AIR HOLD does not end in mid-air above the judgement line: its line runs straight on, out of the bottom of the screen.
     if (note.type === 'AIR_HOLD' && tick > note.tick && ribbon.length && Math.abs(ribbon[0].startTick - tick) < 1e-7) {
       ribbon.unshift({

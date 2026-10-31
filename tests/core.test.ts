@@ -7,6 +7,7 @@ import {
   createNote,
   parseC2S,
   serializeC2S,
+  getC2SEntityOrder,
   tickToSeconds,
   secondsToTick,
   getGrid,
@@ -424,4 +425,22 @@ test('fractional AIR-CRUSH spacing reports accumulated judgement timing error an
   assert.ok(Math.abs(entry.intervalErrorMs! - ((330 - (384 * 6) / 7) * 1000) / 192) < 1e-9);
   assert.equal(entry.judgementCountChanged, true);
   assert.ok(entry.maxErrorMs > 4);
+});
+
+test('records whose decoded values are unchanged stay byte-exact whatever their key order, and the order is cached', () => {
+  const chart = parseC2S(fixture);
+  const reordered = {
+    ...chart,
+    notes: chart.notes.map(note => {
+      const { id, type, tick, lane, width, attributes, native, ...rest } = note;
+      // A different key order with every value equal, as an editor transform that spreads a note may produce.
+      return { attributes: { ...attributes }, native, ...rest, width, lane, tick, type, id };
+    }),
+  };
+  assert.equal(getC2SEntityOrder(reordered).changed, false);
+  assert.equal(serializeC2S(reordered), fixture);
+  assert.equal(getC2SEntityOrder(reordered), getC2SEntityOrder(reordered));
+  const edited = { ...chart, notes: chart.notes.map((note, index) => (index ? note : { ...note, lane: 5 })) };
+  assert.equal(getC2SEntityOrder(edited).changed, true);
+  assert.notEqual(getC2SEntityOrder(edited), getC2SEntityOrder(chart));
 });

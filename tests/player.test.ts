@@ -1,10 +1,14 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import { createChart, createNote, type Chart, type Note } from '../src/core/model';
-import { getScrollPosition } from '../src/core/timing';
+import { getScrollPosition, scrollCoordinate } from '../src/core/timing';
 import {
   getPlayerRibbonSegments,
   getPlayerPastRibbonSegments,
+  getNoteScroll,
+  getNoteRibbonSegments,
+  getNotePastRibbonSegments,
+  scrollDistanceOf,
   getPlayerHeadTextureKey,
   getPlayerBodyTextureKey,
   getPlayerTextureRectangle,
@@ -263,4 +267,63 @@ test('reversed scrolling does not bring elapsed AIR SLIDE parts back in front of
   for (const tick of [4000, 4800, 5700, 7000])
     for (const segment of getPlayerPastRibbonSegments(chart, note, tick, -5))
       assert.ok(segment.startDistance <= 1e-12 && segment.endDistance <= 1e-12 && segment.endTick <= tick);
+});
+
+test('precomputed note scroll gives the same distances and ribbon segments as the per-tick lookups', () => {
+  let seed = 11;
+  const random = () => ((seed = (seed * 48271) % 2147483647) - 1) / 2147483646;
+  const pick = <T>(items: readonly T[]): T => items[Math.floor(random() * items.length)];
+  for (let round = 0; round < 30; round++) {
+    const chart = createChart();
+    chart.events = [
+      { id: 'bpm-a', type: 'BPM', tick: pick([0, 384, 1000]), value: pick([120, 180, 90]) },
+      { id: 'stop', type: 'STOP', tick: pick([0, 700, 2000]), duration: pick([96, 192]), value: 0 },
+      {
+        id: 'scroll',
+        type: 'SCROLL',
+        tick: pick([200, 1500, 3000]),
+        duration: pick([384, 768]),
+        value: pick([0, -2, 3]),
+      },
+      { id: 'group', type: 'GROUP_SCROLL', tick: pick([100, 900]), duration: 768, value: pick([0.5, -1]), group: 1 },
+      { id: 'speed', type: 'NOTE_SPEED', tick: pick([0, 1200]), duration: 2000, value: pick([0.5, 2]) },
+    ];
+    for (let count = 0; count < 12; count++) {
+      const note = createNote(
+        pick(['SLIDE', 'AIR_SLIDE', 'HOLD', 'TAP'] as const),
+        pick([0, 500, 1234, 2600, 4000]),
+        2,
+        4,
+      );
+      if (note.duration !== undefined) {
+        note.duration = pick([96, 768, 2500]);
+        note.endLane = pick([2, 6]);
+      }
+      if (count % 3 === 0) note.attributes.speedGroup = 1;
+      chart.notes.push(note);
+    }
+    for (const note of chart.notes) {
+      const scroll = getNoteScroll(chart, note);
+      for (const currentTick of [0, 300, 1234, 2000, 4500]) {
+        const coordinate = scrollCoordinate(chart, currentTick, scroll.group);
+        assert.equal(
+          scrollDistanceOf(chart, scroll, note.tick, coordinate),
+          getScrollPosition(chart, note.tick, currentTick, note),
+        );
+        const end = note.tick + (note.duration ?? 0);
+        assert.equal(
+          scrollDistanceOf(chart, scroll, end, coordinate),
+          getScrollPosition(chart, end, currentTick, note),
+        );
+        assert.deepEqual(
+          getNoteRibbonSegments(chart, note, scroll, currentTick, coordinate, 12, -0.18, 0.75),
+          getPlayerRibbonSegments(chart, note, currentTick, 12, -0.18, 0.75),
+        );
+        assert.deepEqual(
+          getNotePastRibbonSegments(chart, note, scroll, currentTick, coordinate, -1, 0.75),
+          getPlayerPastRibbonSegments(chart, note, currentTick, -1, 0.75),
+        );
+      }
+    }
+  }
 });

@@ -63,3 +63,20 @@ RFZ 文字缓存以单字形小图保存，最多 1,024 项；不会为每种文
 测量时载入 407 个原始音符模型，每帧特效图元平均 155.85、峰值 728；舞台每帧绘制 3612 个三角形，合为一次 WebGL draw。舞台 Canvas 每帧刷新到音符 GPU 层作为背景，以正确执行原特效的加法混合，这项工作包含在完整测量内。音乐时钟与播放位置相对墙钟的速率均为 1.0000，renderer errors 为空。最终报告为 `out/performance/final-0.1.8.json`，另附同名 CPU profile 与截图。
 
 之后顺序运行完整 `windows-desktop.mjs`，win32 bridge、原曲导入、音频解码、编辑和节点类型、小节定位、动画、XML 与 OPT 导出均通过，生成 8 个导出文件；证据为 `out/windows-test/evidence.json`。最后在同一 0.1.8 runtime 上重跑 `windows-mesh-gpu.mjs`，上述 17 项真实 GPU 检查全部通过。所有窗口使用独立测试 profile，未与其他 GPU 测量并发，也没有写入原游戏目录。
+
+## 逻辑热路径（0.1.27）
+
+上面的测量都在 Windows 实机上针对绘制负担；这一节是与绘制无关的纯逻辑，在 WSL 的 Node 24 里用原游戏目录中最大的谱面（`A300/music8259/8259_05.c2s`，12,110 行、11,994 个音符，只读）测量，脚本与原始输出见 `.claude/issue/002-performance/`（仅本地）。数字因机器而异，表里只看倍率。
+
+| 环节 | 优化前 | 优化后 | 做法 |
+| --- | ---: | ---: | --- |
+| 编辑器指针移动一次（`hitsAt`） | 666 ms | 6.5 ms | 相邻段查找原来对每个音符线性扫描全部音符（O(N²)）；`src/core/editing.ts` 按谱面缓存一份起点／终点索引（tick 按 1e-6 分桶，查相邻桶再用 `sameTick` 过滤，与原容差等价），`nextEditorSegment`、`editorChain`、`moveEditorSelection` 都改用它 |
+| 一次编辑提交后的同步（校验、判定表、打击音、特效、贴图跨度） | 241 ms | 48 ms | `getC2SEntityOrder` 与 `getNativeSlideChains` 按谱面缓存，原生根（`readNativeRoots`）在绑定、SLIDE 链与判定表之间共用；记录是否改动改为按值比较，不再对每个音符做三次 JSON 序列化 |
+| `serializeC2S`（未改动 / 已改动） | 98 / 116 ms | 25 / 31 ms | 同上 |
+| 拖动 20 个音符一次（`moveEditorSelection`） | 15 ms | 1.4 ms | 同上的段索引 |
+| 播放页一帧的音符逻辑（全部未结束音符的滚动距离与长条分段） | 8.8 ms | 1.4 ms | 每个音符的分组、速度、头尾与各运动切分点的滚动坐标与当前时刻无关，`ChartPlayer.setChart` 时算一次；每帧只对每个分组算一次当前坐标。`getNoteRibbonSegments` 与 `getPlayerRibbonSegments` 共用同一分段函数，结果逐位相同（`tests/player.test.ts`） |
+| 编辑器每帧 DOM 写入 | — | — | 状态栏 innerHTML 与导航条属性只在内容变化时写 |
+
+没有改的：
+- 自动保存把整个工程经 IPC 克隆到主进程（这张谱面 7.7 MB，克隆约 50 ms）。`native.original` 与 `native.columns` 重复了每个音符的数据，瘦身要改工程文件的数据结构，另行决定。
+- `parseC2S`（约 70 ms）与 `getGrid`、`meterAtTick`（每帧 < 0.2 ms）不是瓶颈。

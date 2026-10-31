@@ -60,29 +60,72 @@ const headers = new Set([
   'TUTORIAL',
   'CLK',
 ]);
+/** The decoded fields as stored in `native.original`: a JSON value, so `undefined` fields are absent. */
 function snapshot(value: Note | ChartEvent): Record<string, unknown> {
   const { native: _native, ...rest } = value;
   return JSON.parse(JSON.stringify(rest));
 }
-function same(a: unknown, b: unknown): boolean {
-  return JSON.stringify(a) === JSON.stringify(b);
+/** Whether `value` is the same JSON value as `original`, whatever the key order; an `undefined` field counts as absent. */
+function sameValue(value: unknown, original: unknown): boolean {
+  if (value === original) return true;
+  if (typeof value !== 'object' || typeof original !== 'object' || value === null || original === null)
+    return typeof value === 'number' && typeof original === 'number' && Number.isNaN(value) && Number.isNaN(original);
+  if (Array.isArray(value) !== Array.isArray(original)) return false;
+  if (Array.isArray(value))
+    return (
+      value.length === (original as unknown[]).length &&
+      value.every((item, index) => sameValue(item, (original as unknown[])[index]))
+    );
+  const left = value as Record<string, unknown>,
+    right = original as Record<string, unknown>;
+  for (const key in left) if (left[key] !== undefined && !(key in right)) return false;
+  for (const key in right) {
+    if (right[key] === undefined) continue;
+    if (!(key in left) || !sameValue(left[key], right[key])) return false;
+  }
+  return true;
 }
+/** Whether a note or event still holds the fields decoded from its source record. */
+function unchanged(item: Note | ChartEvent): boolean {
+  if (!item.native) return false;
+  const { native: _native, ...rest } = item;
+  return sameValue(rest, item.native.original);
+}
+const entityOrders = new WeakMap<Chart, { changed: boolean; entities: (Note | ChartEvent)[] }>();
 /** Actual record order used by the native reader after serialization. Fractional
  * project coordinates remain untouched here; export quantization is separate.
+ * Cached per chart when no extra events are supplied; callers must not mutate the result.
  */
 export function getC2SEntityOrder(
   chart: Chart,
   extraEvents: ChartEvent[] = [],
 ): { changed: boolean; entities: (Note | ChartEvent)[] } {
+  const cacheable = extraEvents.length === 0;
+  const cached = cacheable ? entityOrders.get(chart) : undefined;
+  if (cached) return cached;
+  const result = computeC2SEntityOrder(chart, extraEvents);
+  if (cacheable) entityOrders.set(chart, result);
+  return result;
+}
+function computeC2SEntityOrder(
+  chart: Chart,
+  extraEvents: ChartEvent[],
+): { changed: boolean; entities: (Note | ChartEvent)[] } {
   const source = chart.source;
+  let noteRecords = 0,
+    eventRecords = 0;
+  for (const row of source?.records ?? []) {
+    if (row.kind === 'note') noteRecords++;
+    else if (row.kind === 'event') eventRecords++;
+  }
   const changed =
     !source ||
     chart.resolution !== source.originalResolution ||
     chart.defaultBpm !== source.originalDefaultBpm ||
-    source.records.filter(row => row.kind === 'note').length !== chart.notes.length ||
-    source.records.filter(row => row.kind === 'event').length !== chart.events.length ||
-    chart.notes.some(note => !note.native || !same(snapshot(note), note.native.original)) ||
-    chart.events.some(event => !event.native || !same(snapshot(event), event.native.original));
+    noteRecords !== chart.notes.length ||
+    eventRecords !== chart.events.length ||
+    !chart.notes.every(unchanged) ||
+    !chart.events.every(unchanged);
   const notes = new Map(chart.notes.map(note => [note.id, note]));
   const events = new Map([...chart.events, ...extraEvents].map(event => [event.id, event]));
   const all = [...events.values(), ...notes.values()];
@@ -372,7 +415,7 @@ function mergeNative(
 ): string {
   const old = item.native;
   if (!old) return columns.join('\t');
-  if (same(snapshot(item), old.original) && resolution === originalResolution) return old.raw;
+  if (unchanged(item) && resolution === originalResolution) return old.raw;
   const original = old.original as unknown as Note | ChartEvent;
   const oldComputed = isNote(original)
     ? noteColumns(original, originalResolution)

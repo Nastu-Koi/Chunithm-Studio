@@ -14,6 +14,7 @@ import {
   removeEditorJoint,
   mergeEditorExTaps,
   editorChain,
+  nextEditorSegment,
   attachEditorAir,
   boundEditorParent,
   setEditorEx,
@@ -816,4 +817,104 @@ test("an ExTAP moved exactly onto a HOLD / SLIDE head becomes that long note's E
   const bound = { ...chart, notes: [hold, carrier, air] };
   assert.equal(mergeEditorExTaps(bound, new Set([carrier.id])).chart, bound);
   assert.equal(mergeEditorExTaps(chart, new Set([tail.id])).chart, chart);
+});
+
+test('indexed segment lookups match a linear scan on random charts with fractional and near-equal ticks', () => {
+  // The reference is the former linear scan: the first note in chart order that satisfies the same conditions.
+  const linearNext = (chart: ReturnType<typeof createChart>, note: Note): Note | undefined =>
+    !['SLIDE', 'AIR_HOLD', 'AIR_SLIDE', 'AIR_CRUSH'].includes(note.type)
+      ? undefined
+      : chart.notes.find(
+          item =>
+            item.id !== note.id &&
+            item.type === note.type &&
+            Math.abs(item.tick - (note.tick + (note.duration ?? 0))) < 1e-6 &&
+            item.lane === (note.endLane ?? note.lane) &&
+            item.width === (note.endWidth ?? note.width) &&
+            (item.height === undefined || item.height === (note.endHeight ?? note.height)),
+        );
+  let seed = 7;
+  const random = () => ((seed = (seed * 48271) % 2147483647) - 1) / 2147483646;
+  const pick = <T>(items: readonly T[]): T => items[Math.floor(random() * items.length)];
+  for (let round = 0; round < 40; round++) {
+    const chart = createChart();
+    const ticks = [
+      0,
+      96,
+      384 / 7,
+      (384 * 3) / 7,
+      1000,
+      1000 + 5e-7,
+      1000 - 5e-7,
+      1000 + 2e-6,
+      2000.4999995,
+      2000.5000004,
+    ];
+    for (let count = 0; count < 60; count++) {
+      const type = pick(['SLIDE', 'AIR_SLIDE', 'AIR_CRUSH', 'HOLD', 'TAP'] as const);
+      const note = createNote(type, pick(ticks), pick([0, 2, 4]), pick([2, 4]));
+      if (note.duration !== undefined) {
+        note.duration = pick([0, 96, 384 / 7, 1000 - note.tick, 2000.5 - note.tick].filter(value => value >= 0));
+        note.endLane = pick([0, 2, 4]);
+        note.endWidth = pick([2, 4]);
+      }
+      if (note.height !== undefined) {
+        note.height = pick([1, 5]);
+        note.endHeight = pick([1, 5]);
+      }
+      chart.notes.push(note);
+    }
+    // The former editorChain: forward by linearNext, then backwards by the first note in chart order ending on the head.
+    const linearChain = (chart: ReturnType<typeof createChart>, note: Note): Note[] => {
+      const chain = [note],
+        seen = new Set([note.id]);
+      for (let next = linearNext(chart, note); next && !seen.has(next.id); next = linearNext(chart, next)) {
+        chain.push(next);
+        seen.add(next.id);
+      }
+      if (!['SLIDE', 'AIR_HOLD', 'AIR_SLIDE', 'AIR_CRUSH'].includes(note.type)) return chain;
+      for (;;) {
+        const head = chain[0],
+          previous = chart.notes.find(
+            item =>
+              !seen.has(item.id) &&
+              item.type === head.type &&
+              Math.abs(item.tick + (item.duration ?? 0) - head.tick) < 1e-6 &&
+              (item.endLane ?? item.lane) === head.lane &&
+              (item.endWidth ?? item.width) === head.width &&
+              (head.height === undefined || head.height === (item.endHeight ?? item.height)),
+          );
+        if (!previous) return chain;
+        chain.unshift(previous);
+        seen.add(previous.id);
+      }
+    };
+    for (const note of chart.notes) {
+      assert.equal(nextEditorSegment(chart, note), linearNext(chart, note));
+      const chain = editorChain(chart, note),
+        expected = linearChain(chart, note);
+      assert.equal(chain.length, expected.length);
+      chain.forEach((item, index) => assert.equal(item, expected[index]));
+    }
+  }
+});
+
+test('moving a middle segment of a chain drags the joints of its unselected neighbours with it', () => {
+  const chart = createChart();
+  const first = createNote('SLIDE', 0, 0, 4),
+    middle = createNote('SLIDE', 384 / 7, 4, 4),
+    last = createNote('SLIDE', (384 * 2) / 7, 2, 4);
+  first.duration = middle.duration = last.duration = 384 / 7;
+  first.endLane = 4;
+  middle.endLane = 2;
+  last.endLane = 6;
+  chart.notes = [first, middle, last];
+  const moved = moveEditorSelection(chart, new Set([middle.id]), 10, 1);
+  assert.equal(moved.notes[1].tick, 384 / 7 + 10);
+  assert.equal(moved.notes[1].lane, 5);
+  assert.equal(moved.notes[0].endLane, 5);
+  assert.ok(Math.abs(moved.notes[0].duration! - (384 / 7 + 10)) < 1e-9);
+  assert.equal(moved.notes[2].lane, 3);
+  assert.ok(Math.abs(moved.notes[2].tick - ((384 * 2) / 7 + 10)) < 1e-9);
+  assert.ok(Math.abs(moved.notes[2].duration! - (384 / 7 - 10)) < 1e-9);
 });
