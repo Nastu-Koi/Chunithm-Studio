@@ -11,7 +11,7 @@
   color: var(--text-1);
   background: #000;
   font:
-    12px/1.4 'Segoe UI',
+    var(--fs-md) / 1.4 'Segoe UI',
     'Microsoft YaHei',
     system-ui,
     sans-serif;
@@ -107,7 +107,7 @@
   align-items: center;
   flex-wrap: wrap;
   gap: 6px;
-  font-size: 11px;
+  font-size: var(--fs-md);
   color: var(--text-2);
 }
 .editor-options label {
@@ -116,20 +116,18 @@
   gap: 5px;
   white-space: nowrap;
 }
+.editor-options > label + label {
+  margin-left: 4px;
+}
 .editor-options select {
   width: 72px;
-  font-size: 11px;
 }
 .editor-options input[type='number'] {
   width: 42px;
-  font-size: 11px;
 }
 .editor-options .editor-quantize input[data-option='snap'] {
   width: 58px;
   min-width: 58px;
-}
-.editor-options button {
-  font-size: 11px;
 }
 .editor-command-group {
   display: inline-flex;
@@ -151,11 +149,10 @@
 }
 .editor-toolbar-label {
   margin: 0 4px 0 2px;
-  font-size: 11px;
+  font-size: var(--fs-md);
   color: var(--text-3);
 }
 .editor-toolrow > button {
-  font-size: 11px;
   padding: 0 6px;
 }
 .editor-toolrow .editor-node-kind {
@@ -164,18 +161,17 @@
   gap: 5px;
   margin: 0 4px;
   white-space: nowrap;
-  font-size: 11px;
+  font-size: var(--fs-md);
   color: var(--text-2);
 }
 .editor-toolrow .editor-node-kind select {
-  width: 128px;
-  font-size: 11px;
+  width: auto;
 }
 .editor-toolrow .editor-tool,
 .editor-options .editor-tool {
-  gap: 5px;
-  padding: 0 5px;
-  font-size: 10.5px;
+  gap: 4px;
+  padding: 0 4px;
+  font-size: var(--fs-md);
   color: var(--text-1);
   background: transparent;
   border-color: transparent;
@@ -202,14 +198,14 @@
   display: none;
 }
 .editor-air-side button {
-  height: 22px;
-  min-width: 22px;
+  min-width: var(--ctl);
   padding: 0 4px;
-  font-size: 10px;
 }
+/* Bar sprites are 8 px tall and AIR arrows 16 px; the margin gives every note icon the same 16 px height. */
 .editor-note-icon {
   width: 20px;
   height: 8px;
+  margin: 4px 0;
   display: inline-block;
   flex: none;
   border: 0;
@@ -243,6 +239,7 @@
 .editor-icon-air {
   width: 24px;
   height: 16px;
+  margin: 0;
   background-position-y: -96px;
 }
 .editor-icon-air-down {
@@ -267,7 +264,7 @@
 .editor-align-controls output {
   min-width: 74px;
   text-align: center;
-  font: 11px var(--mono);
+  font: var(--fs-sm) var(--mono);
   color: var(--accent);
 }
 .editor-toolbar-divider {
@@ -297,7 +294,7 @@
   border-radius: var(--radius);
   background: var(--bg-3);
   color: var(--text-1);
-  font-size: 11px;
+  font-size: var(--fs-md);
   cursor: pointer;
 }
 .editor-advanced-controls > summary:hover {
@@ -318,7 +315,7 @@
   border: 1px solid var(--line-3);
   border-radius: 4px;
   box-shadow: var(--shadow);
-  font-size: 11px;
+  font-size: var(--fs-md);
 }
 .editor-advanced-panel {
   position: absolute;
@@ -328,7 +325,7 @@
 }
 .editor-advanced-panel p {
   margin: 6px 0 10px;
-  font-size: 10.5px;
+  font-size: var(--fs-sm);
   line-height: 1.7;
   color: var(--text-2);
 }
@@ -343,7 +340,7 @@
 }
 .editor-advanced-panel .editor-checkbox {
   color: var(--text-1);
-  font-size: 11px;
+  font-size: var(--fs-md);
 }
 .editor-shape-panel {
   position: absolute;
@@ -371,7 +368,7 @@
 .editor-shape-panel p {
   margin: 0;
   min-height: 16px;
-  font-size: 10.5px;
+  font-size: var(--fs-sm);
   line-height: 1.6;
   color: var(--text-2);
 }
@@ -396,7 +393,7 @@
   display: flex;
   align-items: center;
   padding-right: 16px;
-  font-size: 10px;
+  font-size: var(--fs-sm);
   color: var(--text-3);
   background: var(--bg-1);
   border-bottom: 1px solid var(--line-1);
@@ -414,13 +411,11 @@
 .editor-canvas-heading strong {
   flex: 1;
   padding-left: 7px;
-  font-size: 10px;
   font-weight: 500;
   color: var(--text-2);
 }
 .editor-canvas-heading i {
   margin-left: 5px;
-  font-size: 9px;
   font-style: normal;
   color: var(--text-3);
 }
@@ -456,14 +451,14 @@
   padding: 2px 6px;
   border-radius: var(--radius);
   text-align: right;
-  font-size: 10px;
+  font-size: var(--fs-sm);
   line-height: 1.6;
   color: var(--text-3);
   background: #000c;
 }
 .editor-root kbd {
   padding: 1px 4px;
-  font-size: 9px;
+  font-size: var(--fs-sm);
 }
 .editor-navigation {
   flex: none;
@@ -472,7 +467,7 @@
   align-items: center;
   gap: 8px;
   padding: 0 10px;
-  font-size: 10px;
+  font-size: var(--fs-sm);
   color: var(--text-3);
   background: var(--bg-1);
   border-top: 1px solid var(--line-1);
@@ -501,11 +496,11 @@
   align-items: center;
   justify-content: space-between;
   margin-bottom: 10px;
-  font-size: 11px;
+  font-size: var(--fs-md);
   font-weight: 600;
 }
 .editor-inspector-title small {
-  font-size: 10px;
+  font-size: var(--fs-sm);
   font-weight: 400;
   color: var(--text-3);
 }
@@ -523,13 +518,13 @@
   display: none;
 }
 .editor-selection-heading strong {
-  font-size: 11px;
+  font-size: var(--fs-md);
   font-weight: 600;
   color: var(--note-color, var(--text-1));
 }
 .editor-selection-heading code {
   margin-left: auto;
-  font: 10px var(--mono);
+  font: var(--fs-sm) var(--mono);
   color: var(--text-3);
 }
 .editor-field {
@@ -537,7 +532,7 @@
   flex-direction: column;
   gap: 4px;
   margin-bottom: 8px;
-  font-size: 10.5px;
+  font-size: var(--fs-sm);
   color: var(--text-2);
 }
 .editor-field > span {
@@ -547,7 +542,7 @@
 .editor-field select {
   width: 100%;
   height: 26px;
-  font-size: 11px;
+  font-size: var(--fs-md);
 }
 .editor-field-pair {
   display: grid;
@@ -562,7 +557,7 @@
   align-items: center;
   gap: 6px;
   margin: 6px 0;
-  font-size: 10.5px;
+  font-size: var(--fs-md);
   color: var(--text-2);
 }
 .editor-section-label {
@@ -572,13 +567,13 @@
   margin: 12px 0 8px;
   padding-top: 10px;
   border-top: 1px solid var(--line-2);
-  font-size: 10.5px;
+  font-size: var(--fs-md);
   font-weight: 600;
   letter-spacing: 0.04em;
   color: var(--text-2);
 }
 .editor-section-label small {
-  font-size: 9.5px;
+  font-size: var(--fs-sm);
   font-weight: 400;
   color: var(--text-3);
 }
@@ -591,7 +586,6 @@
 .editor-inspector-actions button {
   flex: 1;
   padding: 0 5px;
-  font-size: 10.5px;
 }
 .editor-root button.editor-danger {
   color: var(--danger);
@@ -602,13 +596,13 @@
 }
 .editor-help {
   margin: 6px 0 10px;
-  font-size: 10.5px;
+  font-size: var(--fs-sm);
   line-height: 1.7;
   color: var(--text-3);
 }
 .editor-raw {
   padding: 5px 0;
-  font-size: 10.5px;
+  font-size: var(--fs-sm);
   color: var(--text-2);
 }
 .editor-raw summary {
@@ -619,16 +613,16 @@
   width: 100%;
   min-height: 105px;
   resize: vertical;
-  font: 10.5px/1.6 var(--mono);
+  font: var(--fs-sm) / 1.6 var(--mono);
 }
 .editor-raw button {
   width: 100%;
   margin-top: 4px;
-  font-size: 10.5px;
+  font-size: var(--fs-md);
 }
 .editor-raw p {
   margin: 6px 0 0;
-  font-size: 10px;
+  font-size: var(--fs-sm);
   line-height: 1.6;
   color: var(--text-3);
 }
@@ -644,13 +638,13 @@
 }
 .editor-empty-selection strong {
   display: block;
-  font-size: 11px;
+  font-size: var(--fs-md);
   font-weight: 500;
   color: var(--text-1);
 }
 .editor-empty-selection p {
   padding: 0 2px;
-  font-size: 10.5px;
+  font-size: var(--fs-sm);
   line-height: 1.7;
   color: var(--text-3);
 }
@@ -663,8 +657,16 @@
   justify-content: space-between;
   gap: 8px;
   margin: 6px 0;
-  font-size: 10px;
+  font-size: var(--fs-sm);
   color: var(--text-2);
+}
+/* The key stays on one line; a long description wraps beside it instead. */
+.editor-shortcuts kbd {
+  flex: none;
+  white-space: nowrap;
+}
+.editor-shortcuts span {
+  text-align: right;
 }
 .editor-multi-count {
   margin: 14px 0 10px;
@@ -675,7 +677,7 @@
 }
 .editor-multi-count span {
   display: block;
-  font-size: 10.5px;
+  font-size: var(--fs-sm);
   color: var(--text-3);
 }
 .editor-event-buttons {
@@ -685,7 +687,6 @@
 }
 .editor-event-buttons button {
   padding: 0 4px;
-  font-size: 10.5px;
 }
 .editor-event-list {
   display: flex;
@@ -700,7 +701,7 @@
   width: 100%;
   height: 24px;
   padding: 0 6px;
-  font-size: 10px;
+  font-size: var(--fs-sm);
   color: var(--text-2);
   background: var(--bg-3);
   border-color: transparent;
@@ -719,7 +720,7 @@
   overflow: hidden;
   text-overflow: ellipsis;
   text-align: right;
-  font: 9px var(--mono);
+  font: var(--fs-sm) var(--mono);
   color: var(--text-3);
 }
 .editor-event-list button.editor-selected-event {
@@ -738,7 +739,7 @@
   padding: 0 10px;
   overflow: hidden;
   white-space: nowrap;
-  font-size: 10px;
+  font-size: var(--fs-sm);
   color: var(--text-3);
   background: var(--bg-2);
   border-top: 1px solid var(--line-2);
@@ -772,7 +773,7 @@
   .editor-toolrow .editor-tool {
     gap: 4px;
     padding: 0 4px;
-    font-size: 10px;
+    font-size: var(--fs-sm);
   }
   .editor-options {
     gap: 4px;

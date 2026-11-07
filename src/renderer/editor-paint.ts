@@ -81,6 +81,8 @@ const EVENT_COLOR: Record<EventType, string> = {
   SCROLL_ASSIGNMENT: '#a897d8',
   STOP: '#e2575f',
 };
+/** Canvas text uses the shell's fonts; labels stay at 11 px or more, like --fs-sm, except inside the 14 px event tags. */
+const CANVAS_FONT = '"Segoe UI", "Microsoft YaHei", sans-serif';
 const EVENT_TAG: Record<EventType, string> = {
   BPM: 'BPM',
   METER: 'MET',
@@ -242,7 +244,7 @@ export class EditorPainter {
       ctx.rect(view.rulerLeft + 4, top, view.rulerWidth - 8, 20);
       ctx.fill();
       ctx.fillStyle = '#dddddd';
-      ctx.font = '600 12px "Segoe UI", "Microsoft YaHei", sans-serif';
+      ctx.font = `600 12px ${CANVAS_FONT}`;
       ctx.fillText(
         `第${String(line.measure + 1).padStart(3, '0')}小节`,
         view.rulerLeft + 7,
@@ -250,8 +252,8 @@ export class EditorPainter {
         view.rulerWidth - 14,
       );
       if (lastLabelY - y >= 44 && y + 14 < bottom) {
-        ctx.fillStyle = '#888888';
-        ctx.font = '9px "Segoe UI", sans-serif';
+        ctx.fillStyle = '#9a9a9a';
+        ctx.font = `11px ${CANVAS_FONT}`;
         ctx.fillText(`${formatTick(line.tick)} tick`, view.rulerLeft + 8, y + 12, view.rulerWidth - 12);
       }
       lastLabelY = y;
@@ -336,7 +338,7 @@ export class EditorPainter {
       ctx.fillStyle = selection.has(item.id) ? '#c4b5fd' : item.type === 'BPM' ? '#65cf69' : '#d4a46b';
       ctx.fillRect(view.eventLeft, y - 7, 30, 14);
       ctx.fillStyle = '#202020';
-      ctx.font = 'bold 8px "Segoe UI", sans-serif';
+      ctx.font = `bold 9px ${CANVAS_FONT}`;
       ctx.fillText(EVENT_TAG[item.type], view.eventLeft + 3, y + 3);
       ctx.strokeStyle = '#a897d852';
       ctx.setLineDash([3, 5]);
@@ -349,7 +351,7 @@ export class EditorPainter {
         // Margrete shows each event's value beside the chart; events sharing a tick line up in one row.
         const row = Math.round(y),
           text = eventText(item);
-        ctx.font = '11px "Segoe UI", sans-serif';
+        ctx.font = `11px ${CANVAS_FONT}`;
         const x = labelRows.get(row) ?? right + 10,
           width = ctx.measureText(text).width;
         ctx.fillStyle = ctx.strokeStyle = selection.has(item.id) ? '#c4b5fd' : EVENT_COLOR[item.type];
@@ -363,7 +365,7 @@ export class EditorPainter {
         ctx.fillStyle = '#101010ee';
         ctx.fillRect(view.left + 5, y - 19, 63, 14);
         ctx.fillStyle = '#65cf69';
-        ctx.font = '10px "Segoe UI", sans-serif';
+        ctx.font = `11px ${CANVAS_FONT}`;
         ctx.fillText(`♩ ${formatTick(item.value)}`, view.left + 9, y - 8);
       }
     }
@@ -405,7 +407,7 @@ export class EditorPainter {
     ctx.beginPath();
     ctx.rect(view.left, view.trackBottom, right - view.left, view.bottom);
     ctx.clip();
-    ctx.font = '10px "Segoe UI", sans-serif';
+    ctx.font = `11px ${CANVAS_FONT}`;
     ctx.textAlign = 'center';
     const laneStride = view.laneWidth > 19 ? 1 : view.laneWidth > 7 ? 4 : 8;
     for (
@@ -456,9 +458,9 @@ export class EditorPainter {
       ctx.stroke();
       ctx.setLineDash([]);
       ctx.fillStyle = '#b06a6a';
-      ctx.font = '9px "Segoe UI", sans-serif';
+      ctx.font = `11px ${CANVAS_FONT}`;
       ctx.textAlign = 'right';
-      ctx.fillText('实机可见上限', limit - 3, 11);
+      ctx.fillText('实机可见上限', limit - 3, 15);
       ctx.textAlign = 'left';
     }
     const notes = chart.notes.filter(
@@ -489,7 +491,7 @@ export class EditorPainter {
     ctx.fillStyle = '#202020';
     ctx.fillRect(0, bottom, view.rulerLeft - 2, view.bottom);
     ctx.fillStyle = '#bdbdbd';
-    ctx.font = '9px "Segoe UI", sans-serif';
+    ctx.font = `11px ${CANVAS_FONT}`;
     ctx.textAlign = 'center';
     for (const index of [0, 2, 5])
       ctx.fillText(formatTick((maximum * index) / 5), view.airLeft + (index * view.airWidth) / 5, bottom + 18);

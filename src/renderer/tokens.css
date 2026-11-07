@@ -10,10 +10,19 @@
   --line-1: #2e2e2e;
   --line-2: #3d3d3d;
   --line-3: #5a5a5a;
-  /* Text: primary, secondary, tertiary. */
+  /* Text: primary, secondary, tertiary. Even the tertiary grey keeps 4.5:1 contrast on --bg-0 to --bg-2. */
   --text-1: #e4e4e4;
   --text-2: #a6a6a6;
-  --text-3: #767676;
+  --text-3: #8e8e8e;
+  /*
+   * Type scale; nothing in the shell or editor is set smaller than --fs-sm.
+   * sm: captions, hints, field labels and status text. md: body text and every control, toolbar labels included.
+   * lg: the project title. xl: dialog titles and the time display.
+   */
+  --fs-sm: 11px;
+  --fs-md: 12px;
+  --fs-lg: 13px;
+  --fs-xl: 14px;
   /* One restrained accent for selection, focus and progress; warning, error and ok stay muted. */
   --accent: #8fb5dc;
   --accent-soft: #8fb5dc24;

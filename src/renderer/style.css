@@ -7,7 +7,7 @@
 :root {
   color-scheme: dark;
   font-family: 'Segoe UI', 'Microsoft YaHei', system-ui, sans-serif;
-  font-size: 12px;
+  font-size: var(--fs-md);
   font-synthesis: none;
   color: var(--text-1);
   background: var(--bg-1);
@@ -146,7 +146,8 @@ label {
   color: var(--text-2);
 }
 kbd {
-  font: 10px/1 inherit;
+  font-size: var(--fs-sm);
+  line-height: 1;
   font-family: inherit;
   padding: 3px 5px;
   border: 1px solid var(--line-2);
@@ -235,7 +236,7 @@ kbd {
   display: none;
 }
 .brand strong {
-  font-size: 12px;
+  font-size: var(--fs-md);
   font-weight: 700;
   letter-spacing: 0.08em;
   color: var(--text-1);
@@ -261,7 +262,7 @@ kbd {
 }
 .file-actions .shortcut {
   margin-left: 6px;
-  font-size: 10px;
+  font-size: var(--fs-sm);
   color: var(--text-3);
 }
 .header-right {
@@ -306,7 +307,7 @@ kbd {
   object-fit: cover;
 }
 h1 {
-  font-size: 13px;
+  font-size: var(--fs-lg);
   font-weight: 600;
   line-height: 1.3;
   max-width: 460px;
@@ -315,7 +316,7 @@ h1 {
   text-overflow: ellipsis;
 }
 .project-identity p {
-  font-size: 11px;
+  font-size: var(--fs-sm);
   line-height: 1.3;
   color: var(--text-3);
   white-space: nowrap;
@@ -399,7 +400,7 @@ h1 {
   display: flex;
   align-items: center;
   gap: 8px;
-  font-size: 11px;
+  font-size: var(--fs-md);
 }
 .player-tools input {
   width: 100px;
@@ -475,12 +476,12 @@ h1 {
   font-variant-numeric: tabular-nums;
 }
 .time-display strong {
-  font-size: 14px;
+  font-size: var(--fs-xl);
   font-weight: 500;
   color: var(--text-1);
 }
 .time-display > span {
-  font-size: 10px;
+  font-size: var(--fs-sm);
   color: var(--text-3);
 }
 .seek-region {
@@ -508,7 +509,7 @@ h1 {
   justify-content: space-between;
   gap: 10px;
   margin-top: 7px;
-  font-size: 10px;
+  font-size: var(--fs-sm);
   color: var(--text-3);
 }
 #audio-label {
@@ -526,7 +527,7 @@ h1 {
   display: flex;
   align-items: center;
   gap: 6px;
-  font-size: 11px;
+  font-size: var(--fs-md);
   white-space: nowrap;
 }
 .transport-options select {
@@ -562,7 +563,7 @@ h1 {
   padding: 0 12px;
   background: var(--bg-1);
   border-top: 1px solid var(--line-1);
-  font-size: 10.5px;
+  font-size: var(--fs-sm);
   color: var(--text-2);
 }
 .status-dot {
@@ -615,7 +616,7 @@ dialog::backdrop {
   border-bottom: 1px solid var(--line-1);
 }
 .modal-header h2 {
-  font-size: 14px;
+  font-size: var(--fs-xl);
   font-weight: 600;
 }
 .modal-header button {
@@ -637,13 +638,13 @@ dialog::backdrop {
   padding: 20px;
 }
 .modal-description {
-  font-size: 12px;
+  font-size: var(--fs-md);
   line-height: 1.7;
   color: var(--text-2);
   margin: 0 0 16px;
 }
 h3 {
-  font-size: 10.5px;
+  font-size: var(--fs-sm);
   font-weight: 600;
   letter-spacing: 0.06em;
   text-transform: uppercase;
@@ -660,7 +661,7 @@ form label {
   flex-direction: column;
   gap: 5px;
   margin-bottom: 14px;
-  font-size: 11px;
+  font-size: var(--fs-sm);
 }
 form input,
 form select,
@@ -691,7 +692,7 @@ form button {
   border-top: 1px solid var(--line-1);
 }
 .form-footer > span {
-  font-size: 11px;
+  font-size: var(--fs-sm);
   color: var(--text-3);
 }
 .form-footer button {
@@ -719,7 +720,7 @@ form button {
   color: var(--text-3);
 }
 .cover-picker small {
-  font-size: 11px;
+  font-size: var(--fs-sm);
 }
 .cover-picker img {
   width: 100%;
@@ -727,7 +728,7 @@ form button {
   object-fit: contain;
 }
 .notice {
-  font-size: 12px;
+  font-size: var(--fs-md);
   line-height: 1.7;
   padding-left: 10px;
   border-left: 2px solid var(--warn);
@@ -751,14 +752,14 @@ form button {
   margin: 0 0 4px;
   padding: 9px 10px;
   text-align: left;
-  font-size: 12px;
+  font-size: var(--fs-md);
   white-space: normal;
   background: var(--bg-3);
   border-color: transparent;
 }
 .issue b {
   flex: none;
-  font-size: 10px;
+  font-size: var(--fs-sm);
   font-weight: 600;
   color: var(--danger);
 }
@@ -816,25 +817,25 @@ form button {
 .song-id {
   min-width: 40px;
   font-family: var(--mono);
-  font-size: 11px;
+  font-size: var(--fs-sm);
   color: var(--text-3);
 }
 .song-name {
   flex: 1;
-  font-size: 12px;
+  font-size: var(--fs-md);
   white-space: normal;
 }
 .song-name small {
   display: block;
   margin-top: 3px;
-  font-size: 10.5px;
+  font-size: var(--fs-sm);
   color: var(--text-3);
 }
 .difficulty {
   flex: none;
   padding: 3px 7px;
   border-radius: var(--radius);
-  font-size: 10px;
+  font-size: var(--fs-sm);
   font-weight: 600;
   letter-spacing: 0.03em;
   background: #4a3b67;
@@ -880,7 +881,7 @@ form button {
   border-color: transparent;
 }
 .recent-list button small {
-  font-size: 10.5px;
+  font-size: var(--fs-sm);
   color: var(--text-3);
   word-break: break-all;
 }
@@ -889,7 +890,7 @@ form button {
 .export-progress {
   min-height: 18px;
   margin: 12px 0;
-  font-size: 12px;
+  font-size: var(--fs-md);
   color: var(--text-2);
 }
 .export-success {
@@ -916,7 +917,7 @@ form button {
   max-height: 200px;
   overflow: auto;
   margin-bottom: 12px;
-  font-size: 11px;
+  font-size: var(--fs-sm);
   color: var(--text-2);
 }
 .quantization-report summary {
@@ -958,17 +959,17 @@ form button {
 }
 .xml-section legend {
   padding: 0 6px;
-  font-size: 11px;
+  font-size: var(--fs-sm);
   font-weight: 600;
   color: var(--text-2);
 }
 .xml-section small {
-  font: 10px/1.4 var(--mono);
+  font: var(--fs-sm) / 1.4 var(--mono);
   color: var(--text-3);
 }
 .xml-help {
   margin: 0 0 14px;
-  font-size: 11px;
+  font-size: var(--fs-sm);
   line-height: 1.7;
   color: var(--text-2);
 }
@@ -1003,7 +1004,7 @@ form button {
 .xml-reference strong {
   display: block;
   margin-bottom: 10px;
-  font-size: 12px;
+  font-size: var(--fs-md);
   font-weight: 500;
 }
 .xml-reference strong small {
@@ -1039,7 +1040,7 @@ form button {
   border-radius: var(--radius);
   background: var(--bg-0);
   color: var(--text-2);
-  font: 11px/1.8 var(--mono);
+  font: var(--fs-sm) / 1.8 var(--mono);
   user-select: text;
 }
 #xml-settings-form .form-footer {
@@ -1085,7 +1086,7 @@ form button {
   border-radius: var(--radius);
   background: var(--bg-4);
   color: var(--text-1);
-  font-size: 12px;
+  font-size: var(--fs-md);
   box-shadow: var(--shadow);
   opacity: 0;
   pointer-events: none;
